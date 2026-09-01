@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: stg_player_game_stats
+    description: >
+      Silver staging model. Parses the balldontlie `/stats` endpoint payload
+      out of the Bronze `raw_pulls` table (docs/prd.md §04, §06) into one row
+      per player/game box-score stat line, de-duplicated to the
+      most-recently-pulled version of each `stat_id` (raw_pulls is
+      append-only, so the same stat line can appear across multiple pulls
+      as a game is corrected/finalized).
+
+      NOTE: the assumed JSON shape of the balldontlie `/stats` response
+      (see model SQL header comment) has not been validated against real
+      ingested data — ingestion is not live yet. The `minutes_played`
+      "MM:SS" -> decimal-minutes parse has been reviewed by eye via
+      `dbt compile` only; it has not been execution-tested against a real
+      Postgres because no live DB is available in this environment.
+    columns:
+      - name: stat_id
+        description: Primary key of one player/game box-score stat line, sourced from the raw payload's `data[].id`.
+        tests:
+          - not_null
+          - unique
+      - name: game_id
+        description: FK to the game this stat line belongs to, sourced from `data[].game.id`.
+        tests:
+          - not_null
+          - relationships:
+              # TODO(boss): this cross-model relationship test parses fine
+              # standalone (ref() resolution happens at project-build time,
+              # not per-branch) but will only actually RUN/PASS once this
+              # branch is built together with the sibling PR that owns
+              # stg_games.sql — see PR description for status.
+              arguments:
+                to: ref('stg_games')
+                field: game_id
+      - name: player_id
+        description: FK to the player this stat line belongs to, sourced from `data[].player.id`.
+        tests:
+          - not_null
+      - name: player_first_name
+        description: Player's first name, sourced from `data[].player.first_name`.
+      - name: player_last_name
+        description: Player's last name, sourced from `data[].player.last_name`.
+      - name: team
+        description: Full name of the team the player suited up for in this game, sourced from `data[].team.full_name`.
+      - name: points
+        description: Points scored, sourced from `data[].pts`.
+      - name: rebounds
+        description: Total rebounds, sourced from `data[].reb`.
+      - name: assists
+        description: Assists, sourced from `data[].ast`.
+      - name: steals
+        description: Steals, sourced from `data[].stl`.
+      - name: blocks
+        description: Blocks, sourced from `data[].blk`.
+      - name: turnovers
+        description: Turnovers, sourced from `data[].turnover`.
+      - name: minutes_played
+        description: >
+          Minutes played as a decimal (e.g. "34:12" -> 34.2), parsed from
+          the raw "MM:SS" string in `data[].min`. Null when the raw value
+          is null, empty, or doesn't match the expected MM:SS pattern
+          (e.g. a player who didn't play).
+      - name: pulled_at
+        description: Timestamp of the raw_pulls row this de-duplicated version was sourced from. Carried through for lineage/debugging, not a business column.
