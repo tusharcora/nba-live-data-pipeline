@@ -19,6 +19,7 @@ dbt/profiles.yml
 dbt/dbt_packages/
 dbt/target/
 dbt/logs/
+dbt/.user.yml
 
 # Env files
 .env
