@@ -5,6 +5,16 @@ from ingestion.flows.backfill_flow import backfill_flow
 from ingestion.flows.live_game_flow import live_game_flow
 
 
+class _FakeRowSink:
+    def write(self, row: object) -> None:
+        pass
+
+
+class _FakeScoreboardSource:
+    def get_scoreboard(self, date: str) -> dict:
+        return {"events": []}
+
+
 class _FakeSink:
     def write(self, raw_pull: RawPull) -> None:
         pass
@@ -37,4 +47,15 @@ def test_backfill_flow_runs():
 
 
 def test_live_game_flow_runs():
-    assert live_game_flow() == {"status": "stub"}
+    # See test_live_game_flow.py for the real DI/extraction/metric coverage;
+    # this just confirms the flow still runs end-to-end with all-fake
+    # dependencies now that it's a real implementation, not the week-1 stub.
+    result = live_game_flow(
+        date="2024-01-01",
+        raw_pull_sink=_FakeSink(),
+        live_game_state_sink=_FakeRowSink(),
+        quality_metric_sink=_FakeRowSink(),
+        balldontlie_client=_FakeClient(),
+        public_feed_client=_FakeScoreboardSource(),
+    )
+    assert result == {"raw_pulls_written": 1, "live_game_states_written": 0}

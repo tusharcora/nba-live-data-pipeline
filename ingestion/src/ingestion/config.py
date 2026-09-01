@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://nba:nba@localhost:5432/nba"
     ingestion_database_url: str = ""
     balldontlie_api_key: str = ""
+    # docs/prd.md §03: ESPN's unauthenticated public scoreboard feed (assumed
+    # shape, same caveat as ingestion/sources/public_feed.py).
+    public_feed_base_url: str = (
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+    )
 
     @property
     def runtime_database_url(self) -> str:

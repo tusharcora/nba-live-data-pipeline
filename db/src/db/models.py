@@ -2,7 +2,17 @@ from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Index, Numeric, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -59,6 +69,33 @@ class QualityMetric(Base):
     metadata_json: Mapped[dict | None] = mapped_column(
         "metadata", JSONB, nullable=True
     )
+
+
+class LiveGameState(Base):
+    """Silver layer: one row per poll per game while a game is live.
+
+    Time-series score/clock state, per source — `source` distinguishes which
+    of the two data sources a given snapshot came from, since both are
+    polled independently and neither overwrites the other (reconciliation
+    across sources happens downstream, not here).
+    """
+
+    __tablename__ = "live_game_state"
+    __table_args__ = (
+        Index("ix_live_game_state_game_id_pulled_at", "game_id", "pulled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    pulled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    period: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clock: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class BackfillCheckpoint(Base):
