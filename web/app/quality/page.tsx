@@ -1,9 +1,9 @@
 import { headers } from "next/headers";
 
-// Response shape assumed from docs/superpowers/plans/2026-09-01-week3-serving-layer-and-dashboard.md
-// (Employee A2 section). The real `/quality` FastAPI endpoint (Team A) and the
-// `/api/quality` BFF passthrough route (Employee B1) may not be merged into
-// this branch yet -- see the PR description for the dependency note.
+// Response shape matches the real `GET /quality` FastAPI endpoint
+// (Employee A2, `week3/api-serving-quality-endpoint`, see
+// `api/src/api/routers/quality.py`'s module docstring) now that both that
+// PR and the `/api/quality` BFF passthrough (Employee B1) are merged.
 type QualityMetric = {
   check_name: string;
   value: number | string;
@@ -12,8 +12,13 @@ type QualityMetric = {
 };
 
 type SchemaChange = {
-  field: string;
+  id: number;
+  source: string;
+  endpoint: string;
+  field_name: string;
   change_type: string;
+  old_type: string | null;
+  new_type: string | null;
   detected_at: string;
 };
 
@@ -157,21 +162,33 @@ export default async function QualityPage() {
                           Change type
                         </th>
                         <th className="py-2 pr-4 font-medium text-zinc-600 dark:text-zinc-400">
+                          Old type
+                        </th>
+                        <th className="py-2 pr-4 font-medium text-zinc-600 dark:text-zinc-400">
+                          New type
+                        </th>
+                        <th className="py-2 pr-4 font-medium text-zinc-600 dark:text-zinc-400">
                           Detected at
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {result.data.schema_changes.map((change, idx) => (
+                      {result.data.schema_changes.map((change) => (
                         <tr
-                          key={`${change.field}-${change.detected_at}-${idx}`}
+                          key={change.id}
                           className="border-b border-zinc-100 dark:border-zinc-900"
                         >
                           <td className="py-2 pr-4 text-black dark:text-zinc-50">
-                            {change.field}
+                            {change.field_name}
                           </td>
                           <td className="py-2 pr-4 text-black dark:text-zinc-50">
                             {change.change_type}
+                          </td>
+                          <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
+                            {change.old_type ?? "–"}
+                          </td>
+                          <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
+                            {change.new_type ?? "–"}
                           </td>
                           <td className="py-2 pr-4 text-zinc-600 dark:text-zinc-400">
                             {change.detected_at}
