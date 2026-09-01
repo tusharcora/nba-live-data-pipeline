@@ -1,5 +1,6 @@
 from db.models import (
     Base,
+    BackfillCheckpoint,
     QualityMetric,
     RawPull,
     SchemaChangeLog,
@@ -13,6 +14,7 @@ def _column_names(model) -> set[str]:
 
 def test_expected_tables_present():
     assert sorted(t.name for t in Base.metadata.sorted_tables) == [
+        "backfill_checkpoints",
         "quality_metrics",
         "raw_pulls",
         "schema_change_log",
@@ -65,6 +67,23 @@ def test_quality_metric_table():
     # Python attribute is `metadata_json` (DeclarativeBase reserves `metadata`);
     # it must map to the actual DB column named `metadata`.
     assert QualityMetric.metadata_json.property.columns[0].name == "metadata"
+
+
+def test_backfill_checkpoint_table():
+    assert BackfillCheckpoint.__tablename__ == "backfill_checkpoints"
+    assert _column_names(BackfillCheckpoint) == {
+        "id",
+        "flow_name",
+        "last_pulled_date",
+        "updated_at",
+    }
+
+
+def test_backfill_checkpoint_flow_name_is_unique():
+    # SQLAlchemyCheckpointStore assumes exactly one row per flow_name (it
+    # selects, then inserts-or-updates that single row) — enforce it at the
+    # schema level too, not just in application code.
+    assert BackfillCheckpoint.__table__.columns["flow_name"].unique is True
 
 
 def test_source_conflict_table():
