@@ -1,7 +1,8 @@
+from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, Index, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -57,6 +58,21 @@ class QualityMetric(Base):
     # so the Python attribute is named `metadata_json` and mapped to the DB column `metadata`.
     metadata_json: Mapped[dict | None] = mapped_column(
         "metadata", JSONB, nullable=True
+    )
+
+
+class BackfillCheckpoint(Base):
+    """Meta layer: resumability marker — last successfully-processed date per flow."""
+
+    __tablename__ = "backfill_checkpoints"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # unique: exactly one checkpoint row per flow — SQLAlchemyCheckpointStore
+    # relies on this invariant to select/upsert a single row per flow_name.
+    flow_name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    last_pulled_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

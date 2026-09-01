@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: public
+    tables:
+      - name: raw_pulls
+        description: >
+          Bronze layer — one row per API response pull (docs/prd.md §04, §06).
+          Append-only, immutable. Owned by the db/ package's Alembic
+          migrations, not dbt. `payload` is the full decoded JSON body of
+          one API response (may contain multiple records in a `data` array).
+        columns:
+          - name: id
+            description: Surrogate key, one per pull.
+          - name: source
+            description: "e.g. 'balldontlie', 'public_feed'."
+          - name: endpoint
+            description: "e.g. 'games', 'stats'."
+          - name: pulled_at
+            description: Timestamp the pull was made.
+          - name: payload
+            description: Raw decoded JSON body (jsonb) of the API response.
