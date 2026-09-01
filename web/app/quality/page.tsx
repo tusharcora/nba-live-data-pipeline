@@ -1,7 +1,12 @@
 import { headers } from "next/headers";
 import type { ReactNode } from "react";
-import { ArrowRightLeft, Minus, Plus } from "lucide-react";
+import { ArrowRightLeft, Inbox, Minus, Plus, TriangleAlert } from "lucide-react";
 
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -122,6 +127,18 @@ function conflictDetails(conflict: Conflict): string | null {
   return Object.keys(rest).length > 0 ? JSON.stringify(rest) : null;
 }
 
+// Calmer, deliberate per-section empty state — deliberately not a bare
+// "no data" line. The icon is decorative only (aria-hidden); the message
+// text is the sole carrier of meaning for screen reader users.
+function EmptySectionState({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
+      <Inbox aria-hidden="true" className="size-6 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
 export default async function QualityPage() {
   const result = await getQualityData();
 
@@ -133,9 +150,11 @@ export default async function QualityPage() {
         </h1>
 
         {!result.ok && (
-          <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-            {result.message}
-          </p>
+          <Alert variant="destructive">
+            <TriangleAlert aria-hidden="true" />
+            <AlertTitle>Quality data is unavailable</AlertTitle>
+            <AlertDescription>{result.message}</AlertDescription>
+          </Alert>
         )}
 
         {result.ok && (
@@ -145,9 +164,7 @@ export default async function QualityPage() {
                 Quality metrics
               </h2>
               {result.data.metrics.length === 0 ? (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  No quality data yet.
-                </p>
+                <EmptySectionState message="No quality metrics have been recorded yet. Checks will appear here once the quality gate runs." />
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                   {result.data.metrics.map((metric) => (
@@ -176,9 +193,7 @@ export default async function QualityPage() {
                 Recent schema changes
               </h2>
               {result.data.schema_changes.length === 0 ? (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  No quality data yet.
-                </p>
+                <EmptySectionState message="No schema changes detected in the current window. This section will populate the moment drift is fingerprinted." />
               ) : (
                 <Table>
                   <TableHeader>
@@ -241,9 +256,7 @@ export default async function QualityPage() {
               </Card>
 
               {result.data.conflicts.recent.length === 0 ? (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  No quality data yet.
-                </p>
+                <EmptySectionState message="No source conflicts recorded. Field-level disagreements between sources will be listed here as they're detected." />
               ) : (
                 <Table>
                   <TableHeader>
