@@ -29,6 +29,18 @@ jobs:
           python-version: "3.13"
       - run: uv run pytest -v
 
+  db-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+      - run: uv run pytest -v
+
   web-check:
     runs-on: ubuntu-latest
     defaults:
