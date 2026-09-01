@@ -1,6 +1,7 @@
 from db.models import (
     Base,
     BackfillCheckpoint,
+    LiveGameState,
     QualityMetric,
     RawPull,
     SchemaChangeLog,
@@ -15,6 +16,7 @@ def _column_names(model) -> set[str]:
 def test_expected_tables_present():
     assert sorted(t.name for t in Base.metadata.sorted_tables) == [
         "backfill_checkpoints",
+        "live_game_state",
         "quality_metrics",
         "raw_pulls",
         "schema_change_log",
@@ -84,6 +86,44 @@ def test_backfill_checkpoint_flow_name_is_unique():
     # selects, then inserts-or-updates that single row) — enforce it at the
     # schema level too, not just in application code.
     assert BackfillCheckpoint.__table__.columns["flow_name"].unique is True
+
+
+def test_live_game_state_table():
+    assert LiveGameState.__tablename__ == "live_game_state"
+    assert _column_names(LiveGameState) == {
+        "id",
+        "game_id",
+        "source",
+        "pulled_at",
+        "home_score",
+        "away_score",
+        "period",
+        "clock",
+        "status",
+    }
+
+
+def test_live_game_state_nullability_and_types():
+    columns = {col.name: col for col in LiveGameState.__table__.columns}
+    assert columns["game_id"].nullable is False
+    assert columns["source"].nullable is False
+    assert columns["pulled_at"].nullable is False
+    assert columns["status"].nullable is False
+    assert columns["home_score"].nullable is True
+    assert columns["away_score"].nullable is True
+    assert columns["period"].nullable is True
+    assert columns["clock"].nullable is True
+    # game_id is a bigint per the plan (large external game ids), not a
+    # plain 32-bit int.
+    assert type(columns["game_id"].type).__name__ == "BigInteger"
+
+
+def test_live_game_state_has_game_id_pulled_at_index():
+    index_columns = {
+        tuple(col.name for col in index.columns)
+        for index in LiveGameState.__table__.indexes
+    }
+    assert ("game_id", "pulled_at") in index_columns
 
 
 def test_source_conflict_table():
