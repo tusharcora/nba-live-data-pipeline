@@ -29,6 +29,11 @@ cd api && uv run pytest && uv run uvicorn api.main:app --reload
 cd web && npm run dev
 ```
 
+`ingestion` and `api` each prefer their own least-privilege DB role DSN —
+`INGESTION_DATABASE_URL` (`ingestion_writer`) and `API_DATABASE_URL`
+(`api_reader`) respectively — and fall back to the admin `DATABASE_URL` for
+local dev until the db-foundations role migrations have been applied.
+
 `make down` stops the compose stack; `make logs` tails it.
 
 ## Status
