@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: games
+    description: >
+      Gold `games` table (docs/prd.md §06). One row per NBA game: reconciled
+      final scores, status, and schedule. Currently a straight passthrough
+      of `stg_games` (balldontlie only) — cross-source reconciliation with
+      the public feed (docs/prd.md §07) lands in a later PR and should not
+      change this table's grain or column names.
+    columns:
+      - name: game_id
+        description: balldontlie's `id` for the game. Natural key of this table.
+        data_tests:
+          - not_null
+          - unique
+      - name: game_date
+        description: Calendar date of the game.
+        data_tests:
+          - not_null
+      - name: season
+        description: Season year (e.g. 2023 for the 2023-24 season).
+      - name: status
+        description: Raw game status string (e.g. "Final"). See stg_games.yml for vocabulary caveat.
+      - name: postseason
+        description: Whether the game is a postseason (playoff) game.
+      - name: home_team
+        description: Full name of the home team.
+        data_tests:
+          - not_null
+      - name: away_team
+        description: Full name of the visiting team.
+        data_tests:
+          - not_null
+      - name: home_score
+        description: Home team's final (or current, if still live) score.
+      - name: away_score
+        description: Visiting team's final (or current, if still live) score.
+      - name: source_pulled_at
+        description: >
+          `pulled_at` of the source `raw_pulls` row this game's data came
+          from (aliased from `stg_games.pulled_at`). Lineage/freshness only,
+          not part of the reconciled game record itself.
