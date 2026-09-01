@@ -1,0 +1,14 @@
+# Copy to dbt/profiles.yml (gitignored) and fill in / rely on env vars.
+# The top-level key must match dbt_project.yml's `profile:` value exactly.
+nba_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: "{{ env_var('POSTGRES_USER', 'nba') }}"
+      pass: "{{ env_var('POSTGRES_PASSWORD', 'nba') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'nba') }}"
+      schema: public
+      threads: 4

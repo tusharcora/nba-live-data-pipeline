@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: stg_games
+    description: >
+      Placeholder staging model. Real version types/dedupes/reconciles
+      `raw_pulls` into one row per game (docs/prd.md §04, §06).
+    columns:
+      - name: id
+        description: Placeholder key — replaced by the real game surrogate key.
+      - name: note
+        description: Placeholder column, removed once real fields land.

@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: games
+    description: >
+      Placeholder Gold model — 1 row per game, reconciled across sources
+      (docs/prd.md §06). Currently just passes through stg_games.
