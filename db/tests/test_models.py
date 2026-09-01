@@ -79,6 +79,13 @@ def test_backfill_checkpoint_table():
     }
 
 
+def test_backfill_checkpoint_flow_name_is_unique():
+    # SQLAlchemyCheckpointStore assumes exactly one row per flow_name (it
+    # selects, then inserts-or-updates that single row) — enforce it at the
+    # schema level too, not just in application code.
+    assert BackfillCheckpoint.__table__.columns["flow_name"].unique is True
+
+
 def test_source_conflict_table():
     assert SourceConflict.__tablename__ == "source_conflicts"
     assert _column_names(SourceConflict) == {

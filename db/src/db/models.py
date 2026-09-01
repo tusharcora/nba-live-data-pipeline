@@ -67,7 +67,9 @@ class BackfillCheckpoint(Base):
     __tablename__ = "backfill_checkpoints"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    flow_name: Mapped[str] = mapped_column(String, nullable=False)
+    # unique: exactly one checkpoint row per flow — SQLAlchemyCheckpointStore
+    # relies on this invariant to select/upsert a single row per flow_name.
+    flow_name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     last_pulled_date: Mapped[date_type] = mapped_column(Date, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

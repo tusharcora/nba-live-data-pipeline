@@ -23,7 +23,10 @@ def upgrade() -> None:
     op.create_table(
         "backfill_checkpoints",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("flow_name", sa.String(), nullable=False),
+        # unique: exactly one checkpoint row per flow_name — matches the
+        # BackfillCheckpoint model and the CheckpointStore's select/upsert
+        # invariant (SQLAlchemyCheckpointStore assumes at most one row).
+        sa.Column("flow_name", sa.String(), nullable=False, unique=True),
         sa.Column("last_pulled_date", sa.Date(), nullable=False),
         sa.Column(
             "updated_at",
