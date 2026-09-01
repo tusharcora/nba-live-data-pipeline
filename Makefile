@@ -46,7 +46,7 @@ web-dev:
 	cd web && npm run dev
 
 dbt-run:
-	cd dbt && uv run dbt run
+	cd dbt && DBT_PROFILES_DIR=. uv run dbt run
 
 dbt-parse:
-	cd dbt && uv run dbt parse --no-partial-parse
+	cd dbt && DBT_PROFILES_DIR=. uv run dbt parse --no-partial-parse
