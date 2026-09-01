@@ -140,3 +140,22 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Global prefers-reduced-motion guard (MASTER.md pre-delivery checklist).
+ * Belt-and-suspenders alongside per-utility `motion-safe:` variants used at
+ * call sites: this also neutralizes animations that don't opt in per-class,
+ * such as shadcn's Skeleton (`animate-pulse`), for anyone with the OS-level
+ * reduced-motion preference set. Final visual states still render — only
+ * the transition/animation timing collapses to effectively instant.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
