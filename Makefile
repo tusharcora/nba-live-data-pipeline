@@ -10,6 +10,9 @@
 # PYTHONPATH explicitly bypasses that fragile file-based mechanism entirely.
 DB_SRC := $(CURDIR)/db/src
 
+# Override if 8000 is already taken on your machine, e.g. `make api-dev API_PORT=8001`.
+API_PORT ?= 8000
+
 up:
 	docker compose up -d
 
@@ -40,7 +43,7 @@ test-quality:
 test-all: test-db test-ingestion test-api test-quality
 
 api-dev:
-	cd api && PYTHONPATH=src:$(DB_SRC) uv run uvicorn api.main:app --reload --port 8000
+	cd api && PYTHONPATH=src:$(DB_SRC) uv run uvicorn api.main:app --reload --port $(API_PORT)
 
 web-dev:
 	cd web && npm run dev
