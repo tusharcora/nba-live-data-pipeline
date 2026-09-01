@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: player_game_stats
+    description: >
+      Gold mart (docs/prd.md §06). One row per player/game box-score line.
+      Currently a passthrough of stg_player_game_stats — cross-source
+      reconciliation between balldontlie and the public feed lands in a
+      later week once the public feed also contributes player-level box
+      scores to `raw_pulls`.
+    columns:
+      - name: stat_id
+        description: Primary key of one player/game box-score stat line.
+        data_tests:
+          - not_null
+          - unique
+      - name: game_id
+        description: FK to the `games` gold table.
+        data_tests:
+          - not_null
+          - relationships:
+              # TODO(boss): same cross-model caveat as stg_player_game_stats.yml
+              # — will only resolve/run once the sibling stg_games PR is merged
+              # alongside this one. Ideally this would point at the `games`
+              # mart rather than `stg_games`, but that mart is also owned by
+              # the sibling PR and isn't guaranteed to exist yet either.
+              arguments:
+                to: ref('stg_games')
+                field: game_id
+      - name: player_id
+        description: FK to the player this stat line belongs to.
+        data_tests:
+          - not_null
+      - name: player_first_name
+        description: Player's first name.
+      - name: player_last_name
+        description: Player's last name.
+      - name: team
+        description: Full name of the team the player suited up for in this game.
+      - name: points
+        description: Points scored.
+      - name: rebounds
+        description: Total rebounds.
+      - name: assists
+        description: Assists.
+      - name: steals
+        description: Steals.
+      - name: blocks
+        description: Blocks.
+      - name: turnovers
+        description: Turnovers.
+      - name: minutes_played
+        description: Minutes played as a decimal (e.g. 34.2 for "34:12"). Null if unparseable/unavailable.
