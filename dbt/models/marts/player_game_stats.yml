@@ -11,12 +11,12 @@ models:
     columns:
       - name: stat_id
         description: Primary key of one player/game box-score stat line.
-        tests:
+        data_tests:
           - not_null
           - unique
       - name: game_id
         description: FK to the `games` gold table.
-        tests:
+        data_tests:
           - not_null
           - relationships:
               # TODO(boss): same cross-model caveat as stg_player_game_stats.yml
@@ -29,7 +29,7 @@ models:
                 field: game_id
       - name: player_id
         description: FK to the player this stat line belongs to.
-        tests:
+        data_tests:
           - not_null
       - name: player_first_name
         description: Player's first name.
