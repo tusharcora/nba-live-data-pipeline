@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://nba:nba@localhost:5432/nba"
+    database_url: str = "postgresql+psycopg://nba:nba@localhost:5432/nba"
     ingestion_database_url: str = ""
     balldontlie_api_key: str = ""
     # docs/prd.md §03: ESPN's unauthenticated public scoreboard feed (assumed
