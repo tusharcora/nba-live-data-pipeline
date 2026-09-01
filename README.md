@@ -4,7 +4,7 @@ An end-to-end data engineering project built on NBA box score and live game
 data — the portfolio-differentiating work is the ingestion, reconciliation,
 and drift monitoring, not the dashboard on top of it.
 
-Full design doc: [`docs/prd.md`](docs/prd.md) (source: [PRD artifact](https://claude.ai/code/artifact/1f4076ad-1c3c-403a-b3a5-d987db3f10d0)).
+Full design doc: [`docs/prd.md`](docs/prd.md) (source: [PRD artifact](https://claude.ai/code/artifact/1f4076ad-1c3c-403a-b3a5-d987db3f10d0)). Build history and current status: [`docs/PROGRESS.md`](docs/PROGRESS.md).
 
 ## Layout
 
@@ -74,11 +74,9 @@ make dbt-run   # rebuild Gold tables against the new raw_pulls rows
 
 ## Status
 
-Weeks 1-3 of the PRD's plan are built and merged (schema/roles, resumable ingestion,
-the quality gate, real API endpoints, the Next.js BFF, and a UI pass using
-`shadcn/ui` + a persisted `ui-ux-pro-max` design system). See `docs/prd.md` §12 for
-the week-by-week plan and what's next (Week 4: security hardening & performance).
-Everything was built and tested without a live Postgres/Docker available in the
-build environment — this is likely the first time it's been run end-to-end against
-real infrastructure, so expect to shake out a few things (see each service's
-`CLAUDE.md`-documented "needs live infra to confirm" caveats).
+See [`docs/PROGRESS.md`](docs/PROGRESS.md) for the full build log, current
+status, and known caveats — kept up to date as the project develops. Short
+version: Weeks 1-3 of `docs/prd.md` §12's plan plus a UI pass are built,
+merged, and (as of the last `PROGRESS.md` update) verified end-to-end
+against real infrastructure. Week 4 (security hardening & performance) is
+next.
