@@ -143,9 +143,9 @@ export default async function QualityPage() {
   const result = await getQualityData();
 
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
+    <div className="flex flex-1 flex-col font-sans">
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           Data Quality Scorecard
         </h1>
 
@@ -160,7 +160,7 @@ export default async function QualityPage() {
         {result.ok && (
           <>
             <section className="flex flex-col gap-3">
-              <h2 className="text-lg font-medium text-black dark:text-zinc-50">
+              <h2 className="text-lg font-medium text-foreground">
                 Quality metrics
               </h2>
               {result.data.metrics.length === 0 ? (
@@ -189,7 +189,7 @@ export default async function QualityPage() {
             </section>
 
             <section className="flex flex-col gap-3">
-              <h2 className="text-lg font-medium text-black dark:text-zinc-50">
+              <h2 className="text-lg font-medium text-foreground">
                 Recent schema changes
               </h2>
               {result.data.schema_changes.length === 0 ? (
@@ -239,7 +239,7 @@ export default async function QualityPage() {
             </section>
 
             <section className="flex flex-col gap-3">
-              <h2 className="text-lg font-medium text-black dark:text-zinc-50">
+              <h2 className="text-lg font-medium text-foreground">
                 Source conflicts
               </h2>
               <Card size="sm" className="w-fit min-w-40">
