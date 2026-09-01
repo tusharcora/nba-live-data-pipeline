@@ -154,8 +154,10 @@ function GameStatusBadge({ status }: { status?: string }) {
 
 /**
  * Skeleton placeholders shown before the first SSE message arrives.
- * Shaped like the real game-card row (team/score line + status pill) so
- * layout doesn't jump once live data replaces it.
+ * Mirrors the real game-card grid (`grid-cols-1 sm:grid-cols-2 xl:grid-cols-3`
+ * of `Card`s with a header/badge row and a two-score content row) rather
+ * than a generic stacked-row placeholder, so the loading layout doesn't
+ * jump to a different column count once live data replaces it.
  */
 function LiveBoardSkeleton() {
   return (
@@ -163,24 +165,35 @@ function LiveBoardSkeleton() {
       role="status"
       aria-live="polite"
       aria-label="Loading live games"
-      className="flex flex-col gap-3"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
     >
       <span className="sr-only">Connecting to live game feed…</span>
       {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          aria-hidden="true"
-          className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
-        >
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-20" />
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <Skeleton className="h-4 w-14" />
-            <Skeleton className="h-5 w-16 rounded-full" />
-          </div>
-        </div>
+        <Card key={i} aria-hidden="true" className="h-full gap-4">
+          <CardHeader className="flex-row items-center justify-between gap-2">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-5 w-14 rounded-full" />
+          </CardHeader>
+
+          <CardContent className="flex flex-col gap-3">
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+              <div className="flex flex-col items-center gap-2">
+                <Skeleton className="h-3 w-10" />
+                <Skeleton className="h-9 w-12" />
+              </div>
+              <Skeleton className="h-3 w-3" />
+              <div className="flex flex-col items-center gap-2">
+                <Skeleton className="h-3 w-10" />
+                <Skeleton className="h-9 w-12" />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
