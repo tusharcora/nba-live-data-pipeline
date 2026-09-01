@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: stg_games
+    description: >
+      Silver staging model. One row per NBA game, parsed and typed out of
+      the Bronze `raw_pulls.payload` JSONB for source='balldontlie',
+      endpoint='games' (docs/prd.md §04, §06). `raw_pulls` is append-only, so
+      the same game can appear across multiple pulls (re-pulled while live
+      or re-pulled after final) — this model de-duplicates to the single
+      most-recently-pulled row per `game_id` via
+      `row_number() over (partition by game_id order by pulled_at desc)`.
+
+      Payload shape is an assumption based on balldontlie v1 GET /games
+      documentation and has not yet been validated against real ingested
+      rows (no live ingestion/Postgres in this environment).
+    columns:
+      - name: game_id
+        description: balldontlie's `id` for the game. Natural key of this model.
+        data_tests:
+          - not_null
+          - unique
+      - name: game_date
+        description: >
+          Calendar date of the game (UTC date part of balldontlie's `date`
+          ISO-8601 timestamp string).
+        data_tests:
+          - not_null
+      - name: season
+        description: Season year balldontlie associates with the game (e.g. 2023 for the 2023-24 season).
+      - name: status
+        description: >
+          Raw game status string as returned by balldontlie (e.g. "Final").
+          For in-progress/scheduled games this field can also carry
+          period/clock or scheduled-time text, so no `accepted_values` test
+          is applied here — the full vocabulary hasn't been confirmed
+          against real data yet.
+      - name: postseason
+        description: Whether the game is a postseason (playoff) game.
+      - name: home_team
+        description: Full name of the home team (from payload `home_team.full_name`).
+        data_tests:
+          - not_null
+      - name: away_team
+        description: Full name of the visiting team (from payload `visitor_team.full_name`).
+        data_tests:
+          - not_null
+      - name: home_score
+        description: Home team's final (or current, if still live) score.
+      - name: away_score
+        description: Visiting team's final (or current, if still live) score.
+      - name: pulled_at
+        description: >
+          `pulled_at` timestamp of the `raw_pulls` row this record was
+          sourced from — specifically, the most recent pull for this
+          `game_id`. Carried through for lineage/freshness, and is the
+          ordering key used for de-duplication.
