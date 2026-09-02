@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,19 @@ type LiveGameState = {
 };
 
 type ConnectionState = "connecting" | "open" | "error";
+
+/** No SSE message for this long while "open" counts as stale. */
+const STALE_THRESHOLD_MS = 60_000;
+/** How often the stale check re-evaluates elapsed time against `Date.now()`. */
+const STALE_CHECK_INTERVAL_MS = 1_000;
+
+/** "45s" / "1m 06s" render of a whole-second duration for the stale banner. */
+function formatStaleDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -253,16 +266,72 @@ function LiveBoardError() {
   );
 }
 
+/**
+ * Non-destructive banner for a connection that's still `"open"` but has
+ * gone quiet for over a minute — distinct from `LiveBoardError` (the
+ * `EventSource` itself erroring). Rendered alongside the last-known game
+ * cards rather than replacing them, since a delayed upstream tick isn't
+ * the same as a dead connection.
+ *
+ * Screen-reader behavior mirrors `GameStatusBadge`'s restraint above: the
+ * visible elapsed-time text ticks up every second (the parent re-renders
+ * this on a 1s `setInterval`), but that changing duration is wrapped in
+ * `aria-hidden` so screen readers never see the mutation — a live region
+ * only reacts to changes in its *accessible* content. The one sentence
+ * that stays in the accessible tree ("No update in over a minute…") never
+ * changes text, so `role="status"` announces it exactly once, when the
+ * banner first mounts, rather than re-announcing on every tick.
+ */
+function LiveBoardStale({ secondsStale }: { secondsStale: number }) {
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-sm text-muted-foreground"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="mt-0.5 size-4 shrink-0"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+      <p>
+        <span>No update in over a minute — the feed may be delayed.</span>{" "}
+        <span aria-hidden="true">
+          (last update {formatStaleDuration(secondsStale)} ago)
+        </span>
+      </p>
+    </div>
+  );
+}
+
 export default function LiveBoard() {
   const [games, setGames] = useState<LiveGameState[] | null>(null);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
+  /**
+   * Seconds since the last SSE message, once that exceeds
+   * `STALE_THRESHOLD_MS` — `null` while fresh. Distinct from
+   * `connectionState === "error"`: the `EventSource` is still open here,
+   * it's just gone quiet, so the currently-rendered game cards stay up
+   * rather than being replaced by `LiveBoardError`.
+   */
+  const [staleSeconds, setStaleSeconds] = useState<number | null>(null);
+  const lastMessageAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const source = new EventSource("/api/live");
 
     source.onmessage = (event) => {
       setConnectionState("open");
+      lastMessageAtRef.current = Date.now();
+      setStaleSeconds(null);
       try {
         const parsed = JSON.parse(event.data);
         setGames(coerceGames(parsed));
@@ -277,8 +346,18 @@ export default function LiveBoard() {
       source.close();
     };
 
+    const staleCheckInterval = setInterval(() => {
+      const lastMessageAt = lastMessageAtRef.current;
+      if (lastMessageAt === null) return;
+      const elapsedMs = Date.now() - lastMessageAt;
+      setStaleSeconds(
+        elapsedMs >= STALE_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null
+      );
+    }, STALE_CHECK_INTERVAL_MS);
+
     return () => {
       source.close();
+      clearInterval(staleCheckInterval);
     };
   }, []);
 
@@ -290,85 +369,88 @@ export default function LiveBoard() {
     return <LiveBoardSkeleton />;
   }
 
-  if (games.length === 0) {
-    return <LiveBoardEmpty />;
-  }
-
   return (
-    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {games.map((game, index) => {
-        const updatedAt = formatUpdatedAt(game.pulled_at);
+    <div className="flex flex-col gap-4">
+      {staleSeconds !== null && <LiveBoardStale secondsStale={staleSeconds} />}
+      {games.length === 0 ? (
+        <LiveBoardEmpty />
+      ) : (
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {games.map((game, index) => {
+            const updatedAt = formatUpdatedAt(game.pulled_at);
 
-        return (
-          <li
-            key={game.game_id ?? index}
-            style={{ animationDelay: `${Math.min(index, 6) * 60}ms` }}
-            className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:fill-mode-backwards motion-safe:duration-300 motion-safe:ease-out"
-          >
-            <Card className="h-full gap-4">
-              <CardHeader className="flex-row items-center justify-between gap-2">
-                <CardTitle className="font-mono text-xs font-medium tracking-wide text-muted-foreground">
-                  Game {displayValue(game.game_id, "—")}
-                </CardTitle>
-                <CardAction>
-                  <GameStatusBadge status={game.status} />
-                </CardAction>
-              </CardHeader>
+            return (
+              <li
+                key={game.game_id ?? index}
+                style={{ animationDelay: `${Math.min(index, 6) * 60}ms` }}
+                className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:fill-mode-backwards motion-safe:duration-300 motion-safe:ease-out"
+              >
+                <Card className="h-full gap-4">
+                  <CardHeader className="flex-row items-center justify-between gap-2">
+                    <CardTitle className="font-mono text-xs font-medium tracking-wide text-muted-foreground">
+                      Game {displayValue(game.game_id, "—")}
+                    </CardTitle>
+                    <CardAction>
+                      <GameStatusBadge status={game.status} />
+                    </CardAction>
+                  </CardHeader>
 
-              <CardContent className="flex flex-col gap-3">
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                  <div className="flex flex-col items-center gap-1">
-                    <span
-                      aria-hidden="true"
-                      className="text-xs font-medium tracking-wider text-muted-foreground uppercase"
-                    >
-                      Away
-                    </span>
-                    <span
-                      aria-label={`Away score ${displayValue(game.away_score, "unavailable")}`}
-                      className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
-                    >
-                      {displayValue(game.away_score, "–")}
-                    </span>
-                  </div>
+                  <CardContent className="flex flex-col gap-3">
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <div className="flex flex-col items-center gap-1">
+                        <span
+                          aria-hidden="true"
+                          className="text-xs font-medium tracking-wider text-muted-foreground uppercase"
+                        >
+                          Away
+                        </span>
+                        <span
+                          aria-label={`Away score ${displayValue(game.away_score, "unavailable")}`}
+                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                        >
+                          {displayValue(game.away_score, "–")}
+                        </span>
+                      </div>
 
-                  <span
-                    aria-hidden="true"
-                    className="font-mono text-sm text-muted-foreground"
-                  >
-                    @
-                  </span>
+                      <span
+                        aria-hidden="true"
+                        className="font-mono text-sm text-muted-foreground"
+                      >
+                        @
+                      </span>
 
-                  <div className="flex flex-col items-center gap-1">
-                    <span
-                      aria-hidden="true"
-                      className="text-xs font-medium tracking-wider text-muted-foreground uppercase"
-                    >
-                      Home
-                    </span>
-                    <span
-                      aria-label={`Home score ${displayValue(game.home_score, "unavailable")}`}
-                      className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
-                    >
-                      {displayValue(game.home_score, "–")}
-                    </span>
-                  </div>
-                </div>
+                      <div className="flex flex-col items-center gap-1">
+                        <span
+                          aria-hidden="true"
+                          className="text-xs font-medium tracking-wider text-muted-foreground uppercase"
+                        >
+                          Home
+                        </span>
+                        <span
+                          aria-label={`Home score ${displayValue(game.home_score, "unavailable")}`}
+                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                        >
+                          {displayValue(game.home_score, "–")}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-                  <span>
-                    {game.period !== undefined && game.period !== null
-                      ? `Q${displayValue(game.period, "")}`
-                      : "—"}
-                    {game.clock ? ` · ${game.clock}` : ""}
-                  </span>
-                  {updatedAt ? <span>{updatedAt}</span> : null}
-                </div>
-              </CardContent>
-            </Card>
-          </li>
-        );
-      })}
-    </ul>
+                    <div className="flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+                      <span>
+                        {game.period !== undefined && game.period !== null
+                          ? `Q${displayValue(game.period, "")}`
+                          : "—"}
+                        {game.clock ? ` · ${game.clock}` : ""}
+                      </span>
+                      {updatedAt ? <span>{updatedAt}</span> : null}
+                    </div>
+                  </CardContent>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
