@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, BarChart3, Radio } from "lucide-react";
+import { ArrowRight, BarChart3, Radio, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,14 @@ const DESTINATIONS = [
     description:
       "Schema-drift timeline, null-rate trends, and cross-source agreement — the pipeline watching itself.",
     cta: "Open Scorecard",
+  },
+  {
+    href: "/explorer",
+    icon: Search,
+    title: "Historical Explorer",
+    description:
+      "Search past games by date range and look up a player's box score across games.",
+    cta: "Open Explorer",
   },
 ] as const;
 
@@ -63,7 +71,7 @@ export default function Home() {
 
         <section
           aria-label="Explore the pipeline"
-          className="grid grid-cols-1 gap-6 sm:grid-cols-2"
+          className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3"
         >
           {DESTINATIONS.map(({ href, icon: Icon, title, description, cta }) => (
             <Card
