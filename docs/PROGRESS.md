@@ -16,11 +16,11 @@ stale.
 
 ## Current Status (2026-09-02)
 
-Weeks 1–4 of the PRD plan are built; Weeks 1–3 plus the UI modernization
-pass are merged to `main`. Week 4 (security hardening & performance) is
-built, integrated (`week4/integration`), fully tested, and **live-verified
-against real Postgres/Redis on this machine** — PR #35 to `main` is open,
-awaiting human sign-off.
+Weeks 1–5 of the PRD plan are built; Weeks 1–4 (foundations through security
+& performance) plus the UI modernization pass are merged to `main`. Week 5
+(UI furnishing, stats ingestion, Historical Explorer) is built, integrated
+(`week5/integration`), and fully tested — PR #42 to `main` is open, awaiting
+human sign-off.
 
 **What's confirmed working right now, with real data, not mocks:**
 - `make up` → `make migrate` → `make dbt-run` → real schema, roles, and Gold
@@ -52,12 +52,19 @@ awaiting human sign-off.
 - The UI's light-mode palette and the glassmorphism/blur visual treatment
   have never been looked at in a real browser (only `next build` output
   and computed contrast ratios were checked).
+- Week 5's new `backfill_stats_flow` has never been run against real
+  balldontlie data — `player_game_stats` is still empty in real Postgres
+  until that's run, so Historical Explorer's box-score search will show its
+  (correctly-designed) empty state until then.
+- Week 5's theme toggle, Live Board stale-state banner, and the
+  `/explorer` search page have never been opened in a real browser — same
+  code-inspection-only caveat as every prior UI round.
 - The Week 4 `api/loadtest/locustfile.py` load test itself hasn't been run
   (needs a sustained run against a live server, not a quick verification
   pass — left for a dedicated session).
 
-**Next up per `docs/prd.md` §12:** human sign-off + merge of PR #35, then
-Week 5 (UI furnishing & stretch model).
+**Next up per `docs/prd.md` §12:** human sign-off + merge of PR #42, then
+Week 6 (final QA & write-up).
 
 ---
 
@@ -302,6 +309,101 @@ requests and observing 429s from request 98 onward, consistent with the
 configured 100/minute limit. PR #35 (`week4/integration` → `main`) opened
 with all of the above as the test plan, awaiting human sign-off.
 
+### Week 5 — UI furnishing, stats ingestion, Historical Explorer (2026-09-02)
+
+Three boss teams, fully parallel, dispatched from a plan
+(`docs/superpowers/plans/2026-09-02-week5-ui-furnishing-and-historical-explorer.md`)
+that started with two real, scope-changing findings surfaced *before* any
+code was written, both resolved by explicit human decision rather than
+unilaterally:
+
+- **`player_game_stats` had zero rows and no ingestion path at all** — not
+  a "hasn't run yet" gap. `BallDontLieClient` only ever implemented
+  `get_games_pages()`; the dbt `stg_player_game_stats`/`player_game_stats`
+  models were built in Week 1 against a documented-but-never-implemented
+  `/stats` shape. **Decision: add real stats ingestion as a Week 5 team**
+  rather than scoping Historical Explorer to games-only.
+- **The win-probability stretch model (PRD §10) has no real training
+  data** — 0 live-poll runs have ever produced `LiveGameState` time-series
+  snapshots, only 26 historical games exist. **Decision: shelve it,
+  explicitly not abandoned** — revisit once `live_game_flow` has run for
+  real during actual game windows.
+
+**`week5/stats-ingestion`** — `BallDontLieClient.get_stats_pages()` plus a
+new, independently-checkpointed, resumable `backfill_stats_flow.py`
+(a fresh `@runtime_checkable StatsPageSource` Protocol alongside the
+existing `RawPullSink`/`CheckpointStore`, matching `CLAUDE.md`'s Prefect
+DI convention). **Real `/stats` shape discovered and a real bug fixed**:
+`min` returns a bare minutes string (`"30"`), not `"MM:SS"` as
+`stg_player_game_stats.sql` had assumed since Week 1 — fixed with
+backward-compatible parsing; the file's header comment updated from
+"unvalidated" to "confirmed against a real ingestion path." 69/69
+`ingestion` tests passing (61 pre-existing + 8 new).
+
+**`week5/foundation-ux`** — a real, working light/dark theme toggle
+(`next-themes`, wired into a new `ThemeProvider`, a new `theme-toggle.tsx`
+with an effect-describing `aria-label`) — `.dark` CSS has existed since the
+UI modernization pass but nothing ever applied it until now. A
+non-destructive "stale" banner on Live Board (60s-no-message threshold,
+distinct from the existing hard-error state, screen-reader-restrained the
+same way the "LIVE" badge already is). An accessibility/mobile audit using
+the `ui-ux-pro-max` skill found one real fix (`scroll-pt-16` for WCAG
+2.4.11 "Focus Not Obscured" under the sticky nav) and one deferred finding
+(the new toggle's touch target is under the 44px mobile guideline).
+
+**`week5/historical-explorer`** — `GET /games` extended with
+`start_date`/`end_date` range filtering (mutually exclusive with the
+existing single-`date` param; an inverted range is a `400`, not a silent
+empty result). A new `GET /player-stats` endpoint reading the Gold
+`player_game_stats` table (filterable by `game_id`/`player_name`, same
+auth/rate-limit/cache conventions as every other route) — correctly
+returns an empty, calmly-worded result today since the table has no real
+rows until `week5/stats-ingestion` is run for real. A new `/explorer` page
+(date-range + player-name search, per-game box-score expansion, three
+distinct empty/loading states). 76/76 `api` tests passing (60 pre-existing
++ 16 new).
+
+**Real problems this round, all caught and fixed without derailing the
+work:**
+- A platform-wide rate limit cut off all three boss agents (and two
+  in-progress employees) mid-task. Recovered by checking each employee's
+  worktree directly on disk for uncommitted-but-real work (nothing was
+  lost — `git status`/diff confirmed exactly what existed before
+  resuming), then resuming each boss/employee agent via its original
+  `agentId` rather than restarting fresh.
+- **Boss agents dispatched with `isolation: "worktree"` did not reliably
+  land in an isolated worktree** — at least two of the three boss agents'
+  first `git checkout -b` ran against the shared main repo checkout
+  instead, which is genuinely risky if it collides with the orchestrating
+  session's own concurrent git commands. Caught via `git status`/`git
+  branch --show-current` on the shared checkout after each incident (found
+  it switched to a `week5/*` branch, switched it back to `main`, confirmed
+  no uncommitted changes were lost); one boss self-corrected by creating
+  its own dedicated worktree mid-run. Worth a closer look before the next
+  weekly round — see project memory for the standing note.
+- One employee (`theme-toggle-and-stale-state`) briefly ran `npm install`
+  against the shared checkout instead of its own worktree; self-caught and
+  restored `package.json`/`package-lock.json` there before committing
+  anything (verified independently afterward — the shared checkout's
+  `git status` showed no drift).
+- Two employees independently found and fixed the same class of sandbox
+  bug: an incidentally-reachable local Redis on the default port let
+  cache-blind tests read stale cross-test values within the cache TTL on a
+  fast rerun. Both fixed it the same way — an isolated `fakeredis` client
+  per test — without coordinating, since they were on different boss teams.
+
+**Integration:** all three boss branches merged into `week5/integration`
+cleanly — no conflicts on `db`/`ingestion`/most of `api`, and `git`'s
+three-way merge correctly combined both Team B and Team C's independent
+additions to `web/app/components/site-nav.tsx` (the theme toggle and the
+new Explorer nav link) without a conflict; verified by reading the merged
+file directly rather than trusting the clean exit code. Full verification
+on the merged branch: `db` 16/16, `ingestion` 69/69, `api` 76/76, `quality`
+54/54, `dbt parse`/`dbt compile --no-populate-cache` both clean, `web`
+`tsc`/`eslint`/`next build` all clean. PR #42 (`week5/integration` →
+`main`) opened with all of the above as the test plan, awaiting human
+sign-off.
+
 ---
 
 ## Known Issues / Caveats
@@ -331,30 +433,42 @@ with all of the above as the test plan, awaiting human sign-off.
   partially true — CI runs `dbt parse` against a real ephemeral Postgres,
   not a full `dbt run`/`dbt test` with seeded data. Worth revisiting once
   there's a sensible way to seed CI's Postgres with representative data.
+- **The win-probability stretch model (PRD §10) is deliberately not
+  built** — no real time-series training data exists (0 live-poll runs
+  have produced `LiveGameState` snapshots; only 26 historical games from a
+  3-day backfill window exist). This is a standing decision the user wants
+  revisited once `live_game_flow` has actually run during real game
+  windows, not a dropped feature.
+- `player_game_stats` still has zero rows in real Postgres as of this
+  writing — Week 5 added the ingestion path (`backfill_stats_flow`) but it
+  hasn't been run for real yet. Historical Explorer's box-score search will
+  correctly show its empty state until that backfill runs once.
+- Two of Week 5's three boss agents did not reliably land in their own
+  isolated worktree despite being dispatched with `isolation: "worktree"`
+  — see the Week 5 timeline entry above and project memory for the
+  standing note to check before the next weekly round.
 
 ## What's Next
 
-**Immediate:** human review + merge of PR #35 (`week4/integration` →
-`main`), then sync local branches the same way as every prior week.
+**Immediate:** human review + merge of PR #42 (`week5/integration` →
+`main`), then sync local branches the same way as every prior week, then
+run the real stats backfill and confirm `player_game_stats` populates.
 
-Per `docs/prd.md` §12, next up after Week 4 is **Week 5 — UI furnishing &
-stretch model**.
+Per `docs/prd.md` §12, next up after Week 5 is **Week 6 — final QA &
+write-up**.
 
-**Beyond Week 4, two items the user has flagged for later, not yet scheduled:**
+**Two items the user has flagged for later, not yet scheduled:**
 
-- **UI needs another pass.** The user's reaction to the current UI
-  modernization pass: "too simple," should be "hyper user focused." The
-  first pass deliberately targeted Week 3's bar (functional, not fully
-  polished — see `docs/prd.md` §11), so this isn't a regression, but the
-  user wants more than Week 5's standard "fully furnished" checklist
-  eventually delivers. Concrete direction not yet gathered — ask what
-  "hyper user focused" means specifically before running another
-  boss/employee UI round.
+- **UI needs another pass.** The user's reaction to the UI modernization
+  pass: "too simple," should be "hyper user focused." Week 5 closed the
+  PRD's own "fully furnished" checklist (states, theme, a11y, mobile), but
+  the user wants more than that checklist delivers. Concrete direction not
+  yet gathered — ask what "hyper user focused" means specifically before
+  running another boss/employee UI round.
 - **A natural-language / AI-assistant interface** — the user wants to
   eventually add a Claude-esque chat interface for asking questions about
   the data in plain language, backed by some form of retrieval (RAG or
   otherwise) over this project's Gold/quality tables. A draft feature
-  proposal was requested and is being written up separately — see
-  `docs/features/ai-assistant-draft.md` once it exists (or the project
-  memory pointer if this file hasn't been created yet) for the options
-  considered and what's recommended for in/out of scope.
+  proposal was written up separately — see `docs/features/ai-assistant-draft.md`
+  (deliberately left uncommitted, per the user's instruction) for the
+  options considered and what's recommended for in/out of scope.
