@@ -60,7 +60,12 @@ class _CountingGamesReader:
     def __init__(self) -> None:
         self.calls: list[date | None] = []
 
-    def list_games(self, filter_date: date | None) -> list[dict]:
+    def list_games(
+        self,
+        filter_date: date | None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict]:
         self.calls.append(filter_date)
         return []
 
