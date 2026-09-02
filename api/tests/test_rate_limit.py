@@ -31,10 +31,13 @@ class _EmptyGamesReader:
 
 
 def test_rate_limit_is_actually_enforced_with_429(monkeypatch):
-    """Hit /games/ well past the 100/minute default limit and confirm a 429.
+    """Hit /games/ well past the 600/minute default limit and confirm a 429.
 
-    `DEFAULT_RATE_LIMIT` is "100/minute" (`api/src/api/core/rate_limit.py`).
-    A dedicated API key keeps this test's ~110 requests isolated from every
+    `DEFAULT_RATE_LIMIT` is "600/minute" (`api/src/api/core/rate_limit.py`,
+    raised from an original 100/minute after a real load test showed that
+    value rejecting ~48% of normal traffic under realistic concurrency,
+    since every caller shares one global budget via the single BFF key).
+    A dedicated API key keeps this test's ~610 requests isolated from every
     other test's rate-limit counter (`_key_by_api_key` keys on `X-API-Key`).
     """
     monkeypatch.setenv("API_SERVICE_KEY", RATE_LIMIT_TEST_API_KEY)
@@ -43,7 +46,7 @@ def test_rate_limit_is_actually_enforced_with_429(monkeypatch):
         with TestClient(app) as client:
             headers = {"X-API-Key": RATE_LIMIT_TEST_API_KEY}
             statuses = [
-                client.get("/games/", headers=headers).status_code for _ in range(110)
+                client.get("/games/", headers=headers).status_code for _ in range(610)
             ]
     finally:
         app.dependency_overrides.pop(get_games_reader, None)
@@ -51,9 +54,9 @@ def test_rate_limit_is_actually_enforced_with_429(monkeypatch):
     ok_count = statuses.count(200)
     rate_limited_count = statuses.count(429)
 
-    # The first 100 requests within the window succeed; anything past that
+    # The first 600 requests within the window succeed; anything past that
     # is rejected with 429 — enforcement, not just decoration.
-    assert ok_count == 100, f"expected exactly 100 requests to succeed, got {ok_count}"
+    assert ok_count == 600, f"expected exactly 600 requests to succeed, got {ok_count}"
     assert rate_limited_count > 0, "expected at least one 429 once the limit was exceeded"
     assert ok_count + rate_limited_count == len(statuses)
     # Once limited, every subsequent request in this window stays limited.

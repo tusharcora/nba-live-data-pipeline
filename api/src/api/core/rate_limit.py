@@ -16,4 +16,13 @@ def _key_by_api_key(request) -> str:
 
 limiter = Limiter(key_func=_key_by_api_key)
 
-DEFAULT_RATE_LIMIT = "100/minute"
+# Because every legitimate caller shares the single BFF-held API key, this
+# limit is a GLOBAL ceiling on all real end-user traffic combined, not a
+# per-user allowance. A real load test (docs/prd.md §09, 2026-09-02, 30
+# simulated concurrent dashboard users — well within the PRD's own "20-50
+# concurrent viewers during a live game window" scenario) hit this at
+# 100/minute: ~48% of otherwise-healthy requests came back 429 purely from
+# normal app traffic, not abuse (p95 latency itself was ~20ms, comfortably
+# under the <300ms target). Raised to comfortably cover that scenario with
+# headroom while still bounding a genuinely malicious scraper.
+DEFAULT_RATE_LIMIT = "600/minute"
