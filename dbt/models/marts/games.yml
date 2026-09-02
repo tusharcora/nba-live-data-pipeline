@@ -8,6 +8,17 @@ models:
       of `stg_games` (balldontlie only) — cross-source reconciliation with
       the public feed (docs/prd.md §07) lands in a later PR and should not
       change this table's grain or column names.
+    config:
+      # `api/src/api/routers/games.py`'s `?date=` filter predicate
+      # (`WHERE game_date = :filter_date`) is the actual hot query pattern
+      # here (docs/prd.md §09 / Week 4 performance plan) — dbt-postgres's
+      # `indexes` config (PostgresIndexConfig: `columns`/`unique`/`type` —
+      # see dbt-postgres 1.11's `dbt/adapters/postgres/impl.py`) creates
+      # this the same way `dbt run` creates the table itself, independent
+      # of db/'s Alembic migrations.
+      indexes:
+        - columns: ["game_date"]
+          unique: false
     columns:
       - name: game_id
         description: balldontlie's `id` for the game. Natural key of this table.

@@ -19,11 +19,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import MetaData, Table, create_engine, select
 from sqlalchemy.engine import Engine
 
+from api.core.cache import cached_json
 from api.core.config import Settings
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
 
 router = APIRouter(prefix="/games", tags=["games"], dependencies=[Depends(require_api_key)])
+
+# Data changes as slowly as the backfill/live flows run (docs/prd.md §09) —
+# a short TTL is enough to absorb request bursts without serving stale data.
+CACHE_TTL_SECONDS = 15
 
 
 @runtime_checkable
@@ -100,5 +105,12 @@ def list_games(
                 status.HTTP_400_BAD_REQUEST, "date must be in YYYY-MM-DD format"
             ) from exc
 
-    rows = reader.list_games(filter_date)
-    return {"data": rows, "count": len(rows)}
+    def _compute() -> dict:
+        rows = reader.list_games(filter_date)
+        return {"data": rows, "count": len(rows)}
+
+    # Cache key incorporates the raw `?date=` value (not just "some date is
+    # set") so a filtered response and the unfiltered/"recent" response
+    # never collide in the cache.
+    cache_key = f"games:{date or 'recent'}"
+    return cached_json(cache_key, CACHE_TTL_SECONDS, _compute)
