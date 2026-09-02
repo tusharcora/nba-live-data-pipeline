@@ -137,7 +137,21 @@
     @apply bg-background text-foreground;
   }
   html {
-    @apply font-sans;
+    /*
+     * `SiteNav` is `sticky top-0` (see app/components/site-nav.tsx), so a
+     * browser's default scroll-into-view for a keyboard-focused element
+     * further down the page can otherwise land it right under the pinned
+     * header — WCAG 2.2 SC 2.4.11 "Focus Not Obscured (Minimum)". 4rem
+     * comfortably clears the nav's single-row height (~57px: py-3 padding
+     * + one row of nav-link/icon content + border). On very narrow
+     * viewports the nav can wrap to two rows (see its `flex-wrap`), which
+     * this static value does not fully cover — SC 2.4.11 only requires the
+     * focused element to be *at least partially* visible, which this still
+     * satisfies; full coverage of the wrapped case would need a
+     * JS-measured height and wasn't pursued here to keep this a CSS-only,
+     * low-risk change.
+     */
+    @apply font-sans scroll-pt-16;
   }
 }
 
