@@ -113,6 +113,33 @@ class BackfillCheckpoint(Base):
     )
 
 
+class AuditLog(Base):
+    """Meta layer: one row per manual write/override against live data
+    (docs/prd.md §08: "Audit log table for any manual write/override, with
+    actor + timestamp").
+
+    No feature that performs a manual override exists yet in this codebase
+    — this table is provisioned ahead of that need, per the Week 4 security
+    pass. `actor` is a free-text identifier (a username, a service name, an
+    operator's email) rather than a foreign key, since there's no unified
+    identity system across the pipeline's processes yet. `detail` is
+    unstructured, nullable JSONB for whatever context a given override
+    wants to record (before/after values, a reason string, etc.) —
+    deliberately not modeled further until a real caller exists to tell us
+    its actual shape.
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class SourceConflict(Base):
     """Meta layer: one row per field-level disagreement between the two data sources."""
 

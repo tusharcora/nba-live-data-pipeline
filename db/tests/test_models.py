@@ -1,4 +1,5 @@
 from db.models import (
+    AuditLog,
     Base,
     BackfillCheckpoint,
     LiveGameState,
@@ -15,6 +16,7 @@ def _column_names(model) -> set[str]:
 
 def test_expected_tables_present():
     assert sorted(t.name for t in Base.metadata.sorted_tables) == [
+        "audit_log",
         "backfill_checkpoints",
         "live_game_state",
         "quality_metrics",
@@ -139,3 +141,24 @@ def test_source_conflict_table():
         "resolution",
         "detected_at",
     }
+
+
+def test_audit_log_table():
+    assert AuditLog.__tablename__ == "audit_log"
+    assert _column_names(AuditLog) == {
+        "id",
+        "actor",
+        "action",
+        "detail",
+        "created_at",
+    }
+
+
+def test_audit_log_nullability():
+    columns = {col.name: col for col in AuditLog.__table__.columns}
+    assert columns["actor"].nullable is False
+    assert columns["action"].nullable is False
+    assert columns["created_at"].nullable is False
+    # `detail` is the one nullable column — a manual override may or may
+    # not have extra context worth recording.
+    assert columns["detail"].nullable is True
