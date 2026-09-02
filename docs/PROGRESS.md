@@ -273,4 +273,23 @@ full pass against the §08 security checklist (CORS lockdown, secrets
 audit, `pip-audit`/`npm audit` clean, manual injection/auth-bypass test),
 Redis cache in front of hot endpoints, DB indexing/connection pooling, and
 a load test against the live-game-window scenario to confirm the p95/
-freshness SLAs from §09.
+freshness SLAs from §09. (Started 2026-09-02.)
+
+**Beyond Week 4, two items the user has flagged for later, not yet scheduled:**
+
+- **UI needs another pass.** The user's reaction to the current UI
+  modernization pass: "too simple," should be "hyper user focused." The
+  first pass deliberately targeted Week 3's bar (functional, not fully
+  polished — see `docs/prd.md` §11), so this isn't a regression, but the
+  user wants more than Week 5's standard "fully furnished" checklist
+  eventually delivers. Concrete direction not yet gathered — ask what
+  "hyper user focused" means specifically before running another
+  boss/employee UI round.
+- **A natural-language / AI-assistant interface** — the user wants to
+  eventually add a Claude-esque chat interface for asking questions about
+  the data in plain language, backed by some form of retrieval (RAG or
+  otherwise) over this project's Gold/quality tables. A draft feature
+  proposal was requested and is being written up separately — see
+  `docs/features/ai-assistant-draft.md` once it exists (or the project
+  memory pointer if this file hasn't been created yet) for the options
+  considered and what's recommended for in/out of scope.
