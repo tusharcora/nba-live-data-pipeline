@@ -16,10 +16,10 @@ from datetime import date as date_type
 from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import MetaData, Table, create_engine, select
+from sqlalchemy import MetaData, Table, select
 from sqlalchemy.engine import Engine
 
-from api.core.config import Settings
+from api.core.db import get_engine
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
 
@@ -50,7 +50,7 @@ class SQLAlchemyGamesReader:
     DEFAULT_LIMIT = 20
 
     def __init__(self, engine: Engine | None = None) -> None:
-        self._engine = engine or create_engine(Settings().runtime_database_url)
+        self._engine = engine or get_engine()
 
     def list_games(self, filter_date: date_type | None) -> list[dict]:
         metadata = MetaData()

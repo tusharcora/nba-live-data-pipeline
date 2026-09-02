@@ -42,12 +42,11 @@ from typing import Protocol
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine, create_engine
 from sqlalchemy.orm import Session
 
 from db.models import QualityMetric, SchemaChangeLog, SourceConflict
 
-from api.core.config import Settings
+from api.core.db import get_engine
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
 
@@ -97,19 +96,9 @@ class SqlAlchemyQualityReader:
         return total, recent
 
 
-_engine: Engine | None = None
-
-
-def _get_engine() -> Engine:
-    global _engine
-    if _engine is None:
-        _engine = create_engine(Settings().runtime_database_url)
-    return _engine
-
-
 def get_quality_reader() -> Iterator[QualityReader]:
     """Default (real) dependency — overridden with a fake in tests."""
-    with Session(_get_engine()) as session:
+    with Session(get_engine()) as session:
         yield SqlAlchemyQualityReader(session)
 
 
