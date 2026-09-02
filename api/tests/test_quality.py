@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import fakeredis
+import redis
 from fastapi.testclient import TestClient
 
+from api.core import cache as cache_module
 from api.main import app
 from api.routers.quality import get_quality_reader
 
@@ -57,15 +60,23 @@ def _conflict(
 
 
 class FakeQualityReader:
-    """Test double for the DB-reading seam — hands back canned rows, no DB involved."""
+    """Test double for the DB-reading seam — hands back canned rows, no DB involved.
+
+    `call_count` counts calls to `latest_metric_rows` (any one of the three
+    reader methods being skipped implies all three are, since the route
+    calls them in a fixed sequence within one `compute()`) so cache tests
+    can prove a hit skips the reader entirely.
+    """
 
     def __init__(self, metric_rows=(), schema_changes=(), conflicts_total=0, conflicts_recent=()):
         self._metric_rows = list(metric_rows)
         self._schema_changes = list(schema_changes)
         self._conflicts_total = conflicts_total
         self._conflicts_recent = list(conflicts_recent)
+        self.call_count = 0
 
     def latest_metric_rows(self):
+        self.call_count += 1
         return self._metric_rows
 
     def recent_schema_changes(self, limit):
@@ -197,3 +208,55 @@ def test_quality_dedups_to_latest_row_per_check_name(monkeypatch):
     assert len(metrics) == 2
     assert by_check["null_rate_points"]["value"] == 0.05
     assert by_check["null_rate_points"]["run_at"] == "2026-08-02T00:00:00+00:00"
+
+
+# --- caching (api/src/api/core/cache.py wired into this route) ---
+
+
+def test_quality_second_request_is_served_from_cache(monkeypatch):
+    """A cache hit must skip the underlying `QualityReader` entirely."""
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    fake = fakeredis.FakeRedis()
+    monkeypatch.setattr(cache_module, "get_cache_client", lambda: fake)
+    reader = FakeQualityReader(
+        metric_rows=[_metric("cross_source_agreement", 0.99, datetime(2026, 8, 30, tzinfo=timezone.utc))]
+    )
+    _override_reader(reader)
+    try:
+        first = client.get("/quality/", headers={"X-API-Key": API_KEY})
+        second = client.get("/quality/", headers={"X-API-Key": API_KEY})
+    finally:
+        _clear_override()
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert reader.call_count == 1
+
+
+def test_quality_falls_open_when_redis_is_unreachable(monkeypatch):
+    """The behavior most worth getting right: a broken cache client must
+    still yield the correct response, not a 500.
+    """
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+
+    class _BrokenClient:
+        def get(self, key):
+            raise redis.exceptions.ConnectionError("connection refused")
+
+        def set(self, key, value, ex=None):
+            raise redis.exceptions.ConnectionError("connection refused")
+
+    monkeypatch.setattr(cache_module, "get_cache_client", lambda: _BrokenClient())
+    reader = FakeQualityReader(
+        metric_rows=[_metric("cross_source_agreement", 0.99, datetime(2026, 8, 30, tzinfo=timezone.utc))]
+    )
+    _override_reader(reader)
+    try:
+        resp = client.get("/quality/", headers={"X-API-Key": API_KEY})
+    finally:
+        _clear_override()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["metrics"][0]["check_name"] == "cross_source_agreement"
+    assert reader.call_count == 1
