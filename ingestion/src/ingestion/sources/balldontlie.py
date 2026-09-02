@@ -49,3 +49,25 @@ class BallDontLieClient:
                 break
 
             params = {**params, "cursor": next_cursor}
+
+    def get_stats_pages(self, date: str) -> Iterator[dict]:
+        """Yield every page of the `/stats` response for a single date.
+
+        Same Bronze contract as `get_games_pages`: each yielded item is the
+        full decoded JSON page (including `meta`), not just `data`. Follows
+        balldontlie's cursor pagination (`meta.next_cursor`) until the cursor
+        is null/absent. Confirmed against balldontlie's own docs
+        (https://docs.balldontlie.io) that `/stats` takes the same `dates[]`
+        array-format query param as `/games` for filtering by date.
+        """
+        params: dict = {"dates[]": date, "per_page": 100}
+
+        while True:
+            page = self._get("/stats", params)
+            yield page
+
+            next_cursor = page.get("meta", {}).get("next_cursor")
+            if not next_cursor:
+                break
+
+            params = {**params, "cursor": next_cursor}

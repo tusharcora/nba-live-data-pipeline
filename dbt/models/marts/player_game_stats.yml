@@ -50,4 +50,8 @@ models:
       - name: turnovers
         description: Turnovers.
       - name: minutes_played
-        description: Minutes played as a decimal (e.g. 34.2 for "34:12"). Null if unparseable/unavailable.
+        description: >
+          Minutes played as a decimal (e.g. 30 for "30", or 34.2 for
+          "34:12" if that format is ever returned). Null if
+          unparseable/unavailable — see stg_player_game_stats for the
+          parse logic.

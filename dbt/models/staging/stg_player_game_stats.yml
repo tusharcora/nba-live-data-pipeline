@@ -10,12 +10,20 @@ models:
       append-only, so the same stat line can appear across multiple pulls
       as a game is corrected/finalized).
 
-      NOTE: the assumed JSON shape of the balldontlie `/stats` response
-      (see model SQL header comment) has not been validated against real
-      ingested data — ingestion is not live yet. The `minutes_played`
-      "MM:SS" -> decimal-minutes parse has been reviewed by eye via
-      `dbt compile` only; it has not been execution-tested against a real
-      Postgres because no live DB is available in this environment.
+      NOTE: the JSON shape of the balldontlie `/stats` response (see model
+      SQL header comment) is now backed by a real ingestion path —
+      confirmed against Employee A1's `BallDontLieClient.get_stats_pages` /
+      `backfill_stats_flow` (PR #36, merged) and independently re-checked
+      against the live docs at https://docs.balldontlie.io. One real
+      mismatch was found and fixed: `minutes_played` previously assumed
+      `data[].min` always comes back "MM:SS"; the real/documented shape is
+      a plain minutes-only string (e.g. "30"), which the parse now handles
+      alongside "MM:SS" (balldontlie has historically been inconsistent
+      about this field across query modes/seasons). This has still only
+      been reviewed via `dbt parse --no-partial-parse` and
+      `dbt compile --no-populate-cache` in this sandbox — it has not been
+      execution-tested against a real Postgres because no live DB is
+      available in this environment.
     columns:
       - name: stat_id
         description: Primary key of one player/game box-score stat line, sourced from the raw payload's `data[].id`.
@@ -59,9 +67,11 @@ models:
         description: Turnovers, sourced from `data[].turnover`.
       - name: minutes_played
         description: >
-          Minutes played as a decimal (e.g. "34:12" -> 34.2), parsed from
-          the raw "MM:SS" string in `data[].min`. Null when the raw value
-          is null, empty, or doesn't match the expected MM:SS pattern
-          (e.g. a player who didn't play).
+          Minutes played as a decimal, parsed from `data[].min`. Handles
+          both real-world formats: a plain minutes-only string (e.g.
+          "30" -> 30, the current documented/confirmed shape) and an
+          "MM:SS" string (e.g. "34:12" -> 34.2, in case older/different
+          data still returns it). Null when the raw value is null, empty,
+          or doesn't match either pattern (e.g. a player who didn't play).
       - name: pulled_at
         description: Timestamp of the raw_pulls row this de-duplicated version was sourced from. Carried through for lineage/debugging, not a business column.

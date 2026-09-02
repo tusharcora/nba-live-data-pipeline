@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BarChart3, Radio } from "lucide-react";
+import { Activity, BarChart3, Radio, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+
+import { ThemeToggle } from "./theme-toggle";
 
 const NAV_LINKS = [
   { href: "/live", label: "Live Board", icon: Radio },
   { href: "/quality", label: "Data Quality Scorecard", icon: BarChart3 },
+  { href: "/explorer", label: "Historical Explorer", icon: Search },
 ] as const;
 
-const FOCUS_RING =
+export const FOCUS_RING =
   "outline-none border border-transparent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 export function SiteNav() {
@@ -54,6 +57,9 @@ export function SiteNav() {
               </li>
             );
           })}
+          <li>
+            <ThemeToggle />
+          </li>
         </ul>
       </nav>
     </header>

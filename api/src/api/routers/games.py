@@ -40,7 +40,12 @@ class GamesReader(Protocol):
     but the DI shape matches the rest of the codebase.
     """
 
-    def list_games(self, filter_date: date_type | None) -> list[dict]: ...
+    def list_games(
+        self,
+        filter_date: date_type | None,
+        start_date: date_type | None = None,
+        end_date: date_type | None = None,
+    ) -> list[dict]: ...
 
 
 class SQLAlchemyGamesReader:
@@ -50,6 +55,14 @@ class SQLAlchemyGamesReader:
     by `game_date` descending (ties broken by `game_id` descending for a
     stable order). `list_games(some_date)` returns every game on that date
     (no limit applied), also ordered by `game_id` descending.
+
+    `start_date`/`end_date` return every game with `game_date` in that
+    inclusive range (either bound may be omitted for an open-ended range),
+    no limit applied. The route layer guarantees `filter_date` and
+    `start_date`/`end_date` are never both set on the same call (combining
+    them is a 400 before it reaches this reader — see the route docstring),
+    so `filter_date` always takes priority here as a defensive fallback
+    only.
     """
 
     DEFAULT_LIMIT = 20
@@ -57,13 +70,23 @@ class SQLAlchemyGamesReader:
     def __init__(self, engine: Engine | None = None) -> None:
         self._engine = engine or get_engine()
 
-    def list_games(self, filter_date: date_type | None) -> list[dict]:
+    def list_games(
+        self,
+        filter_date: date_type | None,
+        start_date: date_type | None = None,
+        end_date: date_type | None = None,
+    ) -> list[dict]:
         metadata = MetaData()
         games = Table("games", metadata, autoload_with=self._engine)
 
         stmt = select(games).order_by(games.c.game_date.desc(), games.c.game_id.desc())
         if filter_date is not None:
             stmt = stmt.where(games.c.game_date == filter_date)
+        elif start_date is not None or end_date is not None:
+            if start_date is not None:
+                stmt = stmt.where(games.c.game_date >= start_date)
+            if end_date is not None:
+                stmt = stmt.where(games.c.game_date <= end_date)
         else:
             stmt = stmt.limit(self.DEFAULT_LIMIT)
 
@@ -78,6 +101,21 @@ def get_games_reader() -> GamesReader:
     return SQLAlchemyGamesReader()
 
 
+def _parse_query_date(value: str | None, param_name: str) -> date_type | None:
+    """Shared `YYYY-MM-DD` parsing/validation for every date-shaped query
+    param on this route (`date`, `start_date`, `end_date`) — one validation
+    pattern, reused rather than duplicated three times.
+    """
+    if value is None:
+        return None
+    try:
+        return date_type.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"{param_name} must be in YYYY-MM-DD format"
+        ) from exc
+
+
 @router.get("/")
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def list_games(
@@ -85,32 +123,68 @@ def list_games(
     date: str | None = Query(
         default=None, description="Filter to a single date, YYYY-MM-DD."
     ),
+    start_date: str | None = Query(
+        default=None,
+        description="Filter to games on or after this date, YYYY-MM-DD. "
+        "Mutually exclusive with `date`.",
+    ),
+    end_date: str | None = Query(
+        default=None,
+        description="Filter to games on or before this date, YYYY-MM-DD. "
+        "Mutually exclusive with `date`.",
+    ),
     reader: GamesReader = Depends(get_games_reader),
 ) -> dict:
     """Reconciled games from Gold (docs/prd.md §06, §11).
 
     - `?date=YYYY-MM-DD` — return every game on that date.
-    - No `date` param — return the most recent 20 games, ordered by
-      `game_date` descending (see `SQLAlchemyGamesReader.DEFAULT_LIMIT`).
+    - `?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` — return every game with
+      `game_date` in that inclusive range. Either bound may be omitted for
+      an open-ended range (e.g. `?start_date=...` alone means "on or after").
+    - No params — return the most recent 20 games, ordered by `game_date`
+      descending (see `SQLAlchemyGamesReader.DEFAULT_LIMIT`).
+
+    `date` and `start_date`/`end_date` are two distinct, mutually exclusive
+    filter modes: combining `date` with either range bound is a 400 rather
+    than one silently winning (a caller should never have to guess a
+    precedence rule). `start_date > end_date` is also a 400 — treated as a
+    caller-side bug (bad date arithmetic) worth surfacing loudly rather than
+    quietly returning an empty result that could be mistaken for "no games
+    on those dates".
 
     Response shape:
         {"data": [<game row as a dict, Gold `games` columns>, ...], "count": <int>}
     """
-    filter_date: date_type | None = None
-    if date is not None:
-        try:
-            filter_date = date_type.fromisoformat(date)
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "date must be in YYYY-MM-DD format"
-            ) from exc
+    filter_date = _parse_query_date(date, "date")
+    parsed_start_date = _parse_query_date(start_date, "start_date")
+    parsed_end_date = _parse_query_date(end_date, "end_date")
+
+    if filter_date is not None and (parsed_start_date is not None or parsed_end_date is not None):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "date cannot be combined with start_date/end_date — use one filter mode",
+        )
+
+    if (
+        parsed_start_date is not None
+        and parsed_end_date is not None
+        and parsed_start_date > parsed_end_date
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "start_date must not be after end_date"
+        )
 
     def _compute() -> dict:
-        rows = reader.list_games(filter_date)
+        rows = reader.list_games(filter_date, parsed_start_date, parsed_end_date)
         return {"data": rows, "count": len(rows)}
 
-    # Cache key incorporates the raw `?date=` value (not just "some date is
-    # set") so a filtered response and the unfiltered/"recent" response
-    # never collide in the cache.
-    cache_key = f"games:{date or 'recent'}"
+    # Cache key incorporates every filter param's raw value (not just "some
+    # filter is set") so single-date, range, and unfiltered/"recent"
+    # responses never collide in the cache.
+    if date is not None:
+        cache_key = f"games:{date}"
+    elif start_date is not None or end_date is not None:
+        cache_key = f"games:range:{start_date or ''}:{end_date or ''}"
+    else:
+        cache_key = "games:recent"
     return cached_json(cache_key, CACHE_TTL_SECONDS, _compute)
