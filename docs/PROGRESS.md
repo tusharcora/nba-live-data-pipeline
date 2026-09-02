@@ -52,10 +52,18 @@ human sign-off.
 - The UI's light-mode palette and the glassmorphism/blur visual treatment
   have never been looked at in a real browser (only `next build` output
   and computed contrast ratios were checked).
-- Week 5's new `backfill_stats_flow` has never been run against real
-  balldontlie data — `player_game_stats` is still empty in real Postgres
-  until that's run, so Historical Explorer's box-score search will show its
-  (correctly-designed) empty state until then.
+- Week 5's new `backfill_stats_flow` was attempted against real balldontlie
+  data (2026-09-02) and failed with a real `401 Unauthorized` from
+  `/stats` specifically (`/games`, hit seconds earlier with the same key,
+  works fine). Confirmed via balldontlie's own docs: `/stats` (player box
+  scores) requires their paid **ALL-STAR** tier ($9.99/mo) or higher — the
+  free tier we're on only covers "Basic" data access. This is a real,
+  external API-tier restriction, not a bug in `get_stats_pages()` or the
+  flow — both are correctly built and correctly rejected. **Decision:
+  leave `player_game_stats` empty for this project rather than pay for a
+  higher tier** — Historical Explorer's box-score search is code-complete
+  and will show its (correctly-designed) empty state indefinitely unless
+  this is revisited with a paid key.
 - Week 5's theme toggle, Live Board stale-state banner, and the
   `/explorer` search page have never been opened in a real browser — same
   code-inspection-only caveat as every prior UI round.
@@ -439,10 +447,17 @@ sign-off.
   3-day backfill window exist). This is a standing decision the user wants
   revisited once `live_game_flow` has actually run during real game
   windows, not a dropped feature.
-- `player_game_stats` still has zero rows in real Postgres as of this
-  writing — Week 5 added the ingestion path (`backfill_stats_flow`) but it
-  hasn't been run for real yet. Historical Explorer's box-score search will
-  correctly show its empty state until that backfill runs once.
+- **`player_game_stats` is permanently empty on the current API plan.**
+  Week 5 built a real, correct ingestion path (`backfill_stats_flow` +
+  `BallDontLieClient.get_stats_pages()`), but running it for real
+  (2026-09-02) got a genuine `401 Unauthorized` from balldontlie's `/stats`
+  endpoint — confirmed via their own docs that player box scores require
+  the paid **ALL-STAR** tier ($9.99/mo+), which this project's free-tier
+  key doesn't have. `/games` remains free-tier-accessible and works fine.
+  **Decision: not paying for a higher tier** — this is an accepted,
+  documented limitation, not a bug. Historical Explorer's box-score search
+  is code-complete and will show its correctly-designed empty state
+  indefinitely unless this is revisited with a paid key.
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
