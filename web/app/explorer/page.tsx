@@ -1,0 +1,654 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  CalendarX,
+  ChevronDown,
+  ChevronUp,
+  Inbox,
+  Search,
+  TriangleAlert,
+  UserRound,
+} from "lucide-react";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+// Response shapes match `GET /games` and the new `GET /player-stats`
+// FastAPI endpoints (Employee "games-search-api", week5/historical-explorer,
+// already merged) as fanned out by this page's own `/api/explorer` BFF
+// route (`app/api/explorer/route.ts`) — see that file's header for the
+// exact request/response contract.
+type GameRow = {
+  game_id: number;
+  game_date: string;
+  season: number;
+  status: string;
+  postseason: boolean;
+  home_team: string;
+  away_team: string;
+  home_score: number | null;
+  away_score: number | null;
+  source_pulled_at: string;
+};
+
+type PlayerStatRow = {
+  stat_id: number;
+  game_id: number;
+  player_id: number;
+  player_first_name: string;
+  player_last_name: string;
+  team: string;
+  points: number;
+  rebounds: number;
+  assists: number;
+  steals: number;
+  blocks: number;
+  turnovers: number;
+  minutes_played: string | null;
+};
+
+type ApiList<T> = { data: T[]; count: number };
+
+type ExplorerResponse = {
+  games: ApiList<GameRow> | null;
+  playerStats: ApiList<PlayerStatRow> | null;
+};
+
+type FetchState<T> =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "loaded"; result: T };
+
+const GAMES_FETCH_ERROR =
+  "Couldn't reach the games service. Please try your search again.";
+const PLAYER_SEARCH_FETCH_ERROR =
+  "Couldn't reach the player stats service. Please try your search again.";
+const BOX_SCORE_FETCH_ERROR = "Couldn't load the box score. Try again.";
+
+/** "YYYY-MM-DD" -> "Jan 5, 2026", parsed as a calendar date (no timezone shift). */
+function formatGameDate(dateStr: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return dateStr;
+  const [, y, m, d] = match;
+  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function prettifyStatus(status: string): string {
+  const cleaned = status.replace(/^status[_-]?/i, "").trim();
+  if (!cleaned) return "Unknown";
+  return cleaned
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function statusBadgeVariant(
+  status: string
+): "secondary" | "outline" | "default" {
+  const normalized = status.toUpperCase();
+  if (normalized.includes("FINAL")) return "secondary";
+  if (normalized.includes("IN_PROGRESS") || normalized.includes("HALFTIME"))
+    return "default";
+  return "outline";
+}
+
+function displayScore(score: number | null): string {
+  return score === null || score === undefined ? "–" : String(score);
+}
+
+/** Calm, deliberate empty state — icon + two-line message, per the
+ * LiveBoard/quality-page precedent. Distinct icon+wording per call site so
+ * "no games matched" is never confused with "player stats aren't in yet". */
+function EmptyState({
+  icon,
+  title,
+  message,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  message: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
+      {icon}
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+/** Loading skeleton shaped like the real game-result list, not a spinner. */
+function GamesSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Loading games"
+      className="flex flex-col gap-3"
+    >
+      <span className="sr-only">Searching games…</span>
+      {[0, 1, 2, 3].map((i) => (
+        <Card key={i} aria-hidden="true" className="gap-3">
+          <CardHeader className="flex-row items-center justify-between gap-2">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-4 w-6" />
+              <Skeleton className="h-4 w-20" />
+            </div>
+            <Skeleton className="h-7 w-28 rounded-lg" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function BoxScoreTable({ rows }: { rows: PlayerStatRow[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Player</TableHead>
+          <TableHead>Team</TableHead>
+          <TableHead className="text-right">Pts</TableHead>
+          <TableHead className="text-right">Reb</TableHead>
+          <TableHead className="text-right">Ast</TableHead>
+          <TableHead className="text-right">Stl</TableHead>
+          <TableHead className="text-right">Blk</TableHead>
+          <TableHead className="text-right">TO</TableHead>
+          <TableHead className="text-right">Min</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.stat_id}>
+            <TableCell className="font-medium text-foreground">
+              {row.player_first_name} {row.player_last_name}
+            </TableCell>
+            <TableCell className="text-muted-foreground">{row.team}</TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.points}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.rebounds}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.assists}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.steals}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.blocks}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {row.turnovers}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+              {row.minutes_played ?? "–"}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** Inline per-game box score section — its own fetch, its own states.
+ * The empty state here is deliberately worded differently from "no games
+ * matched your search": zero rows here means the game matched fine, it's
+ * player_game_stats that hasn't been populated for it yet. */
+function BoxScoreSection({
+  state,
+}: {
+  state: FetchState<ApiList<PlayerStatRow>> | undefined;
+}) {
+  if (!state || state.status === "loading") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="Loading box score"
+        className="flex flex-col gap-2 border-t border-border pt-3"
+      >
+        <span className="sr-only">Loading box score…</span>
+        <Skeleton className="h-4 w-full" aria-hidden="true" />
+        <Skeleton className="h-4 w-full" aria-hidden="true" />
+        <Skeleton className="h-4 w-2/3" aria-hidden="true" />
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <p className="border-t border-border pt-3 text-sm text-destructive">
+        {state.message}
+      </p>
+    );
+  }
+
+  if (state.result.data.length === 0) {
+    return (
+      <div className="border-t border-border pt-3">
+        <EmptyState
+          icon={<Inbox aria-hidden="true" className="size-5 text-muted-foreground" />}
+          title="Player box scores aren't available for this game yet"
+          message="The stats-ingestion pipeline hasn't populated player_game_stats for this game yet — check back once that lands."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <BoxScoreTable rows={state.result.data} />
+    </div>
+  );
+}
+
+function GameCard({
+  game,
+  expanded,
+  onToggle,
+  boxScoreState,
+}: {
+  game: GameRow;
+  expanded: boolean;
+  onToggle: () => void;
+  boxScoreState: FetchState<ApiList<PlayerStatRow>> | undefined;
+}) {
+  return (
+    <Card className="gap-3">
+      <CardHeader className="flex-row items-center justify-between gap-2">
+        <CardTitle className="font-mono text-xs font-medium tracking-wide text-muted-foreground">
+          {formatGameDate(game.game_date)}
+          {game.postseason ? " · Postseason" : ""}
+        </CardTitle>
+        <CardAction>
+          <Badge variant={statusBadgeVariant(game.status)}>
+            {prettifyStatus(game.status)}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm text-foreground">
+            <span>{game.away_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.away_score)}
+            </span>
+            <span className="text-muted-foreground">@</span>
+            <span>{game.home_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.home_score)}
+            </span>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="cursor-pointer"
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            {expanded ? "Hide box score" : "View box score"}
+            {expanded ? (
+              <ChevronUp aria-hidden="true" data-icon="inline-end" className="size-4" />
+            ) : (
+              <ChevronDown aria-hidden="true" data-icon="inline-end" className="size-4" />
+            )}
+          </Button>
+        </div>
+
+        {expanded && <BoxScoreSection state={boxScoreState} />}
+      </CardContent>
+    </Card>
+  );
+}
+
+async function fetchExplorer(params: URLSearchParams): Promise<ExplorerResponse> {
+  const query = params.toString();
+  const res = await fetch(`/api/explorer${query ? `?${query}` : ""}`);
+  if (!res.ok) {
+    throw new Error(`/api/explorer responded ${res.status}`);
+  }
+  return res.json();
+}
+
+export default function ExplorerPage() {
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [playerName, setPlayerName] = useState("");
+
+  const [gamesState, setGamesState] = useState<FetchState<ApiList<GameRow>>>({
+    status: "loading",
+  });
+  const [playerSearchState, setPlayerSearchState] = useState<
+    FetchState<ApiList<PlayerStatRow>> | null
+  >(null);
+  const [lastSearchedName, setLastSearchedName] = useState("");
+
+  const [expandedGameIds, setExpandedGameIds] = useState<Set<number>>(
+    () => new Set()
+  );
+  const [boxScores, setBoxScores] = useState<
+    Record<number, FetchState<ApiList<PlayerStatRow>> | undefined>
+  >({});
+
+  const dateRangeInvalid =
+    startDate !== "" && endDate !== "" && startDate > endDate;
+
+  // Fires the fetch and, once it resolves, writes the loaded/error result
+  // state. Deliberately does NOT synchronously set any "loading" state at
+  // the top (before the `await`) — that reset lives in `handleSubmit`
+  // instead, an event handler, so this function stays safe to call
+  // directly from the mount effect below without a synchronous setState
+  // inside the effect body (see LiveBoard.tsx's onmessage/onerror callbacks
+  // for the same "setState only after the async gap" shape).
+  async function performSearch(
+    nextStartDate: string,
+    nextEndDate: string,
+    nextPlayerName: string
+  ) {
+    const trimmedName = nextPlayerName.trim();
+
+    const params = new URLSearchParams();
+    if (nextStartDate) params.set("start_date", nextStartDate);
+    if (nextEndDate) params.set("end_date", nextEndDate);
+    if (trimmedName) params.set("player_name", trimmedName);
+
+    try {
+      const data = await fetchExplorer(params);
+      setLastSearchedName(trimmedName);
+      setGamesState({
+        status: "loaded",
+        result: data.games ?? { data: [], count: 0 },
+      });
+      setPlayerSearchState(
+        trimmedName
+          ? { status: "loaded", result: data.playerStats ?? { data: [], count: 0 } }
+          : null
+      );
+    } catch {
+      setLastSearchedName(trimmedName);
+      setGamesState({ status: "error", message: GAMES_FETCH_ERROR });
+      setPlayerSearchState(
+        trimmedName ? { status: "error", message: PLAYER_SEARCH_FETCH_ERROR } : null
+      );
+    }
+  }
+
+  // Initial load: most recent 20 games, no filters — so the page shows a
+  // furnished results view before the user interacts with the form. The
+  // `gamesState`/`playerSearchState` useState initializers already reflect
+  // this "loading, no player search yet" starting point, so no reset is
+  // needed here — and unlike `handleSubmit`, this runs inside an effect, so
+  // the setState calls are kept inside `.then`/`.catch` callback literals
+  // (same shape as LiveBoard.tsx's `onmessage`/`onerror`) rather than going
+  // through the shared `performSearch` async function directly, so the
+  // effect body itself never calls setState synchronously.
+  useEffect(() => {
+    fetchExplorer(new URLSearchParams())
+      .then((data) => {
+        setGamesState({
+          status: "loaded",
+          result: data.games ?? { data: [], count: 0 },
+        });
+      })
+      .catch(() => {
+        setGamesState({ status: "error", message: GAMES_FETCH_ERROR });
+      });
+  }, []);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (dateRangeInvalid) return;
+    setGamesState({ status: "loading" });
+    setPlayerSearchState(playerName.trim() ? { status: "loading" } : null);
+    // A fresh search invalidates any previously-expanded per-game box
+    // scores from a prior result set.
+    setExpandedGameIds(new Set());
+    setBoxScores({});
+    performSearch(startDate, endDate, playerName);
+  }
+
+  async function loadBoxScore(gameId: number) {
+    setBoxScores((prev) => ({ ...prev, [gameId]: { status: "loading" } }));
+    try {
+      const params = new URLSearchParams({ game_id: String(gameId) });
+      const data = await fetchExplorer(params);
+      setBoxScores((prev) => ({
+        ...prev,
+        [gameId]: {
+          status: "loaded",
+          result: data.playerStats ?? { data: [], count: 0 },
+        },
+      }));
+    } catch {
+      setBoxScores((prev) => ({
+        ...prev,
+        [gameId]: { status: "error", message: BOX_SCORE_FETCH_ERROR },
+      }));
+    }
+  }
+
+  function toggleBoxScore(gameId: number) {
+    setExpandedGameIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(gameId)) {
+        next.delete(gameId);
+      } else {
+        next.add(gameId);
+        if (!boxScores[gameId]) {
+          loadBoxScore(gameId);
+        }
+      }
+      return next;
+    });
+  }
+
+  return (
+    <div className="flex flex-1 flex-col font-sans">
+      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            Historical Explorer
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Search past games by date range, and look up a player&apos;s box
+            score across games.
+          </p>
+        </div>
+
+        <Card>
+          <CardContent>
+            <form
+              onSubmit={handleSubmit}
+              className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-end lg:grid-cols-[1fr_1fr_1.4fr_auto]"
+            >
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="start-date"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  From
+                </label>
+                <Input
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  max={endDate || undefined}
+                  aria-invalid={dateRangeInvalid || undefined}
+                  onChange={(event) => setStartDate(event.target.value)}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="end-date"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  To
+                </label>
+                <Input
+                  id="end-date"
+                  type="date"
+                  value={endDate}
+                  min={startDate || undefined}
+                  aria-invalid={dateRangeInvalid || undefined}
+                  onChange={(event) => setEndDate(event.target.value)}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="player-name"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Player name
+                </label>
+                <Input
+                  id="player-name"
+                  type="text"
+                  placeholder="e.g. LeBron James"
+                  value={playerName}
+                  onChange={(event) => setPlayerName(event.target.value)}
+                />
+              </div>
+
+              <Button
+                type="submit"
+                className="cursor-pointer sm:col-span-2 lg:col-span-1"
+                disabled={dateRangeInvalid}
+              >
+                Search
+                <Search aria-hidden="true" data-icon="inline-end" className="size-4" />
+              </Button>
+
+              {dateRangeInvalid && (
+                <p
+                  role="alert"
+                  className="text-sm text-destructive sm:col-span-2 lg:col-span-4"
+                >
+                  Start date must be on or before end date.
+                </p>
+              )}
+            </form>
+          </CardContent>
+        </Card>
+
+        <section aria-label="Games" className="flex flex-col gap-3">
+          <h2 className="text-lg font-medium text-foreground">Games</h2>
+
+          {gamesState.status === "loading" && <GamesSkeleton />}
+
+          {gamesState.status === "error" && (
+            <Alert variant="destructive">
+              <TriangleAlert aria-hidden="true" />
+              <AlertTitle>Couldn&apos;t load games</AlertTitle>
+              <AlertDescription>{gamesState.message}</AlertDescription>
+            </Alert>
+          )}
+
+          {gamesState.status === "loaded" && gamesState.result.data.length === 0 && (
+            <EmptyState
+              icon={<CalendarX aria-hidden="true" className="size-6 text-muted-foreground" />}
+              title="No games matched your search"
+              message="Try widening the date range or clearing the filters to see more games."
+            />
+          )}
+
+          {gamesState.status === "loaded" && gamesState.result.data.length > 0 && (
+            <div className="flex flex-col gap-3">
+              {gamesState.result.data.map((game) => (
+                <GameCard
+                  key={game.game_id}
+                  game={game}
+                  expanded={expandedGameIds.has(game.game_id)}
+                  onToggle={() => toggleBoxScore(game.game_id)}
+                  boxScoreState={boxScores[game.game_id]}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {playerSearchState && (
+          <section aria-label="Player search results" className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium text-foreground">
+              Player stats for &ldquo;{lastSearchedName}&rdquo;
+            </h2>
+
+            {playerSearchState.status === "loading" && (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label="Searching player stats"
+                className="flex flex-col gap-2"
+              >
+                <span className="sr-only">Searching player stats…</span>
+                <Skeleton className="h-10 w-full" aria-hidden="true" />
+                <Skeleton className="h-10 w-full" aria-hidden="true" />
+              </div>
+            )}
+
+            {playerSearchState.status === "error" && (
+              <Alert variant="destructive">
+                <TriangleAlert aria-hidden="true" />
+                <AlertTitle>Couldn&apos;t load player stats</AlertTitle>
+                <AlertDescription>{playerSearchState.message}</AlertDescription>
+              </Alert>
+            )}
+
+            {playerSearchState.status === "loaded" &&
+              playerSearchState.result.data.length === 0 && (
+                <EmptyState
+                  icon={<UserRound aria-hidden="true" className="size-6 text-muted-foreground" />}
+                  title={`No player box scores found for "${lastSearchedName}" yet`}
+                  message="Player-level stats are still being backfilled by the ingestion pipeline — this is expected until that lands, not an error."
+                />
+              )}
+
+            {playerSearchState.status === "loaded" &&
+              playerSearchState.result.data.length > 0 && (
+                <BoxScoreTable rows={playerSearchState.result.data} />
+              )}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}

@@ -15,25 +15,44 @@ API_KEY = "test-service-key"
 class FakeGamesReader:
     """Test double for the games-reader DI seam (`GamesReader` protocol).
 
-    Records the `filter_date` it was called with so tests can assert the
-    route passes the parsed `?date=` query param through correctly, and
-    applies the same date-equality filtering a real SQL `WHERE` clause
-    would, so the "date filter" test exercises real route behavior rather
-    than a pre-filtered fixture. Also counts calls so cache tests can prove
-    a hit skips this reader entirely.
+    Records the `filter_date`/`start_date`/`end_date` it was called with so
+    tests can assert the route passes the parsed query params through
+    correctly, and applies the same date-equality/range filtering a real SQL
+    `WHERE` clause would, so the filter tests exercise real route behavior
+    rather than a pre-filtered fixture. Also counts calls so cache tests can
+    prove a hit skips this reader entirely.
     """
 
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
         self.received_filter_date: date | None | str = "not-called"
+        self.received_start_date: date | None | str = "not-called"
+        self.received_end_date: date | None | str = "not-called"
         self.call_count = 0
 
-    def list_games(self, filter_date: date | None) -> list[dict]:
+    def list_games(
+        self,
+        filter_date: date | None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict]:
         self.call_count += 1
         self.received_filter_date = filter_date
-        if filter_date is None:
-            return self.rows
-        return [row for row in self.rows if row["game_date"] == filter_date]
+        self.received_start_date = start_date
+        self.received_end_date = end_date
+
+        if filter_date is not None:
+            return [row for row in self.rows if row["game_date"] == filter_date]
+
+        if start_date is not None or end_date is not None:
+            rows = self.rows
+            if start_date is not None:
+                rows = [row for row in rows if row["game_date"] >= start_date]
+            if end_date is not None:
+                rows = [row for row in rows if row["game_date"] <= end_date]
+            return rows
+
+        return self.rows
 
 
 FAKE_ROWS = [
@@ -116,6 +135,97 @@ def test_list_games_rejects_malformed_date(client):
     assert resp.status_code == 400
 
 
+def test_list_games_filters_by_date_range(client):
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/",
+        params={"start_date": "2026-01-01", "end_date": "2026-01-01"},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["data"][0]["game_id"] == 2
+    assert reader.received_start_date == date(2026, 1, 1)
+    assert reader.received_end_date == date(2026, 1, 1)
+    assert reader.received_filter_date is None
+
+
+def test_list_games_rejects_malformed_start_date(client):
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/", params={"start_date": "not-a-date"}, headers={"X-API-Key": API_KEY}
+    )
+
+    assert resp.status_code == 400
+
+
+def test_list_games_rejects_malformed_end_date(client):
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/", params={"end_date": "not-a-date"}, headers={"X-API-Key": API_KEY}
+    )
+
+    assert resp.status_code == 400
+
+
+def test_list_games_rejects_start_date_after_end_date(client):
+    """`start_date > end_date` is explicitly rejected with a 400 rather than
+    silently returning an empty result — this project chose "loud" here so a
+    caller-side date-arithmetic bug surfaces immediately instead of looking
+    like "no games happened".
+    """
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/",
+        params={"start_date": "2026-01-02", "end_date": "2026-01-01"},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 400
+    assert reader.received_filter_date == "not-called"  # never reached the reader
+
+
+def test_list_games_rejects_date_combined_with_start_date(client):
+    """`date` and `start_date`/`end_date` are mutually exclusive filter
+    modes — combining them is rejected with a 400 rather than one silently
+    winning, so a caller never gets a surprising precedence rule.
+    """
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/",
+        params={"date": "2026-01-01", "start_date": "2026-01-01"},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 400
+    assert reader.received_filter_date == "not-called"
+
+
+def test_list_games_rejects_date_combined_with_end_date(client):
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/",
+        params={"date": "2026-01-01", "end_date": "2026-01-02"},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 400
+
+
 def test_list_games_still_requires_api_key_even_with_reader_overridden(client):
     reader = FakeGamesReader(FAKE_ROWS)
     _override_reader(reader)
@@ -157,6 +267,29 @@ def test_list_games_date_filter_does_not_collide_with_unfiltered_cache_entry(cli
 
     assert unfiltered.json()["count"] == 2
     assert filtered.json()["count"] == 1
+    assert reader.call_count == 2  # both were misses against distinct keys
+
+
+def test_list_games_range_filter_does_not_collide_with_single_date_cache_entry(client, monkeypatch):
+    """`?start_date=&end_date=` and `?date=` must be cached separately even
+    when they'd otherwise resolve to overlapping data.
+    """
+    fake = fakeredis.FakeRedis()
+    monkeypatch.setattr(cache_module, "get_cache_client", lambda: fake)
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    single_date = client.get(
+        "/games/", params={"date": "2026-01-01"}, headers={"X-API-Key": API_KEY}
+    )
+    ranged = client.get(
+        "/games/",
+        params={"start_date": "2026-01-01", "end_date": "2026-01-01"},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert single_date.json()["count"] == 1
+    assert ranged.json()["count"] == 1
     assert reader.call_count == 2  # both were misses against distinct keys
 
 
