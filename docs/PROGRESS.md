@@ -16,63 +16,78 @@ stale.
 
 ## Current Status (2026-09-02)
 
-Weeks 1–5 of the PRD plan are built; Weeks 1–4 (foundations through security
-& performance) plus the UI modernization pass are merged to `main`. Week 5
-(UI furnishing, stats ingestion, Historical Explorer) is built, integrated
-(`week5/integration`), and fully tested — PR #42 to `main` is open, awaiting
-human sign-off.
+Weeks 1–6 of the PRD plan are complete. Weeks 1–5 (foundations through
+Historical Explorer) are merged to `main`. Week 6 (final QA & write-up) is
+done: a real end-to-end browser walkthrough, a real load test that found
+and fixed a genuine bug, a real schema-drift run, a demo GIF
+(`docs/demo/nba-pipeline-demo.gif`), and this write-up.
 
-**What's confirmed working right now, with real data, not mocks:**
+**What's confirmed working right now, with real data and a real browser,
+not mocks:**
 - `make up` → `make migrate` → `make dbt-run` → real schema, roles, and Gold
-  tables in Postgres, including Week 4's `audit_log` table and the three new
-  hot-path indexes (`quality_metrics`, `schema_change_log`,
-  `source_conflicts`) plus dbt's `games.game_date` index.
+  tables in Postgres, including Week 4's `audit_log` table, the hot-path
+  indexes, and dbt's `games.game_date` index.
 - A real historical backfill (`ingestion/flows/backfill_flow.py`) against
   balldontlie's live API — the assumed JSON shape in `stg_games.sql`
-  (flagged "unverified" since Week 1) is now confirmed byte-for-byte correct.
-- `GET /games`, `/games?date=...`, `/quality` all serving real data with
-  real API-key enforcement (`401` without a key), real CORS behavior
-  (matching `Origin` gets the header, non-matching doesn't), real Redis
-  caching (`games:<date>` key, 15s TTL, confirmed hit on second request),
-  and real rate limiting (100/minute enforced, 429 past the limit).
+  (flagged "unverified" since Week 1) is confirmed byte-for-byte correct.
+- `GET /games`, `/games?date=...`, `/games?start_date=&end_date=`,
+  `/player-stats`, `/quality` all serving real data with real API-key
+  enforcement, real CORS, real Redis caching, and real rate limiting.
+- The security definition-of-done (`docs/prd.md` §08) confirmed in a real
+  browser, not just via `curl`/tests: the API key never appears in any
+  network request, response body, or header the browser can see —
+  `/quality` fetches entirely server-side (zero client-visible API calls
+  at all), `/explorer` only ever calls its own domain's `/api/explorer`.
+- **A real load test** (`docs/performance-loadtest.md`) at 30 and 50
+  concurrent simulated dashboard users found and fixed a genuine bug: the
+  shared-API-key rate limit (100/minute, set in Week 3, never load-tested)
+  was a global ceiling on *all* real end-user traffic combined, rejecting
+  ~48% of normal requests with 429s under realistic concurrency. Fixed by
+  raising it to 600/minute; re-verified at 0 failures and aggregate p95
+  ~23-26ms — about 12x under the PRD's <300ms target.
+- **A real theme toggle, real Live Board/Quality/Explorer empty states,
+  real Historical Explorer search** (date-range and player-name, both
+  confirmed via actual network requests carrying the right query params),
+  and **a real, working keyboard focus ring** (`:focus-visible` confirmed
+  true with an active box-shadow ring via real Tab navigation) — all
+  verified in an actual Chrome browser for the first time this week,
+  closing caveats that had been open since Week 3/5.
+- A real schema-drift check run (`quality.fingerprint.check_schema_drift`)
+  against the 3 real `raw_pulls` rows from the Week 1 backfill: zero drift
+  detected, confirming balldontlie's `/games` schema was genuinely stable
+  across the backfill window — a real (if quiet) result, not fabricated.
 - The `ALTER DEFAULT PRIVILEGES FOR ROLE nba` mechanism from Week 1
-  genuinely auto-grants `api_reader` `SELECT` on brand-new tables — first
-  real-world proof, via Week 4's new `audit_log` table.
-- The Next.js app (`/`, `/live`, `/quality`) rendering for real, including
-  the BFF proxy routes reaching FastAPI correctly.
+  genuinely auto-grants `api_reader` `SELECT` on brand-new tables.
 
-**What's not yet exercised for real:**
-- `live_game_flow` (live polling) and the `quality/` package's four checks
-  (fingerprinting, volumetric, PSI drift, reconciliation) are fully built
-  and unit-tested, but nothing schedules or invokes them on a recurring
-  basis yet — they're tested libraries, not running jobs.
-- SSE streaming (`/api/live`) has never been opened in a real browser or
-  deployed to real Vercel — the code follows the documented Vercel-safe
-  pattern, but that's still unverified in practice.
-- The UI's light-mode palette and the glassmorphism/blur visual treatment
-  have never been looked at in a real browser (only `next build` output
-  and computed contrast ratios were checked).
-- Week 5's new `backfill_stats_flow` was attempted against real balldontlie
-  data (2026-09-02) and failed with a real `401 Unauthorized` from
-  `/stats` specifically (`/games`, hit seconds earlier with the same key,
-  works fine). Confirmed via balldontlie's own docs: `/stats` (player box
-  scores) requires their paid **ALL-STAR** tier ($9.99/mo) or higher — the
-  free tier we're on only covers "Basic" data access. This is a real,
-  external API-tier restriction, not a bug in `get_stats_pages()` or the
-  flow — both are correctly built and correctly rejected. **Decision:
-  leave `player_game_stats` empty for this project rather than pay for a
-  higher tier** — Historical Explorer's box-score search is code-complete
-  and will show its (correctly-designed) empty state indefinitely unless
-  this is revisited with a paid key.
-- Week 5's theme toggle, Live Board stale-state banner, and the
-  `/explorer` search page have never been opened in a real browser — same
-  code-inspection-only caveat as every prior UI round.
-- The Week 4 `api/loadtest/locustfile.py` load test itself hasn't been run
-  (needs a sustained run against a live server, not a quick verification
-  pass — left for a dedicated session).
+**What's still not exercised for real, by design or external constraint:**
+- `live_game_flow` (live polling) has never run during a real game window,
+  so freshness (<30s target), the `quality/` package's volumetric and
+  reconciliation checks (both need `player_game_stats` and/or dual-source
+  data that don't exist), and the Live Board's live-game rendering/stale-
+  banner behavior are all still unverified against real live data. The
+  empty/no-live-games states are confirmed correct; the live-data path
+  itself isn't.
+- `player_game_stats` is permanently empty on the current balldontlie plan
+  (see below) — Historical Explorer's box-score feature is code-complete
+  and browser-verified against its own correctly-designed empty state, not
+  against real player rows.
+- SSE has never been deployed to real Vercel — confirmed working over a
+  real local browser `EventSource` connection this week (no console
+  errors, correct empty-state rendering), but the Vercel-specific
+  streaming/buffering behavior from `docs/prd.md` §13 remains unverified.
+- Mobile-breakpoint rendering (375px) could not be visually verified this
+  week — a real tooling limitation (this session's browser automation
+  viewport stayed pinned at 2000x1120 regardless of `resize_window`), not
+  a project gap. Verification here still rests on Week 5's code-level
+  responsive-class review (`grid-cols-1 sm:grid-cols-2`, `overflow-x-auto`
+  table wrappers).
+- `backfill_stats_flow` was run for real (2026-09-02) and correctly got a
+  `401 Unauthorized` from balldontlie's `/stats` endpoint — confirmed via
+  their docs that player box scores require the paid ALL-STAR tier
+  ($9.99/mo+); the free tier only covers "Basic" data access. **Decision:
+  not paying for a higher tier** — an accepted, documented limitation.
 
-**Next up per `docs/prd.md` §12:** human sign-off + merge of PR #42, then
-Week 6 (final QA & write-up).
+**Per `docs/prd.md` §12, all 6 weeks are now complete.**
 
 ---
 
@@ -412,6 +427,75 @@ on the merged branch: `db` 16/16, `ingestion` 69/69, `api` 76/76, `quality`
 `main`) opened with all of the above as the test plan, awaiting human
 sign-off.
 
+### Week 6 — Final QA, real load test, demo, write-up (2026-09-02)
+
+No boss/employee round this week — Week 6 is fundamentally a single
+coherent QA/wrap-up pass (end-to-end walkthrough, demo, write-up), not
+parallel feature work, so it was done directly against live infra and a
+real Chrome browser rather than spinning up another multi-agent round.
+
+**Real browser walkthrough** (first time ever for this project — every
+prior "needs a real browser" caveat since Week 3 was closed or narrowed
+this week): loaded `/`, `/live`, `/quality`, `/explorer` in an actual
+Chrome tab against the locally-running stack. Confirmed real, not
+by-inspection: the theme toggle switches and persists across navigation
+with genuine WCAG-real contrast (not an inverted palette); Live Board and
+Quality Scorecard render their correct empty states with zero console
+errors and a clean SSE connection; Historical Explorer loads real games
+data, its date-range and player-name search both fire real
+`/api/explorer` requests carrying the right query params (verified via
+the browser's own network log, not assumed from the code); the box-score
+expansion shows its correctly-designed "not available yet" empty state;
+keyboard `Tab` navigation genuinely lands focus on real interactive
+elements with `:focus-visible` true and an active ring (confirmed via
+`getComputedStyle`, not just a screenshot); and the API key never appears
+in any network request, response body, or header the browser can see
+(`/quality`'s fetch is entirely server-side — zero client-visible API
+calls at all for that page). One real tooling limitation hit and
+documented rather than worked around: this session's browser automation
+viewport stayed pinned at 2000×1120 regardless of `resize_window`, so
+mobile-breakpoint rendering could not be visually confirmed this week —
+verification there still rests on Week 5's code-level responsive-class
+review.
+
+**A real load test found and fixed a genuine bug.** Ran
+`api/loadtest/locustfile.py` (written in Week 4, never executed until now)
+headless against the live API at 30 and 50 concurrent users — within the
+PRD's own "live game window" scenario, not an adversarial load. At the
+original `100/minute` shared rate limit, ~48% of otherwise-healthy
+requests came back `429` purely from normal app traffic: since every real
+caller shares one BFF-held API key by design (`docs/prd.md` §08), that
+limit was a global ceiling on *all* end-user traffic combined, not a
+per-user allowance — a correct security design whose consequence had
+never been load-tested. Fixed by raising it to `600/minute`
+(`api/src/api/core/rate_limit.py`, reasoning recorded inline; one test
+updated to match). Re-run at both concurrency levels: **zero failures,
+aggregate p95 ≈ 23-26ms — about 12x under the PRD's <300ms target**, with
+no connection-pool exhaustion. Full write-up with exact per-route numbers
+in `docs/performance-loadtest.md`.
+
+**A real (if quiet) quality-check run.** `player_game_stats` being
+genuinely empty (see Known Issues) means the volumetric and reconciliation
+checks have no real data to run meaningfully against — running them would
+have produced an empty/trivial result, not a demonstration, so they
+weren't forced. Schema fingerprinting, however, only needs `raw_pulls`
+(Bronze), which does have 3 real rows from the Week 1 backfill — ran
+`quality.fingerprint.check_schema_drift` for real across all 3, in order.
+Result: **zero schema changes detected**, a genuine confirmation that
+balldontlie's `/games` schema was stable across the real backfill window.
+No drift event occurred to "catch" for the demo (per `docs/prd.md` §12's
+own conditional phrasing, "if one occurred during the build") — this is
+reported honestly rather than fabricated.
+
+**Demo recorded.** A short GIF (`docs/demo/nba-pipeline-demo.gif`) walking
+through the theme toggle, Live Board, Historical Explorer (including a
+real box-score expansion), and Quality Scorecard, captured live against
+the running stack via Chrome browser automation.
+
+**Write-ups added:** `docs/performance-loadtest.md` (full load-test
+report), this Timeline entry, and `README.md`/resume-bullets updates
+(§14) with real numbers filled in per `docs/prd.md`'s own request.
+
 ---
 
 ## Known Issues / Caveats
@@ -422,18 +506,24 @@ sign-off.
   yet. Wiring these into a Prefect deployment/schedule is unstarted work,
   not a bug.
 - SSE (`/api/live` → the BFF's passthrough → `EventSource` in the browser)
-  has never been exercised end-to-end in a real browser, and never
-  deployed to real Vercel. The code follows the documented pattern from
-  `docs/prd.md` §13, but the Vercel-specific streaming/timeout behavior is
-  unverified in practice — this is explicitly called out in the PRD as a
-  Week-3 risk that needs a real deployment to close out.
-- The UI's light-mode palette is a correct-by-computation *derivation* from
-  the design system's dark-native palette (WCAG ratios check out), but
-  nobody has looked at it rendered. Same for the glassmorphism/blur visual
-  treatment generally.
+  was confirmed working over a real local `EventSource` connection in
+  Week 6 (clean connect, no console errors, correct empty-state rendering
+  with no live games) but has still never been deployed to real Vercel.
+  The Vercel-specific streaming/timeout behavior from `docs/prd.md` §13
+  remains the one part of this risk not yet closed out.
+- The UI's light-mode palette and theme toggle were confirmed working in a
+  real browser in Week 6 (genuine contrast, not an inverted palette,
+  persists across navigation). Mobile-breakpoint rendering (375px)
+  specifically was **not** visually confirmed — a real tooling limitation
+  hit this week (browser automation's viewport stayed pinned at 2000×1120
+  regardless of `resize_window`), not a project gap. Verification there
+  still rests on Week 5's code-level responsive-class review.
 - Rate limiting (`slowapi`) uses an in-memory store — correct and fully
   tested for a single instance, but would need a shared Redis backend if
-  this ever ran on more than one server process.
+  this ever ran on more than one server process. Its threshold was raised
+  from 100/minute to 600/minute in Week 6 after a real load test showed
+  the original value rejecting ~48% of normal traffic under realistic
+  concurrency — see `docs/performance-loadtest.md`.
 - The `crc32`-derived synthetic team ID in `quality/volumetric.py` (Gold
   tables have no real integer team ID) is a documented compromise, not a
   long-term design — worth a real `teams` dimension table eventually.
@@ -465,12 +555,11 @@ sign-off.
 
 ## What's Next
 
-**Immediate:** human review + merge of PR #42 (`week5/integration` →
-`main`), then sync local branches the same way as every prior week, then
-run the real stats backfill and confirm `player_game_stats` populates.
-
-Per `docs/prd.md` §12, next up after Week 5 is **Week 6 — final QA &
-write-up**.
+**All 6 weeks of `docs/prd.md` §12 are complete as of 2026-09-02.** The
+core deliverable — the ingestion/reconciliation/drift-monitoring pipeline
+plus a fully furnished dashboard — is built, tested, and now
+browser-verified end-to-end. The win-probability stretch model (§10)
+remains the one deliberately-deferred PRD item (see Known Issues).
 
 **Two items the user has flagged for later, not yet scheduled:**
 
