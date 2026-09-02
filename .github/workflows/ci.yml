@@ -57,6 +57,51 @@ jobs:
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
+      # Informational only this week (see dependency-audit below for why:
+      # no cheap way yet to distinguish new vs. pre-existing findings) —
+      # continue-on-error keeps a known third-party CVE from hard-blocking
+      # unrelated future PRs.
+      - run: npm audit --audit-level=high
+        continue-on-error: true
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [db, ingestion, api, quality]
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+      # `uv run --with pip-audit pip-audit` installs pip-audit ephemerally
+      # into this service's uv-managed venv for this run only and audits
+      # the service's actually-resolved dependencies (via `uv sync`, which
+      # `uv run` performs implicitly) — chosen over adding `pip-audit` as a
+      # permanent dev dependency in each of the four pyproject.toml files,
+      # so no manifest needs touching. continue-on-error: true because
+      # there's no cheap baseline/ignore-file mechanism yet to distinguish
+      # a newly introduced CVE from a pre-existing one in a third-party
+      # transitive dependency this week's work can't fix — this job is
+      # informational (findings show in the log) rather than a hard gate,
+      # documented explicitly here and in the PR so it isn't mistaken for
+      # a silent gate later.
+      - run: uv run --with pip-audit pip-audit
+        continue-on-error: true
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dbt-parse:
     runs-on: ubuntu-latest
