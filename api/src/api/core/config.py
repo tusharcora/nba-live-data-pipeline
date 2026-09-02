@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     api_database_url: str = ""
     redis_url: str = ""
     api_service_key: str = ""
+    allowed_origin: str = "http://localhost:3000"
 
     @property
     def runtime_database_url(self) -> str:

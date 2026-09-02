@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    desc,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -40,6 +41,10 @@ class SchemaChangeLog(Base):
     """Meta layer: one row per detected schema drift event (field add/remove/type change)."""
 
     __tablename__ = "schema_change_log"
+    # Matches `recent_schema_changes`'s `ORDER BY detected_at DESC LIMIT N`
+    # in api/src/api/routers/quality.py (db/migrations/versions/
+    # fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py creates this).
+    __table_args__ = (Index("ix_schema_change_log_detected_at", desc("detected_at")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String, nullable=False)
@@ -57,6 +62,11 @@ class QualityMetric(Base):
     """Meta layer: one row per quality check per run (null rate, PSI, agreement rate, etc.)."""
 
     __tablename__ = "quality_metrics"
+    # Supports the "latest row per check_name" access pattern used by
+    # api/src/api/routers/quality.py's `_latest_per_check` (db/migrations/
+    # versions/fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py
+    # creates this).
+    __table_args__ = (Index("ix_quality_metrics_check_name_run_at", "check_name", "run_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_name: Mapped[str] = mapped_column(String, nullable=False)
@@ -113,10 +123,41 @@ class BackfillCheckpoint(Base):
     )
 
 
+class AuditLog(Base):
+    """Meta layer: one row per manual write/override against live data
+    (docs/prd.md §08: "Audit log table for any manual write/override, with
+    actor + timestamp").
+
+    No feature that performs a manual override exists yet in this codebase
+    — this table is provisioned ahead of that need, per the Week 4 security
+    pass. `actor` is a free-text identifier (a username, a service name, an
+    operator's email) rather than a foreign key, since there's no unified
+    identity system across the pipeline's processes yet. `detail` is
+    unstructured, nullable JSONB for whatever context a given override
+    wants to record (before/after values, a reason string, etc.) —
+    deliberately not modeled further until a real caller exists to tell us
+    its actual shape.
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class SourceConflict(Base):
     """Meta layer: one row per field-level disagreement between the two data sources."""
 
     __tablename__ = "source_conflicts"
+    # Matches `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N` in
+    # api/src/api/routers/quality.py (db/migrations/versions/
+    # fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py creates this).
+    __table_args__ = (Index("ix_source_conflicts_detected_at", desc("detected_at")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[str] = mapped_column(String, nullable=False)

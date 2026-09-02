@@ -7,11 +7,11 @@ from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
-from api.core.config import Settings
+from api.core.db import get_engine
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
 from db.models import LiveGameState
@@ -111,7 +111,7 @@ class SQLAlchemyLiveStateReader:
     """
 
     def __init__(self, engine: Engine | None = None) -> None:
-        self._engine = engine or create_engine(Settings().runtime_database_url)
+        self._engine = engine or get_engine()
         self._session_factory = sessionmaker(bind=self._engine)
 
     def get_latest_states(self) -> list[LiveGameState]:

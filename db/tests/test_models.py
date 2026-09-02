@@ -1,4 +1,5 @@
 from db.models import (
+    AuditLog,
     Base,
     BackfillCheckpoint,
     LiveGameState,
@@ -15,6 +16,7 @@ def _column_names(model) -> set[str]:
 
 def test_expected_tables_present():
     assert sorted(t.name for t in Base.metadata.sorted_tables) == [
+        "audit_log",
         "backfill_checkpoints",
         "live_game_state",
         "quality_metrics",
@@ -139,3 +141,65 @@ def test_source_conflict_table():
         "resolution",
         "detected_at",
     }
+
+
+def test_audit_log_table():
+    assert AuditLog.__tablename__ == "audit_log"
+    assert _column_names(AuditLog) == {
+        "id",
+        "actor",
+        "action",
+        "detail",
+        "created_at",
+    }
+
+
+def test_audit_log_nullability():
+    columns = {col.name: col for col in AuditLog.__table__.columns}
+    assert columns["actor"].nullable is False
+    assert columns["action"].nullable is False
+    assert columns["created_at"].nullable is False
+    # `detail` is the one nullable column — a manual override may or may
+    # not have extra context worth recording.
+    assert columns["detail"].nullable is True
+
+
+# --- Week 4 performance pass: hot-path indexes on the three Meta tables ---
+#
+# These are pure Alembic DDL in
+# db/migrations/versions/fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py
+# (verified offline via `alembic upgrade head --sql`), but each is also
+# declared in `__table_args__` on its ORM model (same pattern as
+# `RawPull`/`LiveGameState` above) so it shows up in `__table__.indexes` and
+# can be asserted here without a live database.
+
+
+def test_quality_metrics_has_check_name_run_at_index():
+    index_columns = {
+        tuple(col.name for col in index.columns)
+        for index in QualityMetric.__table__.indexes
+    }
+    assert ("check_name", "run_at") in index_columns
+
+
+def test_schema_change_log_has_detected_at_index():
+    indexes = list(SchemaChangeLog.__table__.indexes)
+    assert len(indexes) == 1
+    index = indexes[0]
+    assert index.name == "ix_schema_change_log_detected_at"
+    # The index is on `detected_at` in descending order, matching
+    # `ORDER BY detected_at DESC LIMIT N` in
+    # api/src/api/routers/quality.py's `recent_schema_changes`.
+    (expr,) = index.expressions
+    assert str(expr) == "detected_at DESC"
+
+
+def test_source_conflicts_has_detected_at_index():
+    indexes = list(SourceConflict.__table__.indexes)
+    assert len(indexes) == 1
+    index = indexes[0]
+    assert index.name == "ix_source_conflicts_detected_at"
+    # Same descending-index shape as schema_change_log, matching
+    # `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N`.
+    (expr,) = index.expressions
+    assert str(expr) == "detected_at DESC"
