@@ -14,24 +14,30 @@ stale.
 
 ---
 
-## Current Status (2026-09-01)
+## Current Status (2026-09-02)
 
-Weeks 1–3 of the PRD plan are built and merged to `main`, plus a UI
-modernization pass pulled forward from Week 5's scope. As of tonight, this
-has been run **end-to-end against real infrastructure for the first time**
-(everything before this was built and tested in a sandbox with no Docker
-access) — real Postgres, real Redis, a real balldontlie API pull, a real
-dbt build, and both the FastAPI service and the Next.js frontend running
-locally and serving real data.
+Weeks 1–4 of the PRD plan are built; Weeks 1–3 plus the UI modernization
+pass are merged to `main`. Week 4 (security hardening & performance) is
+built, integrated (`week4/integration`), fully tested, and **live-verified
+against real Postgres/Redis on this machine** — PR #35 to `main` is open,
+awaiting human sign-off.
 
 **What's confirmed working right now, with real data, not mocks:**
 - `make up` → `make migrate` → `make dbt-run` → real schema, roles, and Gold
-  tables in Postgres.
+  tables in Postgres, including Week 4's `audit_log` table and the three new
+  hot-path indexes (`quality_metrics`, `schema_change_log`,
+  `source_conflicts`) plus dbt's `games.game_date` index.
 - A real historical backfill (`ingestion/flows/backfill_flow.py`) against
   balldontlie's live API — the assumed JSON shape in `stg_games.sql`
   (flagged "unverified" since Week 1) is now confirmed byte-for-byte correct.
 - `GET /games`, `/games?date=...`, `/quality` all serving real data with
-  real API-key enforcement (`401` without a key).
+  real API-key enforcement (`401` without a key), real CORS behavior
+  (matching `Origin` gets the header, non-matching doesn't), real Redis
+  caching (`games:<date>` key, 15s TTL, confirmed hit on second request),
+  and real rate limiting (100/minute enforced, 429 past the limit).
+- The `ALTER DEFAULT PRIVILEGES FOR ROLE nba` mechanism from Week 1
+  genuinely auto-grants `api_reader` `SELECT` on brand-new tables — first
+  real-world proof, via Week 4's new `audit_log` table.
 - The Next.js app (`/`, `/live`, `/quality`) rendering for real, including
   the BFF proxy routes reaching FastAPI correctly.
 
@@ -46,9 +52,12 @@ locally and serving real data.
 - The UI's light-mode palette and the glassmorphism/blur visual treatment
   have never been looked at in a real browser (only `next build` output
   and computed contrast ratios were checked).
+- The Week 4 `api/loadtest/locustfile.py` load test itself hasn't been run
+  (needs a sustained run against a live server, not a quick verification
+  pass — left for a dedicated session).
 
-**Next up per `docs/prd.md` §12:** Week 4 — security hardening & performance
-pass (CORS lockdown, secrets audit, `pip-audit`/`npm audit`, load testing).
+**Next up per `docs/prd.md` §12:** human sign-off + merge of PR #35, then
+Week 5 (UI furnishing & stretch model).
 
 ---
 
@@ -236,6 +245,63 @@ test isolation). The pipeline logic itself — balldontlie pagination, dbt's
 JSONB parsing and dedup, the API's auth/rate-limiting, the BFF proxy — all
 worked correctly on the first real run.
 
+### Week 4 — Security hardening & performance (2026-09-02)
+
+Two boss teams, fully parallel, both branching from the same pre-week4
+`main` commit:
+
+- **`week4/security`** — CORS middleware (configurable `ALLOWED_ORIGIN`,
+  `GET`-only, `X-API-Key`/`Content-Type` headers only); a real SQL-injection
+  audit against `/games?date=` (12 payloads, proven via a
+  `_CountingGamesReader` fake asserting the DB reader is never invoked, not
+  just "no error thrown"); an auth-bypass suite across every protected
+  route (missing/empty/wrong/wrong-case key) plus an API-key-leakage scan;
+  a new `audit_log` table/model for manual data-quality overrides;
+  `docs/security-audit.md` documenting a real, deliberately-deferred
+  low-priority finding (`!=` instead of `hmac.compare_digest` for the API
+  key comparison — a timing side-channel, judged low-value to fix given the
+  key is a single shared secret, not per-user).
+- **`week4/performance`** — a shared, module-level-cached `get_engine()`
+  (`pool_size=5, max_overflow=10`) fixing a real bug where `games.py` and
+  `live.py` each created a fresh SQLAlchemy `Engine` per request; fail-open
+  Redis caching (`cached_json`, catches *all* exceptions and falls through
+  to direct compute — a cache outage must never 500 the API) wrapping
+  `/games` and `/quality`; new indexes on `quality_metrics(check_name,
+  run_at)`, `schema_change_log(detected_at DESC)`,
+  `source_conflicts(detected_at DESC)`, plus a dbt-postgres index on
+  `games.game_date`; a Locust load test (`api/loadtest/`) for the
+  live-game-window read pattern (written but not yet run — needs a
+  dedicated session against a live server).
+
+**Integration work (`week4/integration`):** both teams' migrations shared
+the same `down_revision` (they branched from the same commit), producing
+two independent Alembic heads — resolved via `alembic merge` into a new
+merge revision (`84681f65c10a`), verified single-head and a clean
+`upgrade head --sql` chain. One real merge conflict in
+`db/tests/test_models.py` (both teams appended tests at the same location)
+resolved by keeping both teams' tests sequentially. Full suite green:
+`db` 16/16, `api` 60/60, `ingestion` 61/61, `quality` 54/54, `dbt parse`
+exit 0.
+
+**Went further than sandbox verification this round** — real Postgres/Redis
+are reachable on this machine, so instead of stopping at "tests pass and
+`--sql` output looks right," the merged migration was actually applied and
+every new feature was exercised for real: the migration ran cleanly against
+live Postgres (confirming, among other things, that Week 1's
+`ALTER DEFAULT PRIVILEGES` role mechanism really does auto-grant new tables
+— previously only checked via offline SQL, now proven on `audit_log`);
+`dbt run` confirmed the `games.game_date` index is a real index, not just
+config that parses; CORS was tested with matching (header present) and
+non-matching (header absent) `Origin` headers against a freshly-restarted
+API process (an old pre-Week-4 uvicorn process on the same port was killed
+first, to rule out `--reload` masking stale behavior across the git branch
+switch); caching was confirmed via a real `FLUSHALL` → first request
+(populates `games:<date>`, TTL 15s) → second request (key reused) cycle
+against Redis on port 6380; rate limiting was confirmed by firing 110 rapid
+requests and observing 429s from request 98 onward, consistent with the
+configured 100/minute limit. PR #35 (`week4/integration` → `main`) opened
+with all of the above as the test plan, awaiting human sign-off.
+
 ---
 
 ## Known Issues / Caveats
@@ -268,12 +334,11 @@ worked correctly on the first real run.
 
 ## What's Next
 
-Per `docs/prd.md` §12, **Week 4 — Security hardening & performance pass**:
-full pass against the §08 security checklist (CORS lockdown, secrets
-audit, `pip-audit`/`npm audit` clean, manual injection/auth-bypass test),
-Redis cache in front of hot endpoints, DB indexing/connection pooling, and
-a load test against the live-game-window scenario to confirm the p95/
-freshness SLAs from §09. (Started 2026-09-02.)
+**Immediate:** human review + merge of PR #35 (`week4/integration` →
+`main`), then sync local branches the same way as every prior week.
+
+Per `docs/prd.md` §12, next up after Week 4 is **Week 5 — UI furnishing &
+stretch model**.
 
 **Beyond Week 4, two items the user has flagged for later, not yet scheduled:**
 
