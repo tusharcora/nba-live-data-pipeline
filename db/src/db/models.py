@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    desc,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -40,6 +41,10 @@ class SchemaChangeLog(Base):
     """Meta layer: one row per detected schema drift event (field add/remove/type change)."""
 
     __tablename__ = "schema_change_log"
+    # Matches `recent_schema_changes`'s `ORDER BY detected_at DESC LIMIT N`
+    # in api/src/api/routers/quality.py (db/migrations/versions/
+    # fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py creates this).
+    __table_args__ = (Index("ix_schema_change_log_detected_at", desc("detected_at")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String, nullable=False)
@@ -57,6 +62,11 @@ class QualityMetric(Base):
     """Meta layer: one row per quality check per run (null rate, PSI, agreement rate, etc.)."""
 
     __tablename__ = "quality_metrics"
+    # Supports the "latest row per check_name" access pattern used by
+    # api/src/api/routers/quality.py's `_latest_per_check` (db/migrations/
+    # versions/fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py
+    # creates this).
+    __table_args__ = (Index("ix_quality_metrics_check_name_run_at", "check_name", "run_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_name: Mapped[str] = mapped_column(String, nullable=False)
@@ -144,6 +154,10 @@ class SourceConflict(Base):
     """Meta layer: one row per field-level disagreement between the two data sources."""
 
     __tablename__ = "source_conflicts"
+    # Matches `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N` in
+    # api/src/api/routers/quality.py (db/migrations/versions/
+    # fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py creates this).
+    __table_args__ = (Index("ix_source_conflicts_detected_at", desc("detected_at")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[str] = mapped_column(String, nullable=False)

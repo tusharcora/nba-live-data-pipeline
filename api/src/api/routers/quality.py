@@ -42,12 +42,12 @@ from typing import Protocol
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
-from sqlalchemy.engine import Engine, create_engine
 from sqlalchemy.orm import Session
 
 from db.models import QualityMetric, SchemaChangeLog, SourceConflict
 
-from api.core.config import Settings
+from api.core.cache import cached_json
+from api.core.db import get_engine
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
 
@@ -55,6 +55,12 @@ router = APIRouter(prefix="/quality", tags=["quality"], dependencies=[Depends(re
 
 RECENT_SCHEMA_CHANGES_LIMIT = 20
 RECENT_CONFLICTS_LIMIT = 10
+
+# The scorecard has no query params that affect its response, so a single
+# fixed cache key is enough. Slightly longer TTL than /games since drift
+# checks/reconciliation runs less frequently than live game polling.
+CACHE_TTL_SECONDS = 30
+CACHE_KEY = "quality:scorecard"
 
 
 class QualityReader(Protocol):
@@ -97,19 +103,9 @@ class SqlAlchemyQualityReader:
         return total, recent
 
 
-_engine: Engine | None = None
-
-
-def _get_engine() -> Engine:
-    global _engine
-    if _engine is None:
-        _engine = create_engine(Settings().runtime_database_url)
-    return _engine
-
-
 def get_quality_reader() -> Iterator[QualityReader]:
     """Default (real) dependency — overridden with a fake in tests."""
-    with Session(_get_engine()) as session:
+    with Session(get_engine()) as session:
         yield SqlAlchemyQualityReader(session)
 
 
@@ -166,15 +162,19 @@ def get_quality_metrics(
     reader: QualityReader = Depends(get_quality_reader),
 ) -> dict:
     """Drift/agreement scorecard data — see module docstring for the exact shape."""
-    metrics = _latest_per_check(reader.latest_metric_rows())
-    schema_changes = reader.recent_schema_changes(RECENT_SCHEMA_CHANGES_LIMIT)
-    total_conflicts, recent_conflicts = reader.recent_conflicts(RECENT_CONFLICTS_LIMIT)
 
-    return {
-        "metrics": [_serialize_metric(m) for m in metrics],
-        "schema_changes": [_serialize_schema_change(s) for s in schema_changes],
-        "conflicts": {
-            "total": total_conflicts,
-            "recent": [_serialize_conflict(c) for c in recent_conflicts],
-        },
-    }
+    def _compute() -> dict:
+        metrics = _latest_per_check(reader.latest_metric_rows())
+        schema_changes = reader.recent_schema_changes(RECENT_SCHEMA_CHANGES_LIMIT)
+        total_conflicts, recent_conflicts = reader.recent_conflicts(RECENT_CONFLICTS_LIMIT)
+
+        return {
+            "metrics": [_serialize_metric(m) for m in metrics],
+            "schema_changes": [_serialize_schema_change(s) for s in schema_changes],
+            "conflicts": {
+                "total": total_conflicts,
+                "recent": [_serialize_conflict(c) for c in recent_conflicts],
+            },
+        }
+
+    return cached_json(CACHE_KEY, CACHE_TTL_SECONDS, _compute)
