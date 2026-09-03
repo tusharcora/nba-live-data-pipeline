@@ -195,7 +195,7 @@ unit_tests:
           player_first_name: "Nene"
           player_last_name: null
 
-  - name: test_stg_player_game_stats_nba_stat_id_fits_bigint_at_realistic_scale
+  - name: test_stg_player_game_stats_nba_stat_id_no_bigint_overflow
     description: >
       Regression test for a real bug found while planning the full-history
       backfill: game_id values for nba_stats rows are offset by
