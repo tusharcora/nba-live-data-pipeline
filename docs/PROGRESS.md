@@ -14,13 +14,15 @@ stale.
 
 ---
 
-## Current Status (2026-09-02)
+## Current Status (2026-09-03)
 
-Weeks 1–6 of the PRD plan are complete. Weeks 1–5 (foundations through
-Historical Explorer) are merged to `main`. Week 6 (final QA & write-up) is
-done: a real end-to-end browser walkthrough, a real load test that found
-and fixed a genuine bug, a real schema-drift run, a demo GIF
-(`docs/demo/nba-pipeline-demo.gif`), and this write-up.
+Weeks 1–6 of the PRD plan are complete and merged to `main`. Beyond the
+PRD's own scope, a "hyper user focused" UI pass (user-requested, going past
+the "fully furnished" bar) is built, integrated (`ui-pass/integration`),
+fully tested, and live-browser-verified — PR #51 is open awaiting human
+sign-off. See the dedicated Timeline entry below for what it adds: real
+data-visualization charts, `localStorage`-based personalization, sortable/
+comparison interactivity, and a command palette + keyboard shortcuts.
 
 **What's confirmed working right now, with real data and a real browser,
 not mocks:**
@@ -496,6 +498,77 @@ the running stack via Chrome browser automation.
 report), this Timeline entry, and `README.md`/resume-bullets updates
 (§14) with real numbers filled in per `docs/prd.md`'s own request.
 
+### "Hyper user focused" UI pass — beyond the PRD scope (2026-09-03)
+
+The user rejected an AI-chatbot idea floated for this project (a full
+benefits/needed/drawbacks brainstorm across 5 alternatives is recorded in
+project memory, not in this doc) and asked instead for the UI to become
+"hyper user focused" — going past the PRD's own "fully furnished" bar that
+Week 5 already satisfied. Asked to clarify concretely, the user selected
+**all four** of richer data visualization, personalization & saved state,
+deeper interactivity, and power-user efficiency, applied to the **whole
+app**, not one page. Plan:
+`docs/superpowers/plans/2026-09-02-hyper-user-focused-ui.md`. Four parallel
+boss teams, same GitHub-PR workflow as every prior week:
+
+- **`ui-pass/data-visualization`** — new `GET /quality/history?check_name=`
+  endpoint (the existing `/quality` route only ever returned the latest row
+  per check, never a time series) plus three `recharts` visualizations on
+  the Quality Scorecard. Correctly render their 0-point empty state today,
+  since `quality_metrics` has no real rows yet — not a gap, the expected
+  and designed-for condition.
+- **`ui-pass/personalization`** — a new shared, typed, fail-open
+  `web/lib/local-store.ts` (no auth/accounts system exists or is planned,
+  so this is deliberately per-browser only). Historical Explorer gained
+  favorite-team quick-filter chips and saved search presets; the home page
+  gained reorderable/hideable destination cards and a "Continue: `<Page>`"
+  affordance.
+- **`ui-pass/interactivity`** — sortable columns + row-expansion on the
+  Quality Scorecard's tables, a general team-filter dropdown and a
+  side-by-side game comparison view on Historical Explorer. The comparison
+  view deliberately has no quarter-by-quarter breakdown — the boss checked
+  `dbt/models/marts/games.sql` directly and confirmed no such column exists
+  anywhere in the real schema, correcting an assumption the plan itself had
+  gotten wrong, rather than building against a guess.
+- **`ui-pass/power-user`** — a global ⌘K/Ctrl+K command palette and
+  GitHub-style sequential keyboard shortcuts (`g`+`l`/`q`/`e`/`h`) with a
+  `?` help overlay and a comfortable/compact density toggle.
+
+**A real cross-team conflict, flagged by both bosses in advance and
+resolved at integration:** Teams B and C each independently built a
+"filter games by team" mechanism in parallel branches. Reconciled into one
+shared `selectedTeams` state during the merge — the favorites row and the
+general dropdown are now two entry points into the same filter, confirmed
+live (favoriting a team via its star, filtering via the star chip, and
+seeing the dropdown/badge reflect the identical selection).
+
+**A real bug found only by the live browser walkthrough, not by any test
+or code review:** the command palette crashed immediately on open —
+`Cannot read properties of undefined (reading 'subscribe')` inside cmdk's
+internals. Root cause: the generated shadcn `CommandDialog` never wrapped
+its children in a `<Command>` root, so every `CommandPrimitive` child (the
+input, the list) rendered with no store context to read from — `tsc`,
+`eslint`, and `next build` all passed cleanly on this bug, since it's a
+runtime-only failure. Fixed by wrapping `CommandDialog`'s children in
+`<Command>`; re-verified live end-to-end (opens via dispatched keydown,
+fuzzy-searches real games, keyboard-only Enter navigates, theme/density
+actions both fire).
+
+**Also verified live, for real, not just code-reviewed:** home-page
+reorder/hide persists across an actual page reload; the `g`+`l` shortcut
+genuinely navigates while typing "glg" inside Explorer's player-name field
+does *not* (the input-focus guard holds under real keystrokes, confirmed
+by reading the field's actual DOM value afterward, not just watching a
+screenshot); the density toggle sets a real `data-density` attribute and
+persists to real `localStorage` under `nba-pipeline:density`; saved-search
+save/load/delete all round-trip through real `localStorage`; game
+comparison renders two real score cards side by side.
+
+Full verification: `db` 16/16, `ingestion` 69/69, `api` 86/86, `quality`
+54/54, `web` `tsc`/`eslint`/`next build` all clean (13 routes). PR #51
+(`ui-pass/integration` → `main`) opened with all of the above as the test
+plan, awaiting human sign-off.
+
 ---
 
 ## Known Issues / Caveats
@@ -551,28 +624,46 @@ report), this Timeline entry, and `README.md`/resume-bullets updates
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
-  standing note to check before the next weekly round.
+  standing note to check before the next weekly round. Checking
+  `git worktree list` immediately after dispatch (rather than discovering
+  the problem later) worked for the UI-pass round — all four bosses got
+  real isolation that time.
+- The new sortable Quality Scorecard tables (schema changes, conflicts)
+  have never been click-tested against real rows in a browser — both
+  tables are empty today (same root cause as the schema-drift/quality-
+  metrics gaps above). Verified instead via code review + `tsc`/`eslint`,
+  same standard as every other not-yet-exercised-on-real-data feature in
+  this project.
+- Mobile-breakpoint rendering (375px) remains unverified in a real browser
+  — the `resize_window` tooling limitation from Week 6 persisted into this
+  round too.
 
 ## What's Next
 
-**All 6 weeks of `docs/prd.md` §12 are complete as of 2026-09-02.** The
-core deliverable — the ingestion/reconciliation/drift-monitoring pipeline
-plus a fully furnished dashboard — is built, tested, and now
-browser-verified end-to-end. The win-probability stretch model (§10)
+**All 6 weeks of `docs/prd.md` §12 are complete**, plus a "hyper user
+focused" UI pass beyond the PRD's own scope (see Timeline above) — PR #51
+open awaiting human sign-off. The win-probability stretch model (§10)
 remains the one deliberately-deferred PRD item (see Known Issues).
 
-**Two items the user has flagged for later, not yet scheduled:**
+**Immediate:** human review + merge of PR #51 (`ui-pass/integration` →
+`main`), then run the quality checks for real at least once so the new
+charts and sortable tables have real data to render against.
 
-- **UI needs another pass.** The user's reaction to the UI modernization
-  pass: "too simple," should be "hyper user focused." Week 5 closed the
-  PRD's own "fully furnished" checklist (states, theme, a11y, mobile), but
-  the user wants more than that checklist delivers. Concrete direction not
-  yet gathered — ask what "hyper user focused" means specifically before
-  running another boss/employee UI round.
-- **A natural-language / AI-assistant interface** — the user wants to
-  eventually add a Claude-esque chat interface for asking questions about
-  the data in plain language, backed by some form of retrieval (RAG or
-  otherwise) over this project's Gold/quality tables. A draft feature
-  proposal was written up separately — see `docs/features/ai-assistant-draft.md`
-  (deliberately left uncommitted, per the user's instruction) for the
-  options considered and what's recommended for in/out of scope.
+**One item resolved this round, one still open:**
+
+- ~~UI needs another pass~~ — **done.** The user's "hyper user focused"
+  request (richer data viz, personalization, deeper interactivity,
+  power-user efficiency, across the whole app) is what this round built.
+- **A natural-language / AI-assistant interface** — explicitly **shelved
+  for now**, not dropped, after a benefits/needed/drawbacks brainstorm
+  across 5 directions (see project memory for the full analysis — a
+  learned reconciliation trust model, multivariate anomaly detection, and
+  LLM root-cause narration were the most defensible options; predictive
+  drift forecasting was recommended against outright given this project's
+  real-data-only track record). The user wants to revisit this once real
+  live-game-window data exists to ground it. A draft feature proposal for
+  an AI-assistant/chat direction specifically was also written up
+  separately — see `docs/features/ai-assistant-draft.md` (deliberately
+  left uncommitted, per the user's instruction) — but the user has since
+  indicated a chatbot specifically is not the direction they want; treat
+  that draft as historical context, not a live recommendation.
