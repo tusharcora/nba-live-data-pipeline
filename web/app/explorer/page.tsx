@@ -438,6 +438,180 @@ function TeamFilterDropdown({
   );
 }
 
+// Shared styling for the native `<select>` comparison pickers below —
+// matches `components/ui/input.tsx`'s sizing/tokens (this project has no
+// shadcn Select component installed; a plain native <select> keeps this
+// feature dependency-free) plus the shared FOCUS_RING treatment.
+const COMPARE_SELECT_CLASSES = cn(
+  "flex h-8 w-full min-w-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-1 text-sm text-foreground shadow-xs outline-none transition-[color,box-shadow] dark:bg-input/30",
+  FOCUS_RING
+);
+
+/** "Jan 5, 2026 — BOS @ ATL (105–121)" — a single-line label identifying a
+ * game unambiguously in the comparison pickers, reusing the same
+ * date/score formatting as the rest of this page. */
+function formatGameOptionLabel(game: GameRow): string {
+  return `${formatGameDate(game.game_date)} — ${game.away_team} @ ${game.home_team} (${displayScore(
+    game.away_score
+  )}–${displayScore(game.home_score)})`;
+}
+
+/** One side of the side-by-side game comparison. Deliberately limited to
+ * fields that actually exist on the Gold `games` table / `GameRow` (final
+ * score, teams, date, season, status, postseason) — there is no
+ * quarter-by-quarter breakdown anywhere upstream of this table (checked
+ * `dbt/models/marts/games.sql` and `dbt/models/staging/stg_games.sql`
+ * directly: neither the mart, the staging model, nor its documented
+ * balldontlie payload-shape comment has any per-quarter/period column), so
+ * building a quarter-by-quarter UI here would mean fabricating a section
+ * with nothing real to show. */
+function GameComparisonCard({ game }: { game: GameRow }) {
+  return (
+    <Card className="gap-3">
+      <CardHeader className="flex-row items-center justify-between gap-2">
+        <CardTitle className="font-mono text-xs font-medium tracking-wide text-muted-foreground">
+          {formatGameDate(game.game_date)}
+          {game.postseason ? " · Postseason" : ""}
+        </CardTitle>
+        <CardAction>
+          <Badge variant={statusBadgeVariant(game.status)}>
+            {prettifyStatus(game.status)}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5 font-mono text-sm text-foreground">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate">{game.away_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.away_score)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate">{game.home_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.home_score)}
+            </span>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Season</dt>
+            <dd>{game.season}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Postseason</dt>
+            <dd>{game.postseason ? "Yes" : "No"}</dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Simple side-by-side comparison of two games picked from the already-
+ * fetched `games` array — two native `<select>` pickers plus two
+ * `GameComparisonCard`s. All client-side over `games`; no new network call.
+ * ui-ux-pro-max ("side by side comparison view", `--domain ux`) had no
+ * direct hit for that exact query; broadening to "comparison table" /
+ * "compare" surfaced only the Responsive/"Table Handling" guideline (tables
+ * can overflow on mobile — use horizontal scroll or a card layout instead
+ * of a wide table). Applied here by using a two-card grid
+ * (`grid-cols-1 sm:grid-cols-2`, stacking on narrow viewports) rather than
+ * a single wide comparison table, so nothing needs its own horizontal
+ * scroll container on mobile. */
+function GameComparisonSection({ games }: { games: GameRow[] }) {
+  const [leftId, setLeftId] = useState<string>("");
+  const [rightId, setRightId] = useState<string>("");
+
+  const leftGame = useMemo(
+    () => games.find((game) => String(game.game_id) === leftId) ?? null,
+    [games, leftId]
+  );
+  const rightGame = useMemo(
+    () => games.find((game) => String(game.game_id) === rightId) ?? null,
+    [games, rightId]
+  );
+
+  const sameGameSelected =
+    leftId !== "" && rightId !== "" && leftId === rightId;
+
+  if (games.length < 2) return null;
+
+  return (
+    <section aria-label="Compare games" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-lg font-medium text-foreground">Compare games</h2>
+        <p className="text-sm text-muted-foreground">
+          Pick two games from the results above to see their final scores
+          side by side.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="compare-game-left"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Game A
+          </label>
+          <select
+            id="compare-game-left"
+            value={leftId}
+            onChange={(event) => setLeftId(event.target.value)}
+            className={COMPARE_SELECT_CLASSES}
+          >
+            <option value="">Select a game…</option>
+            {games.map((game) => (
+              <option key={game.game_id} value={game.game_id}>
+                {formatGameOptionLabel(game)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="compare-game-right"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Game B
+          </label>
+          <select
+            id="compare-game-right"
+            value={rightId}
+            onChange={(event) => setRightId(event.target.value)}
+            className={COMPARE_SELECT_CLASSES}
+          >
+            <option value="">Select a game…</option>
+            {games.map((game) => (
+              <option key={game.game_id} value={game.game_id}>
+                {formatGameOptionLabel(game)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {sameGameSelected && (
+        <p role="alert" className="text-sm text-destructive">
+          Pick two different games to compare.
+        </p>
+      )}
+
+      {leftGame && rightGame && !sameGameSelected && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <GameComparisonCard game={leftGame} />
+          <GameComparisonCard game={rightGame} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 function GameCard({
   game,
   expanded,
@@ -525,6 +699,14 @@ export default function ExplorerPage() {
   const [expandedGameIds, setExpandedGameIds] = useState<Set<number>>(
     () => new Set()
   );
+  // Bumped on every fresh search so `GameComparisonSection` below remounts
+  // with its two picker selections cleared — otherwise a select could keep
+  // holding a `game_id` value from the previous result set that no longer
+  // has a matching `<option>`. Same "a fresh search invalidates prior
+  // per-result UI state" idea as the `expandedGameIds`/`boxScores` reset
+  // in `handleSubmit` below, just via remount (`key`) since this state
+  // lives inside the child component rather than here.
+  const [compareResetKey, setCompareResetKey] = useState(0);
   const [boxScores, setBoxScores] = useState<
     Record<number, FetchState<ApiList<PlayerStatRow>> | undefined>
   >({});
@@ -658,6 +840,7 @@ export default function ExplorerPage() {
     // scores from a prior result set.
     setExpandedGameIds(new Set());
     setBoxScores({});
+    setCompareResetKey((key) => key + 1);
     performSearch(startDate, endDate, playerName);
   }
 
@@ -838,6 +1021,10 @@ export default function ExplorerPage() {
             </>
           )}
         </section>
+
+        {gamesState.status === "loaded" && (
+          <GameComparisonSection key={compareResetKey} games={gamesState.result.data} />
+        )}
 
         {playerSearchState && (
           <section aria-label="Player search results" className="flex flex-col gap-3">
