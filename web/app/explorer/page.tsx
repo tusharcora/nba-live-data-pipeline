@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarX,
   ChevronDown,
   ChevronUp,
+  Filter,
   Inbox,
   Search,
   TriangleAlert,
   UserRound,
+  X,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -31,6 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { FOCUS_RING } from "@/app/components/site-nav";
+import { cn } from "@/lib/utils";
 
 // Response shapes match `GET /games` and the new `GET /player-stats`
 // FastAPI endpoints (Employee "games-search-api", week5/historical-explorer,
@@ -277,6 +281,163 @@ function BoxScoreSection({
   );
 }
 
+/** Client-side multi-select team filter over the already-fetched games list
+ * — no new network request, pure array filtering over `gamesState.result.data`.
+ * Built as a plain popover of native checkboxes (not a full ARIA
+ * listbox/option widget) so keyboard operability comes for free from native
+ * `<input type="checkbox">`/`<label>` semantics rather than a hand-rolled
+ * roving-tabindex pattern that's easy to get subtly wrong. Closes on
+ * outside-click or Escape. Selected teams are also echoed as removable
+ * badges below the trigger — per the ui-ux-pro-max "table filter dropdown"
+ * finding on chip-collection reflow, that row uses `flex-wrap` rather than
+ * clipping overflow. */
+function TeamFilterDropdown({
+  teams,
+  selected,
+  onToggleTeam,
+  onClear,
+}: {
+  teams: string[];
+  selected: Set<string>;
+  onToggleTeam: (team: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  if (teams.length === 0) return null;
+
+  const summary =
+    selected.size === 0
+      ? "All teams"
+      : `${selected.size} team${selected.size === 1 ? "" : "s"}`;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div ref={containerRef} className="relative w-fit">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn("cursor-pointer gap-1.5", FOCUS_RING)}
+          aria-haspopup="true"
+          aria-expanded={open}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <Filter aria-hidden="true" className="size-4" />
+          Filter by team: {summary}
+          <ChevronDown
+            aria-hidden="true"
+            className={cn("size-3.5 transition-transform", open && "rotate-180")}
+          />
+        </Button>
+
+        {open && (
+          <div className="absolute z-10 mt-2 w-56 rounded-md border border-border bg-popover p-2 shadow-md">
+            <div className="flex items-center justify-between px-1 pb-1.5">
+              <span
+                id="team-filter-heading"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Filter by team
+              </span>
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className={cn(
+                    "cursor-pointer rounded-sm text-xs font-medium text-primary hover:underline",
+                    FOCUS_RING
+                  )}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div
+              role="group"
+              aria-labelledby="team-filter-heading"
+              className="flex max-h-64 flex-col gap-0.5 overflow-y-auto"
+            >
+              {teams.map((team) => {
+                const checked = selected.has(team);
+                const inputId = `team-filter-${team}`;
+                return (
+                  <div
+                    key={team}
+                    className="flex items-center gap-2 rounded-sm px-1.5 py-1 hover:bg-muted"
+                  >
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggleTeam(team)}
+                      className={cn(
+                        "size-3.5 cursor-pointer rounded-sm border-border",
+                        FOCUS_RING
+                      )}
+                    />
+                    <label
+                      htmlFor={inputId}
+                      className="flex-1 cursor-pointer text-sm text-foreground"
+                    >
+                      {team}
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {Array.from(selected)
+            .sort()
+            .map((team) => (
+              <Badge key={team} variant="secondary" className="gap-1 pr-1">
+                {team}
+                <button
+                  type="button"
+                  onClick={() => onToggleTeam(team)}
+                  aria-label={`Remove ${team} filter`}
+                  className={cn(
+                    "cursor-pointer rounded-full p-0.5 hover:bg-muted-foreground/20",
+                    FOCUS_RING
+                  )}
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </Badge>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameCard({
   game,
   expanded,
@@ -367,6 +528,61 @@ export default function ExplorerPage() {
   const [boxScores, setBoxScores] = useState<
     Record<number, FetchState<ApiList<PlayerStatRow>> | undefined>
   >({});
+
+  // Client-side team filter over the already-fetched games list — see
+  // `TeamFilterDropdown` above. Empty selection means "no filter" (all
+  // teams shown), matching this project's established "unfiltered means
+  // unfiltered" convention elsewhere (e.g. `/games` with no query params).
+  const [selectedTeams, setSelectedTeams] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const availableTeams = useMemo(() => {
+    if (gamesState.status !== "loaded") return [];
+    const teams = new Set<string>();
+    for (const game of gamesState.result.data) {
+      teams.add(game.home_team);
+      teams.add(game.away_team);
+    }
+    return Array.from(teams).sort();
+  }, [gamesState]);
+
+  // A new search can return a different set of teams than the last one —
+  // derive an "effective" selection that drops any team no longer present,
+  // rather than syncing it back into state via an effect (which would just
+  // trigger a second, cascading render for the same result). `selectedTeams`
+  // itself is left alone; only this derived view is ever read for filtering
+  // or for what's shown as selected.
+  const effectiveSelectedTeams = useMemo(() => {
+    if (selectedTeams.size === 0) return selectedTeams;
+    const availableSet = new Set(availableTeams);
+    const filtered = new Set(
+      Array.from(selectedTeams).filter((team) => availableSet.has(team))
+    );
+    return filtered.size === selectedTeams.size ? selectedTeams : filtered;
+  }, [selectedTeams, availableTeams]);
+
+  const visibleGames = useMemo(() => {
+    if (gamesState.status !== "loaded") return [];
+    if (effectiveSelectedTeams.size === 0) return gamesState.result.data;
+    return gamesState.result.data.filter(
+      (game) =>
+        effectiveSelectedTeams.has(game.home_team) ||
+        effectiveSelectedTeams.has(game.away_team)
+    );
+  }, [gamesState, effectiveSelectedTeams]);
+
+  function toggleTeamFilter(team: string) {
+    setSelectedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(team)) {
+        next.delete(team);
+      } else {
+        next.add(team);
+      }
+      return next;
+    });
+  }
 
   const dateRangeInvalid =
     startDate !== "" && endDate !== "" && startDate > endDate;
@@ -592,17 +808,34 @@ export default function ExplorerPage() {
           )}
 
           {gamesState.status === "loaded" && gamesState.result.data.length > 0 && (
-            <div className="flex flex-col gap-3">
-              {gamesState.result.data.map((game) => (
-                <GameCard
-                  key={game.game_id}
-                  game={game}
-                  expanded={expandedGameIds.has(game.game_id)}
-                  onToggle={() => toggleBoxScore(game.game_id)}
-                  boxScoreState={boxScores[game.game_id]}
+            <>
+              <TeamFilterDropdown
+                teams={availableTeams}
+                selected={effectiveSelectedTeams}
+                onToggleTeam={toggleTeamFilter}
+                onClear={() => setSelectedTeams(new Set())}
+              />
+
+              {visibleGames.length === 0 ? (
+                <EmptyState
+                  icon={<Filter aria-hidden="true" className="size-6 text-muted-foreground" />}
+                  title="No games match the selected team filter"
+                  message="Clear the team filter or pick a different team to see more games."
                 />
-              ))}
-            </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {visibleGames.map((game) => (
+                    <GameCard
+                      key={game.game_id}
+                      game={game}
+                      expanded={expandedGameIds.has(game.game_id)}
+                      onToggle={() => toggleBoxScore(game.game_id)}
+                      boxScoreState={boxScores[game.game_id]}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
 
