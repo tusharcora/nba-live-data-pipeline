@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   CalendarX,
   ChevronDown,
   ChevronUp,
   Inbox,
   Search,
+  Star,
   TriangleAlert,
   UserRound,
 } from "lucide-react";
@@ -31,6 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { FOCUS_RING } from "@/app/components/site-nav";
+import { cn } from "@/lib/utils";
+import * as localStore from "@/lib/local-store";
 
 // Response shapes match `GET /games` and the new `GET /player-stats`
 // FastAPI endpoints (Employee "games-search-api", week5/historical-explorer,
@@ -121,6 +125,272 @@ function statusBadgeVariant(
 
 function displayScore(score: number | null): string {
   return score === null || score === undefined ? "–" : String(score);
+}
+
+// --- Personalization (localStorage-only, per-browser, no auth/accounts) ---
+// See `lib/local-store.ts` for the get/set/remove wrapper this all rests
+// on, and its own header comment for the fail-open contract.
+
+type SavedSearch = {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  playerName: string;
+};
+
+const FAVORITE_TEAMS_KEY = "explorer:favoriteTeams";
+const SAVED_SEARCHES_KEY = "explorer:savedSearches";
+
+const emptySubscribe = () => () => {};
+
+/**
+ * True only once the client has hydrated. Copied from
+ * `app/components/theme-toggle.tsx`'s `useHasMounted` rather than
+ * reinvented: favorite teams / saved searches live in `localStorage`,
+ * which the server can't see, so this page must render a neutral
+ * placeholder for that UI (matching what the server rendered) until this
+ * flips, avoiding a hydration mismatch. `useSyncExternalStore`'s client
+ * snapshot (`true`) vs. server snapshot (`false`) gives a one-time flip
+ * without ever calling `setState` synchronously from an effect body,
+ * which this repo's `react-hooks/set-state-in-effect` lint rule forbids.
+ */
+function useHasMounted() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
+
+function generateSavedSearchId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function savedSearchSummary(preset: SavedSearch): string {
+  const parts: string[] = [];
+  if (preset.startDate || preset.endDate) {
+    parts.push(`${preset.startDate || "…"} → ${preset.endDate || "…"}`);
+  }
+  if (preset.playerName) parts.push(`Player: ${preset.playerName}`);
+  return parts.length > 0 ? parts.join(" · ") : "All games, no player filter";
+}
+
+/**
+ * Favorite-teams quick-filter chip row. Every team seen in the *current*
+ * (already-fetched) games list gets a chip; the star toggles that team
+ * as a favorite (persisted), and once a team is a favorite its chip
+ * becomes clickable to filter the games list below down to just that
+ * team, purely client-side, and clickable again to clear the filter.
+ * Non-favorited chips are shown (dashed border) so there's a way to
+ * discover and favorite a team in the first place, but aren't
+ * filter-clickable themselves — favoriting is the deliberate gate, per
+ * the "favorite-teams quick-filter" framing of this task.
+ *
+ * NOTE for whoever reviews the overlap: a separate teammate (C1) is
+ * building a general team-filter dropdown on this same Explorer page in
+ * a parallel branch. This chip row is a distinct, additive surface
+ * (favorites-first quick access) rather than a competing general filter,
+ * but the two should likely be reconciled into one coherent filter
+ * control when both branches land — see the PR description.
+ */
+function FavoriteTeamsRow({
+  teams,
+  favoriteTeams,
+  activeTeam,
+  onToggleFavorite,
+  onToggleFilter,
+}: {
+  teams: string[];
+  favoriteTeams: string[];
+  activeTeam: string | null;
+  onToggleFavorite: (team: string) => void;
+  onToggleFilter: (team: string) => void;
+}) {
+  if (teams.length === 0) return null;
+  const favoriteSet = new Set(favoriteTeams);
+
+  return (
+    <div
+      role="group"
+      aria-label="Favorite teams quick filter"
+      className="flex flex-wrap items-center gap-2"
+    >
+      <span className="text-xs font-medium text-muted-foreground">
+        Favorite teams
+      </span>
+      {teams.map((team) => {
+        const isFavorite = favoriteSet.has(team);
+        const isActive = activeTeam === team;
+        return (
+          <span
+            key={team}
+            className={cn(
+              "flex items-center gap-1 rounded-full border py-1 pr-2.5 pl-1 text-xs font-medium transition-colors duration-200",
+              isActive
+                ? "border-primary bg-primary/10 text-primary"
+                : isFavorite
+                  ? "border-border bg-muted/50 text-foreground"
+                  : "border-dashed border-border text-muted-foreground"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => onToggleFavorite(team)}
+              aria-pressed={isFavorite}
+              aria-label={
+                isFavorite
+                  ? `Remove ${team} from favorite teams`
+                  : `Add ${team} to favorite teams`
+              }
+              className={cn(
+                "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:text-foreground",
+                FOCUS_RING
+              )}
+            >
+              <Star
+                aria-hidden="true"
+                className={cn(
+                  "size-3.5",
+                  isFavorite && "fill-primary text-primary"
+                )}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleFilter(team)}
+              disabled={!isFavorite}
+              aria-pressed={isActive}
+              title={
+                isFavorite
+                  ? `Filter games to ${team}`
+                  : `Favorite ${team} to enable quick-filtering`
+              }
+              className={cn(
+                "cursor-pointer whitespace-nowrap rounded-sm disabled:cursor-default",
+                FOCUS_RING
+              )}
+            >
+              {team}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Save-current-search-as-a-preset form + list of saved presets with
+ * load/delete actions. Presets store `{startDate, endDate, playerName}`
+ * plus a user-typed label; there is no server-side concept of a "saved
+ * search" — this is purely `localStorage`, per browser. */
+function SavedSearchesSection({
+  hasMounted,
+  savedSearches,
+  presetLabel,
+  onLabelChange,
+  onSave,
+  onLoad,
+  onDelete,
+}: {
+  hasMounted: boolean;
+  savedSearches: SavedSearch[];
+  presetLabel: string;
+  onLabelChange: (label: string) => void;
+  onSave: () => void;
+  onLoad: (preset: SavedSearch) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-medium">Saved searches</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave();
+          }}
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        >
+          <div className="flex flex-1 flex-col gap-1.5">
+            <label
+              htmlFor="preset-label"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Save current search as
+            </label>
+            <Input
+              id="preset-label"
+              type="text"
+              placeholder="e.g. LeBron road games this season"
+              value={presetLabel}
+              onChange={(event) => onLabelChange(event.target.value)}
+            />
+          </div>
+          <Button
+            type="submit"
+            variant="outline"
+            className="cursor-pointer"
+            disabled={!presetLabel.trim()}
+          >
+            Save search
+          </Button>
+        </form>
+
+        {!hasMounted ? (
+          <Skeleton className="h-10 w-full" aria-hidden="true" />
+        ) : savedSearches.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No saved searches yet — save your current filters above to come
+            back to them later.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {savedSearches.map((preset) => (
+              <li
+                key={preset.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground">
+                    {preset.label}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {savedSearchSummary(preset)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer"
+                    onClick={() => onLoad(preset)}
+                  >
+                    Load
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="cursor-pointer text-destructive hover:text-destructive"
+                    onClick={() => onDelete(preset.id)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /** Calm, deliberate empty state — icon + two-line message, per the
@@ -368,6 +638,118 @@ export default function ExplorerPage() {
     Record<number, FetchState<ApiList<PlayerStatRow>> | undefined>
   >({});
 
+  // --- Personalization: favorite teams + saved searches (localStorage) ---
+  const hasMounted = useHasMounted();
+  const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
+  const [activeTeamFilter, setActiveTeamFilter] = useState<string | null>(
+    null
+  );
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [presetLabel, setPresetLabel] = useState("");
+
+  // Reads persisted state in after mount. The initial `useState([])`
+  // above already matches what the server rendered (it has no way to see
+  // `localStorage`), so this doesn't itself cause a hydration mismatch —
+  // but the setState calls are still deferred into a resolved-microtask
+  // `.then()` rather than called synchronously in the effect body, for
+  // consistency with the same constraint documented on the games-fetch
+  // effect above (this repo's `react-hooks/set-state-in-effect` rule).
+  useEffect(() => {
+    if (!hasMounted) return;
+    Promise.resolve().then(() => {
+      setFavoriteTeams(localStore.get<string[]>(FAVORITE_TEAMS_KEY, []));
+      setSavedSearches(
+        localStore.get<SavedSearch[]>(SAVED_SEARCHES_KEY, [])
+      );
+    });
+  }, [hasMounted]);
+
+  const availableTeams = useMemo(() => {
+    if (gamesState.status !== "loaded") return [] as string[];
+    const teams = new Set<string>();
+    for (const game of gamesState.result.data) {
+      teams.add(game.home_team);
+      teams.add(game.away_team);
+    }
+    return Array.from(teams).sort((a, b) => a.localeCompare(b));
+  }, [gamesState]);
+
+  const orderedTeams = useMemo(() => {
+    const favoriteSet = new Set(favoriteTeams);
+    return [...availableTeams].sort((a, b) => {
+      const aFav = favoriteSet.has(a);
+      const bFav = favoriteSet.has(b);
+      if (aFav !== bFav) return aFav ? -1 : 1;
+      return a.localeCompare(b);
+    });
+  }, [availableTeams, favoriteTeams]);
+
+  // Client-side only: filters the already-fetched games list down to the
+  // active favorite team, if any. No new API/BFF params are added for
+  // this — see the PR description's note on the parallel general
+  // team-filter surface (Employee C1) for the overlap to reconcile later.
+  const displayedGames = useMemo(() => {
+    if (gamesState.status !== "loaded") return [];
+    if (!activeTeamFilter) return gamesState.result.data;
+    return gamesState.result.data.filter(
+      (game) =>
+        game.home_team === activeTeamFilter ||
+        game.away_team === activeTeamFilter
+    );
+  }, [gamesState, activeTeamFilter]);
+
+  function toggleFavoriteTeam(team: string) {
+    const isFavorite = favoriteTeams.includes(team);
+    const next = isFavorite
+      ? favoriteTeams.filter((t) => t !== team)
+      : [...favoriteTeams, team];
+    localStore.set(FAVORITE_TEAMS_KEY, next);
+    setFavoriteTeams(next);
+    if (isFavorite && activeTeamFilter === team) {
+      setActiveTeamFilter(null);
+    }
+  }
+
+  function toggleTeamFilter(team: string) {
+    setActiveTeamFilter((prev) => (prev === team ? null : team));
+  }
+
+  function saveCurrentSearch() {
+    const label = presetLabel.trim();
+    if (!label) return;
+    const preset: SavedSearch = {
+      id: generateSavedSearchId(),
+      label,
+      startDate,
+      endDate,
+      playerName,
+    };
+    const next = [...savedSearches, preset];
+    localStore.set(SAVED_SEARCHES_KEY, next);
+    setSavedSearches(next);
+    setPresetLabel("");
+  }
+
+  function deleteSavedSearch(id: string) {
+    const next = savedSearches.filter((preset) => preset.id !== id);
+    localStore.set(SAVED_SEARCHES_KEY, next);
+    setSavedSearches(next);
+  }
+
+  function loadSavedSearch(preset: SavedSearch) {
+    setStartDate(preset.startDate);
+    setEndDate(preset.endDate);
+    setPlayerName(preset.playerName);
+    setActiveTeamFilter(null);
+    setGamesState({ status: "loading" });
+    setPlayerSearchState(
+      preset.playerName.trim() ? { status: "loading" } : null
+    );
+    setExpandedGameIds(new Set());
+    setBoxScores({});
+    performSearch(preset.startDate, preset.endDate, preset.playerName);
+  }
+
   const dateRangeInvalid =
     startDate !== "" && endDate !== "" && startDate > endDate;
 
@@ -570,8 +952,28 @@ export default function ExplorerPage() {
           </CardContent>
         </Card>
 
+        <SavedSearchesSection
+          hasMounted={hasMounted}
+          savedSearches={savedSearches}
+          presetLabel={presetLabel}
+          onLabelChange={setPresetLabel}
+          onSave={saveCurrentSearch}
+          onLoad={loadSavedSearch}
+          onDelete={deleteSavedSearch}
+        />
+
         <section aria-label="Games" className="flex flex-col gap-3">
           <h2 className="text-lg font-medium text-foreground">Games</h2>
+
+          {hasMounted && (
+            <FavoriteTeamsRow
+              teams={orderedTeams}
+              favoriteTeams={favoriteTeams}
+              activeTeam={activeTeamFilter}
+              onToggleFavorite={toggleFavoriteTeam}
+              onToggleFilter={toggleTeamFilter}
+            />
+          )}
 
           {gamesState.status === "loading" && <GamesSkeleton />}
 
@@ -591,9 +993,19 @@ export default function ExplorerPage() {
             />
           )}
 
-          {gamesState.status === "loaded" && gamesState.result.data.length > 0 && (
+          {gamesState.status === "loaded" &&
+            gamesState.result.data.length > 0 &&
+            displayedGames.length === 0 && (
+              <EmptyState
+                icon={<CalendarX aria-hidden="true" className="size-6 text-muted-foreground" />}
+                title={`No ${activeTeamFilter ?? ""} games in this list`}
+                message="Clear the favorite-team filter above to see the rest of the search results."
+              />
+            )}
+
+          {gamesState.status === "loaded" && displayedGames.length > 0 && (
             <div className="flex flex-col gap-3">
-              {gamesState.result.data.map((game) => (
+              {displayedGames.map((game) => (
                 <GameCard
                   key={game.game_id}
                   game={game}
