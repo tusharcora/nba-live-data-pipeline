@@ -181,7 +181,6 @@ typed as (
 
     select
         pull_id,
-        pulled_at,
         game_id,
         -- Synthetic per-row key -- see header decision log (1). Safe
         -- because nothing in the codebase joins on stat_id (grep
