@@ -51,6 +51,17 @@ models:
         description: Player's first name, sourced from `data[].player.first_name`.
       - name: player_last_name
         description: Player's last name, sourced from `data[].player.last_name`.
+      - name: player_key
+        description: >
+          Always NULL on this side. Added only for union column parity
+          with the sibling `stg_player_game_stats_nba` model (which needs
+          a cross-source player-matching key computed at ingestion time by
+          `ingestion.normalization.normalize_player_key`). balldontlie's
+          `/stats` Bronze payload carries no such field, and computing one
+          here would mean either touching the balldontlie ingestion path
+          or duplicating that normalization logic in SQL for a source path
+          that's realistically permanently empty on the current API plan —
+          deliberate simplification, not an oversight.
       - name: team
         description: Full name of the team the player suited up for in this game, sourced from `data[].team.full_name`.
       - name: points

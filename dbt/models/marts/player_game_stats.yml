@@ -4,13 +4,23 @@ models:
   - name: player_game_stats
     description: >
       Gold mart (docs/prd.md §06). One row per player/game box-score line.
-      Currently a passthrough of stg_player_game_stats — cross-source
-      reconciliation between balldontlie and the public feed lands in a
-      later week once the public feed also contributes player-level box
-      scores to `raw_pulls`.
+      `UNION ALL` of two independent Bronze sources: balldontlie's
+      `/stats` endpoint (`stg_player_game_stats`, realistically
+      permanently empty on the current free API tier) and nba_api's
+      local-only historical backfill (`stg_player_game_stats_nba`). No
+      cross-source dedup/priority logic is implemented — deliberate
+      simplification, see `player_game_stats.sql`'s header. Further
+      cross-source reconciliation (vs. a third public feed) remains a
+      later week's work.
     columns:
       - name: stat_id
-        description: Primary key of one player/game box-score stat line.
+        description: >
+          Primary key of one player/game box-score stat line. Text here
+          (cast from balldontlie's native bigint, alongside nba_api's
+          native synthetic text key) so the two sources' differently-typed
+          IDs can be UNIONed — see `player_game_stats.sql`'s header for
+          the full type-unification note and the known `api`/`web`
+          follow-up this implies.
         data_tests:
           - not_null
           - unique
@@ -35,8 +45,21 @@ models:
         description: Player's first name.
       - name: player_last_name
         description: Player's last name.
+      - name: player_key
+        description: >
+          Diacritic-stripped, lowercase cross-source player-matching key.
+          Always NULL for balldontlie rows (no such field in their Bronze
+          payload — deliberate simplification, see
+          `stg_player_game_stats.yml`); populated for nba_stats rows,
+          already computed in Python at ingestion time.
       - name: team
-        description: Full name of the team the player suited up for in this game.
+        description: >
+          Team the player suited up for in this game. Format differs by
+          source: balldontlie rows carry a full team name (e.g. "Dallas
+          Mavericks"); nba_stats rows carry a team abbreviation (e.g.
+          "POR") since nba_api's box-score rows don't expose a single
+          full-team-name column — see `stg_player_game_stats_nba.sql`'s
+          header. Deliberate, documented inconsistency, not a bug.
       - name: points
         description: Points scored.
       - name: rebounds

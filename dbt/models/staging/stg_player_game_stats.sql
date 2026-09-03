@@ -43,6 +43,18 @@
 -- "MM:SS" string (e.g. "34:12", possibly still returned for some
 -- older/different data) are handled; anything else (null, '', garbage)
 -- still safely returns null, unchanged from before.
+--
+-- `player_key` (added for union column parity with the sibling
+-- `stg_player_game_stats_nba` model, which needs it for cross-source
+-- player matching) is always NULL here — balldontlie's `/stats` payload
+-- carries no such field in Bronze, and this is dbt-only scope: computing
+-- one from `player.first_name`/`player.last_name` would require touching
+-- the balldontlie ingestion path (out of scope) or duplicating
+-- `ingestion.normalization.normalize_player_key` in SQL for a source that
+-- doesn't need it yet (balldontlie's `player_game_stats` path is
+-- realistically permanently empty on the current API plan — see
+-- docs: `player_game_stats requires balldontlie's paid ALL-STAR tier`).
+-- Deliberate simplification, not an oversight.
 
 with raw_stat_pulls as (
 
@@ -120,6 +132,8 @@ select
     player_id,
     player_first_name,
     player_last_name,
+    -- Always NULL on this side — see header note above.
+    null::text as player_key,
     team,
     points,
     rebounds,
