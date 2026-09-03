@@ -65,15 +65,26 @@ class FakeQualityReader:
     `call_count` counts calls to `latest_metric_rows` (any one of the three
     reader methods being skipped implies all three are, since the route
     calls them in a fixed sequence within one `compute()`) so cache tests
-    can prove a hit skips the reader entirely.
+    can prove a hit skips the reader entirely. `history_call_count` is the
+    equivalent counter for `metric_history`, tracked separately since
+    `GET /quality/history` never calls `latest_metric_rows`.
     """
 
-    def __init__(self, metric_rows=(), schema_changes=(), conflicts_total=0, conflicts_recent=()):
+    def __init__(
+        self,
+        metric_rows=(),
+        schema_changes=(),
+        conflicts_total=0,
+        conflicts_recent=(),
+        history_rows=(),
+    ):
         self._metric_rows = list(metric_rows)
         self._schema_changes = list(schema_changes)
         self._conflicts_total = conflicts_total
         self._conflicts_recent = list(conflicts_recent)
+        self._history_rows = list(history_rows)
         self.call_count = 0
+        self.history_call_count = 0
 
     def latest_metric_rows(self):
         self.call_count += 1
@@ -84,6 +95,15 @@ class FakeQualityReader:
 
     def recent_conflicts(self, limit):
         return self._conflicts_total, self._conflicts_recent[:limit]
+
+    def metric_history(self, check_name):
+        """Returns raw, deliberately *unordered* rows for `check_name` — like
+        `latest_metric_rows`, ordering is the route's job (`sorted(...)` in
+        `get_quality_history`), so tests can prove that by feeding rows here
+        out of order.
+        """
+        self.history_call_count += 1
+        return [row for row in self._history_rows if row.check_name == check_name]
 
 
 def _override_reader(reader):
@@ -260,3 +280,134 @@ def test_quality_falls_open_when_redis_is_unreachable(monkeypatch):
     body = resp.json()
     assert body["metrics"][0]["check_name"] == "cross_source_agreement"
     assert reader.call_count == 1
+
+
+# --- GET /quality/history?check_name=<name> -------------------------------
+
+
+def test_quality_history_requires_api_key():
+    resp = client.get("/quality/history", params={"check_name": "psi_pace"})
+    assert resp.status_code == 401
+
+
+def test_quality_history_returns_points_in_ascending_order(monkeypatch):
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    oldest = _metric("psi_pace", 0.01, datetime(2026, 8, 1, tzinfo=timezone.utc))
+    middle = _metric("psi_pace", 0.03, datetime(2026, 8, 15, tzinfo=timezone.utc))
+    newest = _metric("psi_pace", 0.02, datetime(2026, 8, 30, tzinfo=timezone.utc))
+    other_check = _metric(
+        "cross_source_agreement", 0.99, datetime(2026, 8, 10, tzinfo=timezone.utc)
+    )
+
+    # Deliberately fed out of order (and interleaved with a different
+    # check_name) to prove the route sorts rather than trusting input order.
+    reader = FakeQualityReader(history_rows=[newest, other_check, oldest, middle])
+    _override_reader(reader)
+    try:
+        resp = client.get(
+            "/quality/history",
+            params={"check_name": "psi_pace"},
+            headers={"X-API-Key": API_KEY},
+        )
+    finally:
+        _clear_override()
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "check_name": "psi_pace",
+        "points": [
+            {"run_at": "2026-08-01T00:00:00+00:00", "value": 0.01},
+            {"run_at": "2026-08-15T00:00:00+00:00", "value": 0.03},
+            {"run_at": "2026-08-30T00:00:00+00:00", "value": 0.02},
+        ],
+    }
+
+
+def test_quality_history_unknown_check_name_returns_empty_list(monkeypatch):
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    reader = FakeQualityReader(
+        history_rows=[_metric("psi_pace", 0.01, datetime(2026, 8, 1, tzinfo=timezone.utc))]
+    )
+    _override_reader(reader)
+    try:
+        resp = client.get(
+            "/quality/history",
+            params={"check_name": "never_seen_check"},
+            headers={"X-API-Key": API_KEY},
+        )
+    finally:
+        _clear_override()
+
+    assert resp.status_code == 200
+    assert resp.json() == {"check_name": "never_seen_check", "points": []}
+
+
+def test_quality_history_missing_check_name_is_422(monkeypatch):
+    """`check_name` is a required query param — omitting it is a validation
+    error (422), not a 200 with an empty result or a 500."""
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    resp = client.get("/quality/history", headers={"X-API-Key": API_KEY})
+    assert resp.status_code == 422
+
+
+def test_quality_history_second_request_is_served_from_cache(monkeypatch):
+    """A cache hit must skip the underlying `QualityReader` entirely."""
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    fake = fakeredis.FakeRedis()
+    monkeypatch.setattr(cache_module, "get_cache_client", lambda: fake)
+    reader = FakeQualityReader(
+        history_rows=[_metric("psi_pace", 0.01, datetime(2026, 8, 1, tzinfo=timezone.utc))]
+    )
+    _override_reader(reader)
+    try:
+        first = client.get(
+            "/quality/history",
+            params={"check_name": "psi_pace"},
+            headers={"X-API-Key": API_KEY},
+        )
+        second = client.get(
+            "/quality/history",
+            params={"check_name": "psi_pace"},
+            headers={"X-API-Key": API_KEY},
+        )
+    finally:
+        _clear_override()
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert reader.history_call_count == 1
+
+
+def test_quality_history_different_check_names_do_not_collide_in_cache(monkeypatch):
+    """Two distinct `check_name` values must be cached under distinct keys —
+    the whole point of the endpoint is per-check history, so a cache
+    collision here would silently serve the wrong series."""
+    monkeypatch.setenv("API_SERVICE_KEY", API_KEY)
+    fake = fakeredis.FakeRedis()
+    monkeypatch.setattr(cache_module, "get_cache_client", lambda: fake)
+    reader = FakeQualityReader(
+        history_rows=[
+            _metric("psi_pace", 0.01, datetime(2026, 8, 1, tzinfo=timezone.utc)),
+            _metric("null_rate_points", 0.05, datetime(2026, 8, 2, tzinfo=timezone.utc)),
+        ]
+    )
+    _override_reader(reader)
+    try:
+        psi_pace = client.get(
+            "/quality/history",
+            params={"check_name": "psi_pace"},
+            headers={"X-API-Key": API_KEY},
+        )
+        null_rate = client.get(
+            "/quality/history",
+            params={"check_name": "null_rate_points"},
+            headers={"X-API-Key": API_KEY},
+        )
+    finally:
+        _clear_override()
+
+    assert psi_pace.json()["points"] == [{"run_at": "2026-08-01T00:00:00+00:00", "value": 0.01}]
+    assert null_rate.json()["points"] == [
+        {"run_at": "2026-08-02T00:00:00+00:00", "value": 0.05}
+    ]
+    assert reader.history_call_count == 2  # both were misses against distinct keys

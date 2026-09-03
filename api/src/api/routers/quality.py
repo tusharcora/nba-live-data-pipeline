@@ -1,4 +1,5 @@
-"""GET /quality — the drift/agreement scorecard (docs/prd.md §07).
+"""GET /quality — the drift/agreement scorecard (docs/prd.md §07), and
+GET /quality/history — the per-check time series behind it.
 
 Response shape (documented for the `quality-scorecard-ui` frontend PR):
 
@@ -33,6 +34,20 @@ against fakes without a real database. `schema_changes` is the most recent
 `RECENT_SCHEMA_CHANGES_LIMIT` (20) rows from `schema_change_log`. `conflicts`
 is a total count plus the most recent `RECENT_CONFLICTS_LIMIT` (10) rows from
 `source_conflicts`.
+
+`GET /quality/history?check_name=<name>` (added for the frontend charting
+work, see docs/superpowers/plans/2026-09-02-hyper-user-focused-ui.md) returns
+every `quality_metrics` row for that one `check_name`, ordered by `run_at`
+ascending:
+
+    {
+      "check_name": str,
+      "points": [{"run_at": "<isoformat>", "value": <number>}, ...]
+    }
+
+An unknown/never-seen `check_name` returns `{"check_name": ..., "points": []}`
+with `200`, not a `404` — the same "unfiltered/empty means empty" convention
+`/games` uses for a date with no matches.
 """
 
 from __future__ import annotations
@@ -40,7 +55,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Protocol
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -62,6 +77,12 @@ RECENT_CONFLICTS_LIMIT = 10
 CACHE_TTL_SECONDS = 30
 CACHE_KEY = "quality:scorecard"
 
+# /quality/history's response varies by `check_name`, so (like /games's
+# `?date=`/`?start_date=`/`?end_date=` filters) the cache key incorporates
+# the raw query param value — see `get_quality_history` — rather than
+# reusing a single fixed key, so distinct check names never collide.
+HISTORY_CACHE_TTL_SECONDS = 30
+
 
 class QualityReader(Protocol):
     """Seam for the DB-reading part of /quality — swap for a fake in tests.
@@ -78,6 +99,13 @@ class QualityReader(Protocol):
 
     def recent_conflicts(self, limit: int) -> tuple[int, Sequence[SourceConflict]]:
         """Returns (total conflict count, most recent `limit` conflicts)."""
+        ...
+
+    def metric_history(self, check_name: str) -> Sequence[QualityMetric]:
+        """Returns every row for `check_name`, raw and possibly out of
+        order — like `latest_metric_rows`, ordering is the route's job (see
+        `get_quality_history`), not baked into the reader/fake.
+        """
         ...
 
 
@@ -101,6 +129,14 @@ class SqlAlchemyQualityReader:
         stmt = select(SourceConflict).order_by(SourceConflict.detected_at.desc()).limit(limit)
         recent = self._session.execute(stmt).scalars().all()
         return total, recent
+
+    def metric_history(self, check_name: str) -> Sequence[QualityMetric]:
+        stmt = (
+            select(QualityMetric)
+            .where(QualityMetric.check_name == check_name)
+            .order_by(QualityMetric.run_at.asc())
+        )
+        return self._session.execute(stmt).scalars().all()
 
 
 def get_quality_reader() -> Iterator[QualityReader]:
@@ -141,6 +177,13 @@ def _serialize_schema_change(row: SchemaChangeLog) -> dict:
     }
 
 
+def _serialize_history_point(row: QualityMetric) -> dict:
+    return {
+        "run_at": row.run_at.isoformat(),
+        "value": float(row.metric_value),
+    }
+
+
 def _serialize_conflict(row: SourceConflict) -> dict:
     return {
         "id": row.id,
@@ -178,3 +221,36 @@ def get_quality_metrics(
         }
 
     return cached_json(CACHE_KEY, CACHE_TTL_SECONDS, _compute)
+
+
+@router.get("/history")
+@limiter.limit(DEFAULT_RATE_LIMIT)
+def get_quality_history(
+    request: Request,
+    check_name: str = Query(..., description="The check_name to fetch history for."),
+    reader: QualityReader = Depends(get_quality_reader),
+) -> dict:
+    """Full history of `quality_metrics` rows for one `check_name`, ordered
+    by `run_at` ascending — the time series behind a frontend chart, as
+    opposed to `GET /quality/`'s latest-value-only scorecard.
+
+    An unknown/never-seen `check_name` returns `{"check_name": ..., "points": []}`
+    with `200`, matching this project's established "unfiltered/empty means
+    empty" convention (see `/games`'s behavior with no matches) rather than
+    a `404`.
+
+    Response shape:
+        {"check_name": str, "points": [{"run_at": "<iso8601>", "value": <number>}, ...]}
+    """
+
+    def _compute() -> dict:
+        rows = sorted(reader.metric_history(check_name), key=lambda row: row.run_at)
+        return {
+            "check_name": check_name,
+            "points": [_serialize_history_point(row) for row in rows],
+        }
+
+    # Cache key incorporates the raw `check_name` value (like /games's
+    # date-shaped filters) so distinct check names never share a cache entry.
+    cache_key = f"quality:history:{check_name}"
+    return cached_json(cache_key, HISTORY_CACHE_TTL_SECONDS, _compute)
