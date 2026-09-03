@@ -14,8 +14,9 @@ Three things this suite proves:
    swaps in a fake reader so this needs no live Postgres — the point is
    proving the validation layer rejects bad input before it ever reaches a
    query, not testing the DB.
-2. Every route gated by `require_api_key` (`/games/`, `/quality/`, `/live/`)
-   returns 401 for a missing `X-API-Key` header, an empty-string header, a
+2. Every route gated by `require_api_key` (`/games/`, `/quality/`,
+   `/quality/history`, `/live/`) returns 401 for a missing `X-API-Key`
+   header, an empty-string header, a
    wrong value, and the *correct* value in the wrong case (`require_api_key`
    does a plain Python `!=` comparison — see `api/src/api/core/security.py`
    — so a case-only mismatch must still be rejected). The missing-header
@@ -79,6 +80,9 @@ class _EmptyQualityReader:
 
     def recent_conflicts(self, limit):
         return 0, []
+
+    def metric_history(self, check_name):
+        return []
 
 
 class _EmptyLiveReader:
@@ -156,7 +160,7 @@ def test_legitimate_date_still_works_after_injection_sweep(client):
 
 # --- 2. Auth bypass across all three protected routes --------------------
 
-PROTECTED_ROUTES = ["/games/", "/quality/", "/live/"]
+PROTECTED_ROUTES = ["/games/", "/quality/", "/quality/history?check_name=psi_pace", "/live/"]
 
 # `None` means "don't send the header at all" (already covered per-route by
 # the other test modules — repeated here so the full bypass matrix lives in
@@ -203,11 +207,17 @@ def test_api_key_never_appears_in_any_response_body_or_header(client):
         # authorized calls (200) — the key must not be echoed back on success
         client.get("/games/", headers={"X-API-Key": AUDIT_API_KEY}),
         client.get("/quality/", headers={"X-API-Key": AUDIT_API_KEY}),
+        client.get(
+            "/quality/history",
+            params={"check_name": "psi_pace"},
+            headers={"X-API-Key": AUDIT_API_KEY},
+        ),
         client.get("/live/", headers={"X-API-Key": AUDIT_API_KEY}),
         # rejected calls (401) — a naive implementation might echo "expected
         # X, got Y" into an error message, which would leak the real key
         client.get("/games/", headers={"X-API-Key": "wrong"}),
         client.get("/quality/"),
+        client.get("/quality/history", params={"check_name": "psi_pace"}),
         client.get("/live/", headers={"X-API-Key": ""}),
     ]
 

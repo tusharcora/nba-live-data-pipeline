@@ -1,14 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   CalendarX,
   ChevronDown,
   ChevronUp,
+  Filter,
   Inbox,
   Search,
+  Star,
   TriangleAlert,
   UserRound,
+  X,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -31,6 +40,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { FOCUS_RING } from "@/app/components/site-nav";
+import { cn } from "@/lib/utils";
+import * as localStore from "@/lib/local-store";
 
 // Response shapes match `GET /games` and the new `GET /player-stats`
 // FastAPI endpoints (Employee "games-search-api", week5/historical-explorer,
@@ -121,6 +133,272 @@ function statusBadgeVariant(
 
 function displayScore(score: number | null): string {
   return score === null || score === undefined ? "–" : String(score);
+}
+
+// --- Personalization (localStorage-only, per-browser, no auth/accounts) ---
+// See `lib/local-store.ts` for the get/set/remove wrapper this all rests
+// on, and its own header comment for the fail-open contract.
+
+type SavedSearch = {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  playerName: string;
+};
+
+const FAVORITE_TEAMS_KEY = "explorer:favoriteTeams";
+const SAVED_SEARCHES_KEY = "explorer:savedSearches";
+
+const emptySubscribe = () => () => {};
+
+/**
+ * True only once the client has hydrated. Copied from
+ * `app/components/theme-toggle.tsx`'s `useHasMounted` rather than
+ * reinvented: favorite teams / saved searches live in `localStorage`,
+ * which the server can't see, so this page must render a neutral
+ * placeholder for that UI (matching what the server rendered) until this
+ * flips, avoiding a hydration mismatch. `useSyncExternalStore`'s client
+ * snapshot (`true`) vs. server snapshot (`false`) gives a one-time flip
+ * without ever calling `setState` synchronously from an effect body,
+ * which this repo's `react-hooks/set-state-in-effect` lint rule forbids.
+ */
+function useHasMounted() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
+
+function generateSavedSearchId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function savedSearchSummary(preset: SavedSearch): string {
+  const parts: string[] = [];
+  if (preset.startDate || preset.endDate) {
+    parts.push(`${preset.startDate || "…"} → ${preset.endDate || "…"}`);
+  }
+  if (preset.playerName) parts.push(`Player: ${preset.playerName}`);
+  return parts.length > 0 ? parts.join(" · ") : "All games, no player filter";
+}
+
+/**
+ * Favorite-teams quick-filter chip row. Every team seen in the *current*
+ * (already-fetched) games list gets a chip; the star toggles that team
+ * as a favorite (persisted), and once a team is a favorite its chip
+ * becomes clickable to filter the games list below down to just that
+ * team, purely client-side, and clickable again to clear the filter.
+ * Non-favorited chips are shown (dashed border) so there's a way to
+ * discover and favorite a team in the first place, but aren't
+ * filter-clickable themselves — favoriting is the deliberate gate, per
+ * the "favorite-teams quick-filter" framing of this task.
+ *
+ * NOTE for whoever reviews the overlap: a separate teammate (C1) is
+ * building a general team-filter dropdown on this same Explorer page in
+ * a parallel branch. This chip row is a distinct, additive surface
+ * (favorites-first quick access) rather than a competing general filter,
+ * but the two should likely be reconciled into one coherent filter
+ * control when both branches land — see the PR description.
+ */
+function FavoriteTeamsRow({
+  teams,
+  favoriteTeams,
+  selectedTeams,
+  onToggleFavorite,
+  onToggleFilter,
+}: {
+  teams: string[];
+  favoriteTeams: string[];
+  selectedTeams: Set<string>;
+  onToggleFavorite: (team: string) => void;
+  onToggleFilter: (team: string) => void;
+}) {
+  if (teams.length === 0) return null;
+  const favoriteSet = new Set(favoriteTeams);
+
+  return (
+    <div
+      role="group"
+      aria-label="Favorite teams quick filter"
+      className="flex flex-wrap items-center gap-2"
+    >
+      <span className="text-xs font-medium text-muted-foreground">
+        Favorite teams
+      </span>
+      {teams.map((team) => {
+        const isFavorite = favoriteSet.has(team);
+        const isActive = selectedTeams.has(team);
+        return (
+          <span
+            key={team}
+            className={cn(
+              "flex items-center gap-1 rounded-full border py-1 pr-2.5 pl-1 text-xs font-medium transition-colors duration-200",
+              isActive
+                ? "border-primary bg-primary/10 text-primary"
+                : isFavorite
+                  ? "border-border bg-muted/50 text-foreground"
+                  : "border-dashed border-border text-muted-foreground"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => onToggleFavorite(team)}
+              aria-pressed={isFavorite}
+              aria-label={
+                isFavorite
+                  ? `Remove ${team} from favorite teams`
+                  : `Add ${team} to favorite teams`
+              }
+              className={cn(
+                "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:text-foreground",
+                FOCUS_RING
+              )}
+            >
+              <Star
+                aria-hidden="true"
+                className={cn(
+                  "size-3.5",
+                  isFavorite && "fill-primary text-primary"
+                )}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleFilter(team)}
+              disabled={!isFavorite}
+              aria-pressed={isActive}
+              title={
+                isFavorite
+                  ? `Filter games to ${team}`
+                  : `Favorite ${team} to enable quick-filtering`
+              }
+              className={cn(
+                "cursor-pointer whitespace-nowrap rounded-sm disabled:cursor-default",
+                FOCUS_RING
+              )}
+            >
+              {team}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Save-current-search-as-a-preset form + list of saved presets with
+ * load/delete actions. Presets store `{startDate, endDate, playerName}`
+ * plus a user-typed label; there is no server-side concept of a "saved
+ * search" — this is purely `localStorage`, per browser. */
+function SavedSearchesSection({
+  hasMounted,
+  savedSearches,
+  presetLabel,
+  onLabelChange,
+  onSave,
+  onLoad,
+  onDelete,
+}: {
+  hasMounted: boolean;
+  savedSearches: SavedSearch[];
+  presetLabel: string;
+  onLabelChange: (label: string) => void;
+  onSave: () => void;
+  onLoad: (preset: SavedSearch) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base font-medium">Saved searches</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave();
+          }}
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        >
+          <div className="flex flex-1 flex-col gap-1.5">
+            <label
+              htmlFor="preset-label"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Save current search as
+            </label>
+            <Input
+              id="preset-label"
+              type="text"
+              placeholder="e.g. LeBron road games this season"
+              value={presetLabel}
+              onChange={(event) => onLabelChange(event.target.value)}
+            />
+          </div>
+          <Button
+            type="submit"
+            variant="outline"
+            className="cursor-pointer"
+            disabled={!presetLabel.trim()}
+          >
+            Save search
+          </Button>
+        </form>
+
+        {!hasMounted ? (
+          <Skeleton className="h-10 w-full" aria-hidden="true" />
+        ) : savedSearches.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No saved searches yet — save your current filters above to come
+            back to them later.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {savedSearches.map((preset) => (
+              <li
+                key={preset.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground">
+                    {preset.label}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {savedSearchSummary(preset)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer"
+                    onClick={() => onLoad(preset)}
+                  >
+                    Load
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="cursor-pointer text-destructive hover:text-destructive"
+                    onClick={() => onDelete(preset.id)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /** Calm, deliberate empty state — icon + two-line message, per the
@@ -277,6 +555,337 @@ function BoxScoreSection({
   );
 }
 
+/** Client-side multi-select team filter over the already-fetched games list
+ * — no new network request, pure array filtering over `gamesState.result.data`.
+ * Built as a plain popover of native checkboxes (not a full ARIA
+ * listbox/option widget) so keyboard operability comes for free from native
+ * `<input type="checkbox">`/`<label>` semantics rather than a hand-rolled
+ * roving-tabindex pattern that's easy to get subtly wrong. Closes on
+ * outside-click or Escape. Selected teams are also echoed as removable
+ * badges below the trigger — per the ui-ux-pro-max "table filter dropdown"
+ * finding on chip-collection reflow, that row uses `flex-wrap` rather than
+ * clipping overflow. */
+function TeamFilterDropdown({
+  teams,
+  selected,
+  onToggleTeam,
+  onClear,
+}: {
+  teams: string[];
+  selected: Set<string>;
+  onToggleTeam: (team: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  if (teams.length === 0) return null;
+
+  const summary =
+    selected.size === 0
+      ? "All teams"
+      : `${selected.size} team${selected.size === 1 ? "" : "s"}`;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div ref={containerRef} className="relative w-fit">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn("cursor-pointer gap-1.5", FOCUS_RING)}
+          aria-haspopup="true"
+          aria-expanded={open}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <Filter aria-hidden="true" className="size-4" />
+          Filter by team: {summary}
+          <ChevronDown
+            aria-hidden="true"
+            className={cn("size-3.5 transition-transform", open && "rotate-180")}
+          />
+        </Button>
+
+        {open && (
+          <div className="absolute z-10 mt-2 w-56 rounded-md border border-border bg-popover p-2 shadow-md">
+            <div className="flex items-center justify-between px-1 pb-1.5">
+              <span
+                id="team-filter-heading"
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Filter by team
+              </span>
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className={cn(
+                    "cursor-pointer rounded-sm text-xs font-medium text-primary hover:underline",
+                    FOCUS_RING
+                  )}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div
+              role="group"
+              aria-labelledby="team-filter-heading"
+              className="flex max-h-64 flex-col gap-0.5 overflow-y-auto"
+            >
+              {teams.map((team) => {
+                const checked = selected.has(team);
+                const inputId = `team-filter-${team}`;
+                return (
+                  <div
+                    key={team}
+                    className="flex items-center gap-2 rounded-sm px-1.5 py-1 hover:bg-muted"
+                  >
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggleTeam(team)}
+                      className={cn(
+                        "size-3.5 cursor-pointer rounded-sm border-border",
+                        FOCUS_RING
+                      )}
+                    />
+                    <label
+                      htmlFor={inputId}
+                      className="flex-1 cursor-pointer text-sm text-foreground"
+                    >
+                      {team}
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {Array.from(selected)
+            .sort()
+            .map((team) => (
+              <Badge key={team} variant="secondary" className="gap-1 pr-1">
+                {team}
+                <button
+                  type="button"
+                  onClick={() => onToggleTeam(team)}
+                  aria-label={`Remove ${team} filter`}
+                  className={cn(
+                    "cursor-pointer rounded-full p-0.5 hover:bg-muted-foreground/20",
+                    FOCUS_RING
+                  )}
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </Badge>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Shared styling for the native `<select>` comparison pickers below —
+// matches `components/ui/input.tsx`'s sizing/tokens (this project has no
+// shadcn Select component installed; a plain native <select> keeps this
+// feature dependency-free) plus the shared FOCUS_RING treatment.
+const COMPARE_SELECT_CLASSES = cn(
+  "flex h-8 w-full min-w-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-1 text-sm text-foreground shadow-xs outline-none transition-[color,box-shadow] dark:bg-input/30",
+  FOCUS_RING
+);
+
+/** "Jan 5, 2026 — BOS @ ATL (105–121)" — a single-line label identifying a
+ * game unambiguously in the comparison pickers, reusing the same
+ * date/score formatting as the rest of this page. */
+function formatGameOptionLabel(game: GameRow): string {
+  return `${formatGameDate(game.game_date)} — ${game.away_team} @ ${game.home_team} (${displayScore(
+    game.away_score
+  )}–${displayScore(game.home_score)})`;
+}
+
+/** One side of the side-by-side game comparison. Deliberately limited to
+ * fields that actually exist on the Gold `games` table / `GameRow` (final
+ * score, teams, date, season, status, postseason) — there is no
+ * quarter-by-quarter breakdown anywhere upstream of this table (checked
+ * `dbt/models/marts/games.sql` and `dbt/models/staging/stg_games.sql`
+ * directly: neither the mart, the staging model, nor its documented
+ * balldontlie payload-shape comment has any per-quarter/period column), so
+ * building a quarter-by-quarter UI here would mean fabricating a section
+ * with nothing real to show. */
+function GameComparisonCard({ game }: { game: GameRow }) {
+  return (
+    <Card className="gap-3">
+      <CardHeader className="flex-row items-center justify-between gap-2">
+        <CardTitle className="font-mono text-xs font-medium tracking-wide text-muted-foreground">
+          {formatGameDate(game.game_date)}
+          {game.postseason ? " · Postseason" : ""}
+        </CardTitle>
+        <CardAction>
+          <Badge variant={statusBadgeVariant(game.status)}>
+            {prettifyStatus(game.status)}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5 font-mono text-sm text-foreground">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate">{game.away_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.away_score)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate">{game.home_team}</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {displayScore(game.home_score)}
+            </span>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Season</dt>
+            <dd>{game.season}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Postseason</dt>
+            <dd>{game.postseason ? "Yes" : "No"}</dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Simple side-by-side comparison of two games picked from the already-
+ * fetched `games` array — two native `<select>` pickers plus two
+ * `GameComparisonCard`s. All client-side over `games`; no new network call.
+ * ui-ux-pro-max ("side by side comparison view", `--domain ux`) had no
+ * direct hit for that exact query; broadening to "comparison table" /
+ * "compare" surfaced only the Responsive/"Table Handling" guideline (tables
+ * can overflow on mobile — use horizontal scroll or a card layout instead
+ * of a wide table). Applied here by using a two-card grid
+ * (`grid-cols-1 sm:grid-cols-2`, stacking on narrow viewports) rather than
+ * a single wide comparison table, so nothing needs its own horizontal
+ * scroll container on mobile. */
+function GameComparisonSection({ games }: { games: GameRow[] }) {
+  const [leftId, setLeftId] = useState<string>("");
+  const [rightId, setRightId] = useState<string>("");
+
+  const leftGame = useMemo(
+    () => games.find((game) => String(game.game_id) === leftId) ?? null,
+    [games, leftId]
+  );
+  const rightGame = useMemo(
+    () => games.find((game) => String(game.game_id) === rightId) ?? null,
+    [games, rightId]
+  );
+
+  const sameGameSelected =
+    leftId !== "" && rightId !== "" && leftId === rightId;
+
+  if (games.length < 2) return null;
+
+  return (
+    <section aria-label="Compare games" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-lg font-medium text-foreground">Compare games</h2>
+        <p className="text-sm text-muted-foreground">
+          Pick two games from the results above to see their final scores
+          side by side.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="compare-game-left"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Game A
+          </label>
+          <select
+            id="compare-game-left"
+            value={leftId}
+            onChange={(event) => setLeftId(event.target.value)}
+            className={COMPARE_SELECT_CLASSES}
+          >
+            <option value="">Select a game…</option>
+            {games.map((game) => (
+              <option key={game.game_id} value={game.game_id}>
+                {formatGameOptionLabel(game)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="compare-game-right"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Game B
+          </label>
+          <select
+            id="compare-game-right"
+            value={rightId}
+            onChange={(event) => setRightId(event.target.value)}
+            className={COMPARE_SELECT_CLASSES}
+          >
+            <option value="">Select a game…</option>
+            {games.map((game) => (
+              <option key={game.game_id} value={game.game_id}>
+                {formatGameOptionLabel(game)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {sameGameSelected && (
+        <p role="alert" className="text-sm text-destructive">
+          Pick two different games to compare.
+        </p>
+      )}
+
+      {leftGame && rightGame && !sameGameSelected && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <GameComparisonCard game={leftGame} />
+          <GameComparisonCard game={rightGame} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 function GameCard({
   game,
   expanded,
@@ -364,9 +973,162 @@ export default function ExplorerPage() {
   const [expandedGameIds, setExpandedGameIds] = useState<Set<number>>(
     () => new Set()
   );
+  // Bumped on every fresh search so `GameComparisonSection` below remounts
+  // with its two picker selections cleared — otherwise a select could keep
+  // holding a `game_id` value from the previous result set that no longer
+  // has a matching `<option>`. Same "a fresh search invalidates prior
+  // per-result UI state" idea as the `expandedGameIds`/`boxScores` reset
+  // in `handleSubmit` below, just via remount (`key`) since this state
+  // lives inside the child component rather than here.
+  const [compareResetKey, setCompareResetKey] = useState(0);
   const [boxScores, setBoxScores] = useState<
     Record<number, FetchState<ApiList<PlayerStatRow>> | undefined>
   >({});
+
+  // --- Personalization: favorite teams + saved searches (localStorage) ---
+  const hasMounted = useHasMounted();
+  const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [presetLabel, setPresetLabel] = useState("");
+
+  // Reads persisted state in after mount. The initial `useState([])`
+  // above already matches what the server rendered (it has no way to see
+  // `localStorage`), so this doesn't itself cause a hydration mismatch —
+  // but the setState calls are still deferred into a resolved-microtask
+  // `.then()` rather than called synchronously in the effect body, for
+  // consistency with the same constraint documented on the games-fetch
+  // effect above (this repo's `react-hooks/set-state-in-effect` rule).
+  useEffect(() => {
+    if (!hasMounted) return;
+    Promise.resolve().then(() => {
+      setFavoriteTeams(localStore.get<string[]>(FAVORITE_TEAMS_KEY, []));
+      setSavedSearches(
+        localStore.get<SavedSearch[]>(SAVED_SEARCHES_KEY, [])
+      );
+    });
+  }, [hasMounted]);
+
+  // Client-side team filter over the already-fetched games list — shared
+  // by both the favorite-teams quick-filter row and the general
+  // `TeamFilterDropdown` below. (Reconciled at integration time: Team B and
+  // Team C each independently built a "filter games by team" mechanism in
+  // parallel branches — this single `Set`-based multi-select is now the one
+  // source of truth both drive, rather than two competing filter states.)
+  // Empty selection means "no filter" (all teams shown), matching this
+  // project's established "unfiltered means unfiltered" convention
+  // elsewhere (e.g. `/games` with no query params).
+  const [selectedTeams, setSelectedTeams] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const availableTeams = useMemo(() => {
+    if (gamesState.status !== "loaded") return [] as string[];
+    const teams = new Set<string>();
+    for (const game of gamesState.result.data) {
+      teams.add(game.home_team);
+      teams.add(game.away_team);
+    }
+    return Array.from(teams).sort((a, b) => a.localeCompare(b));
+  }, [gamesState]);
+
+  // Favorites-first ordering for the quick-filter chip row — purely a
+  // display-order concern, independent of which teams are currently
+  // selected/filtered.
+  const orderedTeams = useMemo(() => {
+    const favoriteSet = new Set(favoriteTeams);
+    return [...availableTeams].sort((a, b) => {
+      const aFav = favoriteSet.has(a);
+      const bFav = favoriteSet.has(b);
+      if (aFav !== bFav) return aFav ? -1 : 1;
+      return a.localeCompare(b);
+    });
+  }, [availableTeams, favoriteTeams]);
+
+  // A new search can return a different set of teams than the last one —
+  // derive an "effective" selection that drops any team no longer present,
+  // rather than syncing it back into state via an effect (which would just
+  // trigger a second, cascading render for the same result). `selectedTeams`
+  // itself is left alone; only this derived view is ever read for filtering
+  // or for what's shown as selected.
+  const effectiveSelectedTeams = useMemo(() => {
+    if (selectedTeams.size === 0) return selectedTeams;
+    const availableSet = new Set(availableTeams);
+    const filtered = new Set(
+      Array.from(selectedTeams).filter((team) => availableSet.has(team))
+    );
+    return filtered.size === selectedTeams.size ? selectedTeams : filtered;
+  }, [selectedTeams, availableTeams]);
+
+  const visibleGames = useMemo(() => {
+    if (gamesState.status !== "loaded") return [];
+    if (effectiveSelectedTeams.size === 0) return gamesState.result.data;
+    return gamesState.result.data.filter(
+      (game) =>
+        effectiveSelectedTeams.has(game.home_team) ||
+        effectiveSelectedTeams.has(game.away_team)
+    );
+  }, [gamesState, effectiveSelectedTeams]);
+
+  // Toggles a team's membership in the shared `selectedTeams` set — called
+  // both by `TeamFilterDropdown`'s checkboxes and by clicking a favorited
+  // chip in `FavoriteTeamsRow`, so favoriting and the general dropdown stay
+  // in sync (checking a team in one surface is reflected in the other).
+  function toggleTeamFilter(team: string) {
+    setSelectedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(team)) {
+        next.delete(team);
+      } else {
+        next.add(team);
+      }
+      return next;
+    });
+  }
+
+  function toggleFavoriteTeam(team: string) {
+    const isFavorite = favoriteTeams.includes(team);
+    const next = isFavorite
+      ? favoriteTeams.filter((t) => t !== team)
+      : [...favoriteTeams, team];
+    localStore.set(FAVORITE_TEAMS_KEY, next);
+    setFavoriteTeams(next);
+  }
+
+  function saveCurrentSearch() {
+    const label = presetLabel.trim();
+    if (!label) return;
+    const preset: SavedSearch = {
+      id: generateSavedSearchId(),
+      label,
+      startDate,
+      endDate,
+      playerName,
+    };
+    const next = [...savedSearches, preset];
+    localStore.set(SAVED_SEARCHES_KEY, next);
+    setSavedSearches(next);
+    setPresetLabel("");
+  }
+
+  function deleteSavedSearch(id: string) {
+    const next = savedSearches.filter((preset) => preset.id !== id);
+    localStore.set(SAVED_SEARCHES_KEY, next);
+    setSavedSearches(next);
+  }
+
+  function loadSavedSearch(preset: SavedSearch) {
+    setStartDate(preset.startDate);
+    setEndDate(preset.endDate);
+    setPlayerName(preset.playerName);
+    setSelectedTeams(new Set());
+    setGamesState({ status: "loading" });
+    setPlayerSearchState(
+      preset.playerName.trim() ? { status: "loading" } : null
+    );
+    setExpandedGameIds(new Set());
+    setBoxScores({});
+    performSearch(preset.startDate, preset.endDate, preset.playerName);
+  }
 
   const dateRangeInvalid =
     startDate !== "" && endDate !== "" && startDate > endDate;
@@ -442,6 +1204,7 @@ export default function ExplorerPage() {
     // scores from a prior result set.
     setExpandedGameIds(new Set());
     setBoxScores({});
+    setCompareResetKey((key) => key + 1);
     performSearch(startDate, endDate, playerName);
   }
 
@@ -570,8 +1333,28 @@ export default function ExplorerPage() {
           </CardContent>
         </Card>
 
+        <SavedSearchesSection
+          hasMounted={hasMounted}
+          savedSearches={savedSearches}
+          presetLabel={presetLabel}
+          onLabelChange={setPresetLabel}
+          onSave={saveCurrentSearch}
+          onLoad={loadSavedSearch}
+          onDelete={deleteSavedSearch}
+        />
+
         <section aria-label="Games" className="flex flex-col gap-3">
           <h2 className="text-lg font-medium text-foreground">Games</h2>
+
+          {hasMounted && (
+            <FavoriteTeamsRow
+              teams={orderedTeams}
+              favoriteTeams={favoriteTeams}
+              selectedTeams={effectiveSelectedTeams}
+              onToggleFavorite={toggleFavoriteTeam}
+              onToggleFilter={toggleTeamFilter}
+            />
+          )}
 
           {gamesState.status === "loading" && <GamesSkeleton />}
 
@@ -592,19 +1375,40 @@ export default function ExplorerPage() {
           )}
 
           {gamesState.status === "loaded" && gamesState.result.data.length > 0 && (
-            <div className="flex flex-col gap-3">
-              {gamesState.result.data.map((game) => (
-                <GameCard
-                  key={game.game_id}
-                  game={game}
-                  expanded={expandedGameIds.has(game.game_id)}
-                  onToggle={() => toggleBoxScore(game.game_id)}
-                  boxScoreState={boxScores[game.game_id]}
+            <>
+              <TeamFilterDropdown
+                teams={availableTeams}
+                selected={effectiveSelectedTeams}
+                onToggleTeam={toggleTeamFilter}
+                onClear={() => setSelectedTeams(new Set())}
+              />
+
+              {visibleGames.length === 0 ? (
+                <EmptyState
+                  icon={<Filter aria-hidden="true" className="size-6 text-muted-foreground" />}
+                  title="No games match the selected team filter"
+                  message="Clear the team filter or pick a different team to see more games."
                 />
-              ))}
-            </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {visibleGames.map((game) => (
+                    <GameCard
+                      key={game.game_id}
+                      game={game}
+                      expanded={expandedGameIds.has(game.game_id)}
+                      onToggle={() => toggleBoxScore(game.game_id)}
+                      boxScoreState={boxScores[game.game_id]}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
+
+        {gamesState.status === "loaded" && (
+          <GameComparisonSection key={compareResetKey} games={visibleGames} />
+        )}
 
         {playerSearchState && (
           <section aria-label="Player search results" className="flex flex-col gap-3">
