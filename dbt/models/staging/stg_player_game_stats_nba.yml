@@ -34,10 +34,11 @@ models:
           nba_api's PlayerStats rows have no standalone primary key the
           way balldontlie's `data[].id` is a real id from their API.
           Confirmed via grep (see model header) that nothing in the
-          codebase (`api/`, `web/`) joins on `stat_id` -- it's only ever
-          used as a display/ordering/dedup key -- so a synthetic,
-          deterministic, per-(game,player)-unique bigint is safe here.
-          Kept numeric (not a text key) specifically so it matches
+          codebase (`api/`, `web/`) joins on `stat_id`. Checked against
+          Postgres bigint overflow given this source's real game_id scale
+          (offset by NBA_GAME_ID_OFFSET, ~100,060,000,000 max) -- realistic
+          stat_id max is ~1.0x10^18, ~9x inside bigint's ~9.22x10^18
+          ceiling. Kept numeric (not a text key) specifically so it matches
           balldontlie's bigint `stat_id` with no `UNION ALL` type
           reconciliation needed in `player_game_stats.sql`, and so `api/`'s
           and `web/`'s existing `stat_id: number` assumptions stay valid.
@@ -46,11 +47,11 @@ models:
           - unique
       - name: game_id
         description: >
-          FK to the game this stat line belongs to. A direct passthrough
-          of the payload's `balldontlie_game_id` -- Employee 1's flow
-          already matched NBA.com's game onto balldontlie's Gold `games`
-          table by team-name overlap at ingestion time, so no matching
-          logic belongs here.
+          FK to the game this stat line belongs to -- nba_api's own
+          GAME_ID, offset by NBA_GAME_ID_OFFSET (100 billion) at ingestion
+          time. A direct passthrough of the payload's `game_id`; the same
+          offset value is used for the matching row in `stg_games_nba`, so
+          this joins cleanly against it.
         data_tests:
           - not_null
       - name: player_id
@@ -133,7 +134,7 @@ unit_tests:
             endpoint: boxscore_traditional
             pulled_at: "2024-01-01 00:00:00"
             payload:
-              balldontlie_game_id: 111
+              game_id: 111
               player_stats:
                 - PLAYER_ID: 1001
                   PLAYER_NAME: "Gary Trent Jr."
@@ -151,7 +152,7 @@ unit_tests:
             endpoint: boxscore_traditional
             pulled_at: "2024-01-01 00:00:00"
             payload:
-              balldontlie_game_id: 222
+              game_id: 222
               player_stats:
                 - PLAYER_ID: 2002
                   PLAYER_NAME: "Stephen Curry"
@@ -169,7 +170,7 @@ unit_tests:
             endpoint: boxscore_traditional
             pulled_at: "2024-01-01 00:00:00"
             payload:
-              balldontlie_game_id: 333
+              game_id: 333
               player_stats:
                 - PLAYER_ID: 3003
                   PLAYER_NAME: "Nene"
@@ -193,3 +194,44 @@ unit_tests:
         - stat_id: 3330003003
           player_first_name: "Nene"
           player_last_name: null
+
+  - name: test_stg_player_game_stats_nba_stat_id_no_bigint_overflow
+    description: >
+      Regression test for a real bug found while planning the full-history
+      backfill: game_id values for nba_stats rows are offset by
+      NBA_GAME_ID_OFFSET (100 billion, see ingestion/src/ingestion/sources/
+      nba_stats.py) to avoid colliding with balldontlie's native game_id
+      space. stat_id = game_id * 10,000,000 + player_id must not overflow
+      Postgres bigint (~9.22x10^18) at that realistic scale -- an earlier
+      design draft's 1-trillion offset would have overflowed by several
+      orders of magnitude. This uses a real, realistic-scale offset
+      game_id (100022300500, corresponding to nba_api's raw GAME_ID
+      "0022300500") and a real 7-digit player_id to prove the computed
+      stat_id both fits and is computed correctly.
+    model: stg_player_game_stats_nba
+    given:
+      - input: source('raw', 'raw_pulls')
+        rows:
+          - id: 1
+            source: nba_stats
+            endpoint: boxscore_traditional
+            pulled_at: "2024-01-01 00:00:00"
+            payload:
+              game_id: 100022300500
+              player_stats:
+                - PLAYER_ID: 1629027
+                  PLAYER_NAME: "Gary Trent Jr."
+                  player_key: "gary trent jr."
+                  TEAM_ABBREVIATION: "POR"
+                  PTS: 20
+                  REB: 4
+                  AST: 3
+                  STL: 1
+                  BLK: 0
+                  TO: 2
+                  MIN: "34:12"
+    expect:
+      rows:
+        - stat_id: 1000223005001629027
+          game_id: 100022300500
+          player_id: 1629027

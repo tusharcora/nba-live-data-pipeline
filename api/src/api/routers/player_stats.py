@@ -83,7 +83,15 @@ class SQLAlchemyPlayerStatsReader:
             stmt = stmt.where(full_name.ilike(f"%{player_name}%"))
 
         with self._engine.connect() as conn:
-            return [dict(row) for row in conn.execute(stmt).mappings().all()]
+            rows = [dict(row) for row in conn.execute(stmt).mappings().all()]
+        # stat_id = game_id * 10_000_000 + player_id can reach ~10^18 for
+        # nba_stats-sourced rows (offset game_id space), well past JS's
+        # Number.MAX_SAFE_INTEGER (2^53-1 ~= 9.007e15) -- serialize as a
+        # string here so JSON round-tripping through a JS client can't lose
+        # precision or collide two distinct stat_ids.
+        for row in rows:
+            row["stat_id"] = str(row["stat_id"])
+        return rows
 
 
 def get_player_stats_reader() -> PlayerStatsReader:
@@ -125,6 +133,12 @@ def list_player_stats(
 
     def _compute() -> dict:
         rows = reader.list_player_stats(game_id, player_name)
+        # Belt-and-suspenders alongside SQLAlchemyPlayerStatsReader's own
+        # stringification: applied here too so *every* PlayerStatsReader
+        # implementation injected via DI (including test fakes) returns a
+        # JS-safe string stat_id, not just the production SQLAlchemy path.
+        for row in rows:
+            row["stat_id"] = str(row["stat_id"])
         return {"data": rows, "count": len(rows)}
 
     # Cache key incorporates both filter params' raw values so filtered and

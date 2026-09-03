@@ -1,6 +1,6 @@
 from unittest.mock import Mock, patch
 
-from ingestion.sources.nba_stats import NBAStatsClient
+from ingestion.sources.nba_stats import NBAStatsClient, offset_game_id
 
 
 def _finder_result(rows: list[dict]) -> Mock:
@@ -15,81 +15,132 @@ def _boxscore_result(rows: list[dict]) -> Mock:
     return boxscore
 
 
-def test_get_games_for_date_groups_two_team_rows_into_one_game():
-    """LeagueGameFinder returns one row per team per game (two rows/game) —
-    get_games_for_date must group those by GAME_ID into one dict per game
-    carrying both team names."""
-    rows = [
+def test_offset_game_id_adds_the_namespace_constant():
+    assert offset_game_id("0022300500") == 100_022_300_500
+    assert offset_game_id("0029600001") == 100_029_600_001
+
+
+def test_get_games_for_season_derives_home_away_from_matchup():
+    """LeagueGameFinder returns one row per team per game; get_games_for_season
+    must group by GAME_ID and use MATCHUP ('vs.' vs '@') to pick home/away,
+    and must offset game_id via offset_game_id."""
+    regular_season_rows = [
         {
             "GAME_ID": "0022300500",
-            "TEAM_ID": 1610612737,
             "TEAM_NAME": "Atlanta Hawks",
             "GAME_DATE": "2024-01-01",
             "MATCHUP": "ATL vs. BOS",
+            "PTS": 110,
         },
         {
             "GAME_ID": "0022300500",
-            "TEAM_ID": 1610612738,
             "TEAM_NAME": "Boston Celtics",
             "GAME_DATE": "2024-01-01",
             "MATCHUP": "BOS @ ATL",
+            "PTS": 105,
         },
     ]
-
-    with patch(
-        "nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder",
-        return_value=_finder_result(rows),
-    ) as mock_finder:
-        client = NBAStatsClient()
-        games = client.get_games_for_date("2024-01-01")
-
-    mock_finder.assert_called_once_with(
-        date_from_nullable="2024-01-01", date_to_nullable="2024-01-01"
-    )
-    assert games == [
-        {
-            "game_id": "0022300500",
-            "team_names": {"Atlanta Hawks", "Boston Celtics"},
-        }
-    ]
-
-
-def test_get_games_for_date_handles_multiple_games_same_date():
-    rows = [
-        {"GAME_ID": "A", "TEAM_NAME": "Dallas Mavericks"},
-        {"GAME_ID": "A", "TEAM_NAME": "Utah Jazz"},
-        {"GAME_ID": "B", "TEAM_NAME": "Miami Heat"},
-        {"GAME_ID": "B", "TEAM_NAME": "Orlando Magic"},
-    ]
-
-    with patch(
-        "nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder",
-        return_value=_finder_result(rows),
-    ):
-        client = NBAStatsClient()
-        games = client.get_games_for_date("2024-01-02")
-
-    games_by_id = {g["game_id"]: g["team_names"] for g in games}
-    assert games_by_id == {
-        "A": {"Dallas Mavericks", "Utah Jazz"},
-        "B": {"Miami Heat", "Orlando Magic"},
-    }
-
-
-def test_get_games_for_date_sleeps_for_pacing():
-    rows = [{"GAME_ID": "A", "TEAM_NAME": "Miami Heat"}]
 
     with (
         patch(
             "nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder",
-            return_value=_finder_result(rows),
-        ),
+            side_effect=[_finder_result(regular_season_rows), _finder_result([])],
+        ) as mock_finder,
         patch("ingestion.sources.nba_stats.time.sleep") as mock_sleep,
     ):
         client = NBAStatsClient()
-        client.get_games_for_date("2024-01-01")
+        games = client.get_games_for_season("2023-24")
 
-    mock_sleep.assert_called_once()
+    assert mock_finder.call_args_list[0].kwargs == {
+        "season_nullable": "2023-24",
+        "league_id_nullable": "00",
+        "season_type_nullable": "Regular Season",
+    }
+    assert mock_finder.call_args_list[1].kwargs == {
+        "season_nullable": "2023-24",
+        "league_id_nullable": "00",
+        "season_type_nullable": "Playoffs",
+    }
+    assert mock_sleep.call_count == 2
+    assert games == [
+        {
+            "game_id": 100_022_300_500,
+            "nba_game_id": "0022300500",
+            "game_date": "2024-01-01",
+            "season": 2023,
+            "postseason": False,
+            "status": "Final",
+            "home_team": "Atlanta Hawks",
+            "home_score": 110,
+            "away_team": "Boston Celtics",
+            "away_score": 105,
+        }
+    ]
+
+
+def test_get_games_for_season_tags_playoffs_as_postseason():
+    playoff_rows = [
+        {
+            "GAME_ID": "0049600001",
+            "TEAM_NAME": "Chicago Bulls",
+            "GAME_DATE": "1997-06-13",
+            "MATCHUP": "CHI vs. UTA",
+            "PTS": 90,
+        },
+        {
+            "GAME_ID": "0049600001",
+            "TEAM_NAME": "Utah Jazz",
+            "GAME_DATE": "1997-06-13",
+            "MATCHUP": "UTA @ CHI",
+            "PTS": 86,
+        },
+    ]
+
+    with (
+        patch(
+            "nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder",
+            side_effect=[_finder_result([]), _finder_result(playoff_rows)],
+        ),
+        patch("ingestion.sources.nba_stats.time.sleep"),
+    ):
+        client = NBAStatsClient()
+        games = client.get_games_for_season("1996-97")
+
+    assert len(games) == 1
+    assert games[0]["postseason"] is True
+    assert games[0]["game_id"] == 100_049_600_001
+    assert games[0]["season"] == 1996
+
+
+def test_get_games_for_season_handles_multiple_games():
+    # NOTE: the plan's brief used non-numeric GAME_ID values ("A"/"B") here,
+    # which can't survive `offset_game_id`'s `int(nba_game_id)` call (used by
+    # every other test in this file, and required by get_games_for_season
+    # itself). Swapped for numeric-string ids -- same test intent (grouping
+    # multiple distinct games by GAME_ID), just fixture data that the
+    # implementation can actually accept.
+    regular_season_rows = [
+        {"GAME_ID": "100", "TEAM_NAME": "Dallas Mavericks", "GAME_DATE": "1996-11-01", "MATCHUP": "DAL vs. UTA", "PTS": 100},
+        {"GAME_ID": "100", "TEAM_NAME": "Utah Jazz", "GAME_DATE": "1996-11-01", "MATCHUP": "UTA @ DAL", "PTS": 95},
+        {"GAME_ID": "200", "TEAM_NAME": "Miami Heat", "GAME_DATE": "1996-11-02", "MATCHUP": "MIA vs. ORL", "PTS": 88},
+        {"GAME_ID": "200", "TEAM_NAME": "Orlando Magic", "GAME_DATE": "1996-11-02", "MATCHUP": "ORL @ MIA", "PTS": 80},
+    ]
+
+    with (
+        patch(
+            "nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder",
+            side_effect=[_finder_result(regular_season_rows), _finder_result([])],
+        ),
+        patch("ingestion.sources.nba_stats.time.sleep"),
+    ):
+        client = NBAStatsClient()
+        games = client.get_games_for_season("1996-97")
+
+    games_by_nba_id = {g["nba_game_id"]: g for g in games}
+    assert games_by_nba_id["100"]["home_team"] == "Dallas Mavericks"
+    assert games_by_nba_id["100"]["away_team"] == "Utah Jazz"
+    assert games_by_nba_id["200"]["home_team"] == "Miami Heat"
+    assert games_by_nba_id["200"]["away_team"] == "Orlando Magic"
 
 
 def test_get_boxscore_returns_player_stats_with_player_key():

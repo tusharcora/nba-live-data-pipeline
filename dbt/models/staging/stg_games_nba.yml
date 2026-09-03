@@ -1,0 +1,99 @@
+version: 2
+
+models:
+  - name: stg_games_nba
+    description: >
+      Silver staging model. One row per NBA game, parsed and typed out of
+      the Bronze `raw_pulls.payload` JSONB for source='nba_stats',
+      endpoint='game' -- nba_api's (stats.nba.com) local-only historical
+      backfill, written by `backfill_nba_stats_flow.py`. Independent games
+      source from `stg_games` (balldontlie) -- not matched/translated onto
+      balldontlie's game_id space; see
+      docs/superpowers/specs/2026-09-03-full-nba-history-backfill-design.md
+      for why. De-duplicates to the most-recently-pulled row per `game_id`,
+      same pattern as `stg_games`.
+    columns:
+      - name: game_id
+        description: >
+          nba_api's own GAME_ID, offset by
+          `ingestion.sources.nba_stats.NBA_GAME_ID_OFFSET` (100 billion) at
+          ingestion time so it can never collide with balldontlie's native
+          sequential `games.id` (currently ~1,038,000). Natural key of this
+          model.
+        data_tests:
+          - not_null
+          - unique
+      - name: game_date
+        description: Calendar date of the game (nba_api's GAME_DATE, already a plain date string).
+        data_tests:
+          - not_null
+      - name: season
+        description: Season year (e.g. 1996 for the 1996-97 season) -- same convention as stg_games.season.
+      - name: status
+        description: Always "Final" -- this source only ever backfills already-completed historical games.
+      - name: postseason
+        description: >
+          Whether the game is a postseason (playoff) game -- set by the
+          ingestion flow based on which `season_type_nullable` query
+          ("Regular Season" vs "Playoffs") produced the row, not derived
+          here.
+      - name: home_team
+        description: >
+          Full name of the home team, from nba_api's TEAM_NAME
+          (period-accurate historical name, e.g. "Seattle SuperSonics" for
+          pre-2008 games -- not normalized to the current franchise name).
+        data_tests:
+          - not_null
+      - name: away_team
+        description: Full name of the visiting team, same TEAM_NAME source as home_team.
+        data_tests:
+          - not_null
+      - name: home_score
+        description: Home team's final score.
+      - name: away_score
+        description: Visiting team's final score.
+      - name: pulled_at
+        description: "`pulled_at` timestamp of the most recent `raw_pulls` row for this `game_id`."
+
+unit_tests:
+  - name: test_stg_games_nba_dedupes_to_latest_pull
+    description: >
+      Proves the de-dup logic keeps only the most-recently-pulled version
+      of a given game_id, matching stg_games's existing pattern.
+    model: stg_games_nba
+    given:
+      - input: source('raw', 'raw_pulls')
+        rows:
+          - id: 1
+            source: nba_stats
+            endpoint: game
+            pulled_at: "2026-09-01 00:00:00"
+            payload:
+              game_id: 100029600001
+              game_date: "1996-11-01"
+              season: 1996
+              postseason: false
+              status: "Final"
+              home_team: "Boston Celtics"
+              away_team: "Chicago Bulls"
+              home_score: 100
+              away_score: 90
+          - id: 2
+            source: nba_stats
+            endpoint: game
+            pulled_at: "2026-09-02 00:00:00"
+            payload:
+              game_id: 100029600001
+              game_date: "1996-11-01"
+              season: 1996
+              postseason: false
+              status: "Final"
+              home_team: "Boston Celtics"
+              away_team: "Chicago Bulls"
+              home_score: 107
+              away_score: 98
+    expect:
+      rows:
+        - game_id: 100029600001
+          home_score: 107
+          away_score: 98

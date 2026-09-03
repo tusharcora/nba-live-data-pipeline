@@ -14,7 +14,6 @@ dependencies = [
     "prefect>=3.8.4",
     "psycopg[binary]>=3.3.5",
     "pydantic-settings>=2.15.0",
-    "quality",
     "sqlalchemy>=2.0.52",
 ]
 
@@ -32,4 +31,3 @@ dev = [
 
 [tool.uv.sources]
 db = { path = "../db", editable = true }
-quality = { path = "../quality", editable = true }

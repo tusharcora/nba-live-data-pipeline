@@ -124,7 +124,7 @@ def test_list_player_stats_default_returns_all_rows_from_reader(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["count"] == 3
-    assert [row["stat_id"] for row in body["data"]] == [1, 2, 3]
+    assert [row["stat_id"] for row in body["data"]] == ["1", "2", "3"]
     assert reader.received_game_id is None
     assert reader.received_player_name is None
 
@@ -140,7 +140,7 @@ def test_list_player_stats_filters_by_game_id(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["count"] == 2
-    assert {row["stat_id"] for row in body["data"]} == {1, 2}
+    assert {row["stat_id"] for row in body["data"]} == {"1", "2"}
     assert reader.received_game_id == 100
 
 
@@ -155,7 +155,7 @@ def test_list_player_stats_filters_by_player_name_case_insensitive_partial(clien
     assert resp.status_code == 200
     body = resp.json()
     assert body["count"] == 2
-    assert {row["stat_id"] for row in body["data"]} == {1, 3}
+    assert {row["stat_id"] for row in body["data"]} == {"1", "3"}
     assert reader.received_player_name == "lebron"
 
 
