@@ -23,7 +23,13 @@ models:
           unique: false
     columns:
       - name: game_id
-        description: balldontlie's `id` for the game. Natural key of this table.
+        description: >
+          Primary key of one game. balldontlie's native sequential id for
+          balldontlie-sourced rows; nba_api's own GAME_ID (offset by
+          NBA_GAME_ID_OFFSET, see ingestion/src/ingestion/sources/
+          nba_stats.py) for nba_stats-sourced rows -- the two sources'
+          game_id spaces never overlap by construction, see games.sql's
+          header. Natural key of this table.
         data_tests:
           - not_null
           - unique

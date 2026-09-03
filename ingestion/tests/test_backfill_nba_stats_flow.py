@@ -221,6 +221,21 @@ def test_backfill_nba_stats_flow_requests_every_season_in_range():
     assert client.requested_seasons == ["1996-97", "1997-98", "1998-99"]
 
 
+def test_backfill_nba_stats_flow_rejects_end_season_before_start_season():
+    sink = FakeSink()
+    checkpoint_store = FakeCheckpointStore()
+    client = FakeNBAGameSource(games_by_season={})
+
+    with pytest.raises(ValueError, match="end_season"):
+        backfill_nba_stats_flow(
+            start_season=2000,
+            end_season=1999,
+            sink=sink,
+            checkpoint_store=checkpoint_store,
+            client=client,
+        )
+
+
 def test_backfill_nba_stats_flow_uses_independent_checkpoint_from_other_backfills():
     sink = FakeSink()
     checkpoint_store = FakeCheckpointStore()

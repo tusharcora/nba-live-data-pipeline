@@ -63,7 +63,12 @@ type GameRow = {
 };
 
 type PlayerStatRow = {
-  stat_id: number;
+  // Serialized as a string by the API (see
+  // api/src/api/routers/player_stats.py) -- stat_id = game_id * 10_000_000
+  // + player_id can reach ~10^18 for nba_stats-sourced rows (offset
+  // game_id space), past JS's Number.MAX_SAFE_INTEGER (2^53-1), so a plain
+  // `number` here would silently lose precision / collide on real data.
+  stat_id: string;
   game_id: number;
   player_id: number;
   player_first_name: string;

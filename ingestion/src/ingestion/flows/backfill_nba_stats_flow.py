@@ -40,6 +40,16 @@ not unattended in one pass. The existing per-date checkpoint still protects
 a single invocation against a mid-season crash: re-running the same
 `start_season`/`end_season` resumes from the last fully-completed date.
 
+**Named hazard: the checkpoint is a single global watermark, not
+season-scoped.** `checkpoint_store` tracks one "last pulled date" for
+`CHECKPOINT_FLOW_NAME` across *all* invocations of this flow, regardless of
+which `start_season`/`end_season` was passed. Seasons must therefore be run
+in increasing chronological order. If a later season is run first and
+advances the checkpoint, then an earlier season is run afterwards, every
+date in that earlier season is `<=` the checkpoint and is silently
+skipped -- with no error, no warning, and a `dates_processed`/
+`games_written` count that looks like a normal (if small) completed run.
+
 **Deliberately deferred, not omitted:** cross-source reconciliation of
 nba_api's and balldontlie's independent `games`/`game_id` records (now that
 both are real, non-empty sources) is real, separate work for later --
@@ -130,6 +140,11 @@ def backfill_nba_stats_flow(
     sink = sink or SQLAlchemyRawPullSink(session_factory)  # type: ignore[arg-type]
     checkpoint_store = checkpoint_store or SQLAlchemyCheckpointStore(session_factory)  # type: ignore[arg-type]
     client = client or NBAStatsClient()
+
+    if end_season < start_season:
+        raise ValueError(
+            f"end_season ({end_season}) must be >= start_season ({start_season})"
+        )
 
     games_by_date: dict[date, list[dict]] = {}
     for season in range(start_season, end_season + 1):
