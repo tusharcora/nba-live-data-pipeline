@@ -173,3 +173,54 @@
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * Density tokens (comfortable/compact), driven by `web/lib/density.ts`.
+ *
+ * Toggling density sets `data-density="compact" | "comfortable"` on
+ * `<html>` (see `web/app/layout.tsx`'s inline init script and
+ * `applyDensityAttribute` in `web/lib/density.ts`). These custom
+ * properties are the single source of truth for the resulting spacing —
+ * one set of tokens, overridden per-mode, rather than two full parallel
+ * stylesheets.
+ *
+ * Deliberately UNLAYERED (not inside any `@layer` block): Tailwind puts
+ * every utility class it generates — including the Card component's own
+ * `[--card-spacing:--spacing(4)]` arbitrary-property utility and the
+ * Table component's `h-10`/`px-2`/`p-2` utilities in
+ * `web/components/ui/{card,table}.tsx` — inside `@layer utilities`. Per
+ * the CSS cascade-layers spec, ANY unlayered rule beats ANY layered rule
+ * regardless of selector specificity or source order, so a plain
+ * (unlayered) `[data-slot="..."]` rule here can override those utilities
+ * without editing card.tsx/table.tsx or fighting specificity with
+ * `!important`.
+ *
+ * Compact values were chosen to stay clear of the touch-target spacing
+ * floor called out by the ui-ux-pro-max "Touch Spacing" guideline (>=8px
+ * gap between adjacent controls, see this task's PR body) — these tokens
+ * only tighten a table row's/card's own internal content padding, not the
+ * gaps between separate interactive controls.
+ */
+:root {
+  --density-card-spacing: --spacing(4); /* matches Card's own comfortable default */
+  --density-table-cell-py: --spacing(2); /* matches TableCell's comfortable default (p-2) */
+  --density-table-head-h: --spacing(10); /* matches TableHead's comfortable default (h-10) */
+}
+
+:root[data-density="compact"] {
+  --density-card-spacing: --spacing(2.5);
+  --density-table-cell-py: --spacing(1);
+  --density-table-head-h: --spacing(8);
+}
+
+[data-slot="card"] {
+  --card-spacing: var(--density-card-spacing);
+}
+
+[data-slot="table-cell"] {
+  padding-block: var(--density-table-cell-py);
+}
+
+[data-slot="table-head"] {
+  height: var(--density-table-head-h);
+}
