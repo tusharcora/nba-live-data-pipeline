@@ -716,14 +716,17 @@ top of both employees' merged work, open awaiting human sign-off.
   for real (2026-09-02) got a genuine `401 Unauthorized`: player box scores
   require balldontlie's paid **ALL-STAR** tier ($9.99/mo+). **Decision: not
   paying for a higher tier** — accepted, documented, not a bug.
-  **Superseded as a blocker (2026-09-03)** by a second, independent source:
-  the local-only `nba_api` backfill (see the Timeline entry above) can
-  populate this same table via `stats.nba.com` instead. As of this writing
-  that backfill has been built and tested against fakes but not yet run for
-  real by the human — until it is, `player_game_stats` (and Historical
-  Explorer's box-score search) still show their correctly-designed empty
-  state, but the *reason* is now "not run yet," not "structurally
-  blocked."
+  **Resolved (2026-09-03)** by a second, independent source: the
+  local-only `nba_api` backfill (see the Timeline entry above) was run for
+  real against `stats.nba.com` for 2024-01-01..2024-01-03, matched all 26
+  games onto balldontlie's existing Gold `games` rows (0 unmatched — the
+  team-name-overlap matcher works unmodified against nba_api's naming), and
+  wrote 26 `raw_pulls` rows. A subsequent `dbt run` produced
+  **699 real `player_game_stats` rows — the first non-empty rows this table
+  has ever had.** Spot-checked against real box scores (e.g. Paolo
+  Banchero 43pts, Luka Dončić 41pts, both diacritics and point totals
+  correct); 116 of the 699 rows have null stat columns, which is real
+  nba_api behavior for inactive/DNP players, not a parsing bug.
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
@@ -740,14 +743,33 @@ top of both employees' merged work, open awaiting human sign-off.
 - Mobile-breakpoint rendering (375px) remains unverified in a real browser
   — the `resize_window` tooling limitation from Week 6 persisted into this
   round too.
-- **The new `nba_stats` source (`backfill_nba_stats_flow`) has never been
-  run for real** — this sandbox has no network access to `stats.nba.com`,
-  so it's tested entirely against mocked `nba_api` endpoint classes. The
-  team-name-matching determination (all 30 NBA.com/balldontlie team names
-  match byte-for-byte) is analytical, not network-confirmed. It is also
-  local-only by design (a named ToS trade-off — see the Timeline entry) and
-  deliberately not wired into `quality/`'s reconciliation or volumetric
-  checks yet.
+- **The new `nba_stats` source (`backfill_nba_stats_flow`) has now been run
+  for real** (2026-09-03, from the human's own machine per its local-only
+  design — a named ToS trade-off, see the Timeline entry) — sandbox-only
+  testing against mocked `nba_api` endpoint classes has been superseded by
+  a real network-confirmed run: see the Known Issues entry above for
+  results. It remains deliberately not wired into `quality/`'s
+  reconciliation or volumetric checks yet.
+- **Two real bugs surfaced only by that live run, invisible to every
+  offline verification method this project relies on** (`dbt parse
+  --no-partial-parse`, `dbt compile --no-populate-cache`, `alembic upgrade
+  head --sql`) — a genuine blind spot in this project's established
+  "no live DB needed" testing methodology, worth remembering for any future
+  dbt-model or role-grant work:
+  - `stg_player_game_stats_nba.sql`'s `typed` CTE selected `pulled_at`
+    twice, which only errors (`column reference "pulled_at" is ambiguous`)
+    when a real Postgres query planner processes the `deduped` CTE's
+    `ORDER BY` — both `dbt parse` and `dbt compile` passed cleanly with the
+    duplicate column present. Fixed by removing the early duplicate.
+  - `ingestion_writer` had no `SELECT` grant on dbt's Gold tables. Every
+    prior `ingestion` flow only ever wrote Bronze; `backfill_nba_stats_flow`
+    is the first to read a Gold table (`games`, to match NBA.com games onto
+    balldontlie's), and c4fede563f2b's `ALTER DEFAULT PRIVILEGES` only ever
+    covered `api_reader`. `alembic upgrade head --sql` can't catch a missing
+    grant — it only renders DDL, it doesn't run it as the low-privilege role
+    that would actually hit the error. Fixed with a new migration
+    (`20a909ed3f0d`) granting `ingestion_writer` `SELECT` on the existing
+    Gold tables plus a matching `ALTER DEFAULT PRIVILEGES` for future ones.
 
 ## What's Next
 
