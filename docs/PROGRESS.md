@@ -641,6 +641,34 @@ an NBA.com game with no balldontlie match is skipped rather than written
 with a fabricated `balldontlie_game_id`. Full `ingestion` suite: 79/79
 passing (`test_nba_stats.py`, `test_backfill_nba_stats_flow.py` new).
 
+**Employee 2 (`dbt-nba-stats-staging-and-mart`)** parsed the new Bronze
+payload into `dbt/models/staging/stg_player_game_stats_nba.sql`, matching
+the existing balldontlie staging model's column contract exactly plus the
+new `player_key` column, then `UNION ALL`ed both into
+`dbt/models/marts/player_game_stats.sql`. Real payload details confirmed
+against Employee 1's merged code (not re-derived from the plan text): `TO`
+is nba_api's turnovers field name (not `TURNOVER`, unlike balldontlie), and
+`PLAYER_NAME` is a single "First Last" string needing a suffix-aware split
+— a real dbt `unit_tests` block proves this on "Gary Trent Jr.", "Stephen
+Curry", and "Nene" (single-word name, correctly degrades to a null last
+name rather than erroring or fabricating one).
+
+**A real bug found in review before this reached the human, fixed in the
+same round.** The boss's initial report flagged that Employee 2's
+synthetic `stat_id` for nba_api rows (`'nba_' || game_id || '_' ||
+player_id`, needed since nba_api rows carry no native ID) was a *text*
+key, forcing a `::text` cast on balldontlie's native bigint `stat_id` in
+the mart's `UNION ALL` — which would have silently broken `api/src/api/
+routers/player_stats.py`'s and `web/app/explorer/page.tsx`'s existing
+`stat_id: number` assumptions the moment real nba_stats rows landed
+(dormant today only because balldontlie's own stat path is empty). Since
+nothing anywhere joins on `stat_id` (confirmed by grep in the model's own
+decision log — it's ordering/display/React-key only), fixed by encoding it
+as a real bigint instead: `game_id * 10,000,000 + player_id` (safe — NBA.com
+player IDs have never exceeded 7 digits). Zero changes needed to `api`/
+`web`. PR #54 (`nba-stats-backfill-review` → `main`) carries this fix on
+top of both employees' merged work, open awaiting human sign-off.
+
 ---
 
 ## Known Issues / Caveats
@@ -682,17 +710,20 @@ passing (`test_nba_stats.py`, `test_backfill_nba_stats_flow.py` new).
   3-day backfill window exist). This is a standing decision the user wants
   revisited once `live_game_flow` has actually run during real game
   windows, not a dropped feature.
-- **`player_game_stats` is permanently empty on the current API plan.**
-  Week 5 built a real, correct ingestion path (`backfill_stats_flow` +
-  `BallDontLieClient.get_stats_pages()`), but running it for real
-  (2026-09-02) got a genuine `401 Unauthorized` from balldontlie's `/stats`
-  endpoint — confirmed via their own docs that player box scores require
-  the paid **ALL-STAR** tier ($9.99/mo+), which this project's free-tier
-  key doesn't have. `/games` remains free-tier-accessible and works fine.
-  **Decision: not paying for a higher tier** — this is an accepted,
-  documented limitation, not a bug. Historical Explorer's box-score search
-  is code-complete and will show its correctly-designed empty state
-  indefinitely unless this is revisited with a paid key.
+- **`player_game_stats` is permanently empty via balldontlie on the
+  current API plan** — Week 5's `backfill_stats_flow` +
+  `BallDontLieClient.get_stats_pages()` is real and correct, but running it
+  for real (2026-09-02) got a genuine `401 Unauthorized`: player box scores
+  require balldontlie's paid **ALL-STAR** tier ($9.99/mo+). **Decision: not
+  paying for a higher tier** — accepted, documented, not a bug.
+  **Superseded as a blocker (2026-09-03)** by a second, independent source:
+  the local-only `nba_api` backfill (see the Timeline entry above) can
+  populate this same table via `stats.nba.com` instead. As of this writing
+  that backfill has been built and tested against fakes but not yet run for
+  real by the human — until it is, `player_game_stats` (and Historical
+  Explorer's box-score search) still show their correctly-designed empty
+  state, but the *reason* is now "not run yet," not "structurally
+  blocked."
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
