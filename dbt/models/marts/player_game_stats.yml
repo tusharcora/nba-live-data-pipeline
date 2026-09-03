@@ -31,7 +31,7 @@ models:
           - not_null
           - relationships:
               arguments:
-                to: ref('stg_games')
+                to: ref('games')
                 field: game_id
       - name: player_id
         description: FK to the player this stat line belongs to.

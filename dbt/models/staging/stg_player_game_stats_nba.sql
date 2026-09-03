@@ -4,20 +4,19 @@
 -- (the balldontlie sibling) column contract so the two can be UNIONed by
 -- `player_game_stats.sql` (docs/prd.md §04, §06).
 --
--- Source: Employee 1's merged `backfill_nba_stats_flow`
--- (`ingestion/src/ingestion/flows/backfill_nba_stats_flow.py`) /
+-- Source: `backfill_nba_stats_flow.py` /
 -- `NBAStatsClient.get_boxscore` (`ingestion/src/ingestion/sources/
--- nba_stats.py`), read directly on this branch to confirm the shape below
--- (not re-derived from the boss's plan text alone). NBA.com and
--- balldontlie use different game-ID spaces; the flow already resolves
--- this at ingestion time by matching NBA.com's games onto balldontlie's
--- Gold `games` table by team-name overlap, so this model does zero
--- cross-source matching -- `balldontlie_game_id` is a direct, already-
--- resolved passthrough.
+-- nba_stats.py`). nba_api is an INDEPENDENT games source (see
+-- stg_games_nba.sql's header) -- `game_id` here is nba_api's own GAME_ID,
+-- offset by `NBA_GAME_ID_OFFSET` (100 billion) at ingestion time, passed
+-- through this model unmodified. It is the SAME offset value used for the
+-- matching `game` payload written for the same real game (see
+-- backfill_nba_stats_flow.py), so this table's game_id joins cleanly
+-- against stg_games_nba's.
 --
 -- Payload shape (source='nba_stats', endpoint='boxscore_traditional'):
 -- {
---   "balldontlie_game_id": 15908,
+--   "game_id": 100022300500,
 --   "player_stats": [
 --     {
 --       "GAME_ID": "0022300500", "TEAM_ID": 1610612737,
@@ -32,9 +31,9 @@
 -- }
 --
 -- Note this is NOT a "data" array like balldontlie's shape -- the
--- top-level key is "player_stats", and `balldontlie_game_id` is a
+-- top-level key is "player_stats", and `game_id` is a
 -- *sibling* key at the payload root, not nested per-player. We explode
--- `player_stats` and re-attach `balldontlie_game_id` from the payload
+-- `player_stats` and re-attach `game_id` from the payload
 -- root to every exploded row.
 --
 -- ============================================================================
@@ -58,10 +57,17 @@
 --    a text key: `game_id * 10,000,000 + PLAYER_ID`. Unique per (game,
 --    player) as long as PLAYER_ID stays under 10 million (true across
 --    NBA.com's entire player-ID history to date) and stable across
---    re-pulls (de-dup by pull recency still works). This keeps `api`'s and
---    `web`'s existing `stat_id: number`/bigint assumptions valid with zero
---    changes there, avoiding the type-unification `UNION ALL` would
---    otherwise force in `player_game_stats.sql` if this were text.
+--    re-pulls (de-dup by pull recency still works). Checked against
+--    overflow: game_id here is nba_api's raw GAME_ID plus
+--    NBA_GAME_ID_OFFSET (100 billion, see nba_stats.py) -- realistic max
+--    ~100,060,000,000 -- so stat_id's realistic max is ~1.0x10^18,
+--    comfortably inside Postgres bigint's ~9.22x10^18 ceiling (~9x
+--    headroom). A naively larger offset (e.g. 1 trillion) was considered
+--    and rejected: it overflows this multiplication by several orders of
+--    magnitude. This keeps `api`'s and `web`'s existing `stat_id:
+--    number`/bigint assumptions valid with zero changes there, avoiding
+--    the type-unification `UNION ALL` would otherwise force in
+--    `player_game_stats.sql` if this were text.
 --
 -- 2) player_first_name / player_last_name (suffix-aware split) --
 --    nba_api's PLAYER_NAME is a single "First Last" string (e.g. "Gary
@@ -132,7 +138,7 @@ with raw_stat_pulls as (
     select
         id as pull_id,
         pulled_at,
-        (payload ->> 'balldontlie_game_id')::bigint as game_id,
+        (payload ->> 'game_id')::bigint as game_id,
         jsonb_array_elements(payload -> 'player_stats') as player_row
     from {{ source('raw', 'raw_pulls') }}
     where source = 'nba_stats'
@@ -184,13 +190,11 @@ typed as (
         game_id,
         -- Synthetic per-row key -- see header decision log (1). Safe
         -- because nothing in the codebase joins on stat_id (grep
-        -- findings also in the header). Kept as a real bigint (not text)
-        -- by encoding player_id into game_id's low 7 digits --
-        -- balldontlie game_id is currently ~7 digits and NBA.com
-        -- PLAYER_ID has never exceeded 7 digits across the league's
-        -- history -- so this stays unique per (game, player), stable
-        -- across re-pulls, and requires zero changes to api/'s or web/'s
-        -- existing `stat_id: number`/bigint assumptions, unlike a text key.
+        -- findings also in the header). Kept as a real bigint (not text),
+        -- and checked against Postgres bigint overflow at this source's
+        -- real game_id scale (~100,060,000,000 max, from
+        -- NBA_GAME_ID_OFFSET) -- see header decision log (1) for the
+        -- worked numbers.
         game_id * 10000000 + (player_row ->> 'PLAYER_ID')::bigint as stat_id,
         (player_row ->> 'PLAYER_ID')::bigint as player_id,
         coalesce(last_space_match[1], base_name) as player_first_name,

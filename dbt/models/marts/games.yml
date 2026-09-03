@@ -4,10 +4,12 @@ models:
   - name: games
     description: >
       Gold `games` table (docs/prd.md §06). One row per NBA game: reconciled
-      final scores, status, and schedule. Currently a straight passthrough
-      of `stg_games` (balldontlie only) — cross-source reconciliation with
-      the public feed (docs/prd.md §07) lands in a later PR and should not
-      change this table's grain or column names.
+      final scores, status, and schedule. UNION ALL of two independent
+      Bronze sources -- balldontlie (`stg_games`) and nba_api's local-only
+      historical backfill (`stg_games_nba`) -- see games.sql's header for
+      why this is a union, not a merge. Cross-source reconciliation across
+      the two remains deferred, same posture as
+      player_game_stats.player_key.
     config:
       # `api/src/api/routers/games.py`'s `?date=` filter predicate
       # (`WHERE game_date = :filter_date`) is the actual hot query pattern
