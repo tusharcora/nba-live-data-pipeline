@@ -3,6 +3,7 @@ import { Fira_Sans, Fira_Code } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
+import { CommandPalette } from "./components/command-palette";
 import { SiteNav } from "./components/site-nav";
 
 const firaSans = Fira_Sans({
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <SiteNav />
+          <CommandPalette />
           {children}
         </ThemeProvider>
       </body>
