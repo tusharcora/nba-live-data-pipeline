@@ -6,8 +6,6 @@ and drift monitoring, not the dashboard on top of it. Two independent
 sources feed the same games through a Bronze/Silver/Gold warehouse, and
 every disagreement between them is logged, not silently resolved.
 
-![Demo](docs/demo/nba-pipeline-demo.gif)
-
 Full design doc: [`docs/prd.md`](docs/prd.md) (source: [PRD artifact](https://claude.ai/code/artifact/1f4076ad-1c3c-403a-b3a5-d987db3f10d0)). Build history and current status: [`docs/PROGRESS.md`](docs/PROGRESS.md). Real-load-test results: [`docs/performance-loadtest.md`](docs/performance-loadtest.md). Security review: [`docs/security-audit.md`](docs/security-audit.md). Resume bullets: [`docs/resume-bullets.md`](docs/resume-bullets.md).
 
 **Status: all 6 weeks of the PRD's plan (§12) are complete** — foundations,
