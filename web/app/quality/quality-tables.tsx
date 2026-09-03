@@ -1,7 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import {
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -29,6 +36,22 @@ import {
 // the arrays the server component already fetched and passes down as props.
 // No new network request is ever made here; sorting is a pure in-memory
 // `Array.prototype.sort` over what's already on the page.
+//
+// `SortableSchemaChangesTable` additionally holds per-row expand/collapse
+// state (`expandedChangeIds`, a `Set<number>` of change `id`s — same shape
+// as `expandedGameIds` in `app/explorer/page.tsx`) for the row-detail feature
+// below. ui-ux-pro-max ("expandable row detail" / "side by side comparison
+// view", `--domain ux`) had no direct entries for either query in
+// `ux-guidelines.csv`; the one relevant hit from broadening the search
+// ("table row expansion" / "comparison table") was the Responsive/"Table
+// Handling" guideline — tables can overflow on mobile; use horizontal
+// scroll or a card layout rather than letting a wide table break the
+// layout. Applied here by keeping the expanded diff detail *inside* the
+// same `<Table>` (a full-width `colSpan` row, not a wide sibling element
+// that would force its own scroll container) and by wrapping the diff
+// old-type/new-type pair in a `flex-wrap` row so it reflows on narrow
+// viewports instead of overflowing.
+
 
 type SortDirection = "asc" | "desc";
 
@@ -122,15 +145,83 @@ type SchemaChangeColumn =
   | "new_type"
   | "detected_at";
 
+// Number of real `<TableHead>` columns in the schema-changes table (toggle +
+// field + change type + old type + new type + detected at) — the expanded
+// detail row spans all of them so its content sits flush under the row it
+// belongs to, matching the ui-ux-pro-max "Table Handling" finding (see
+// module docstring) that a wide detail block should stay inside the table's
+// own horizontal-scroll container rather than escaping it.
+const SCHEMA_CHANGE_COLUMN_COUNT = 6;
+
+/** Full old-type/new-type diff for one schema change, revealed by the row's
+ * expand toggle below. Reuses the same expand/collapse *mechanism* as
+ * Explorer's `GameCard`/`BoxScoreSection` (toggle button + conditional
+ * rendering of a detail block) — adapted to a table row rather than a card,
+ * since this table already reuses `Table`/`TableRow` for its ten-plus rows
+ * and a second, unrelated card-based expansion widget here would be the
+ * "second mechanism" the task explicitly says not to invent. */
+function SchemaChangeDetailCell({ change }: { change: SchemaChange }) {
+  return (
+    <TableCell colSpan={SCHEMA_CHANGE_COLUMN_COUNT} className="bg-muted/30 py-4">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
+          <span className="rounded-md border border-border bg-background px-2 py-1 text-muted-foreground">
+            {change.old_type ?? "(field did not exist)"}
+          </span>
+          <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="rounded-md border border-border bg-background px-2 py-1 text-foreground">
+            {change.new_type ?? "(field removed)"}
+          </span>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-muted-foreground sm:grid-cols-4">
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Source</dt>
+            <dd>{change.source}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Endpoint</dt>
+            <dd className="font-mono">{change.endpoint}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Field</dt>
+            <dd className="font-mono">{change.field_name}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="font-medium text-foreground">Detected at</dt>
+            <dd>{change.detected_at}</dd>
+          </div>
+        </dl>
+      </div>
+    </TableCell>
+  );
+}
+
 export function SortableSchemaChangesTable({
   changes,
 }: {
   changes: SchemaChange[];
 }) {
   const [sort, setSort] = useState<SortState<SchemaChangeColumn>>(null);
+  // Set of expanded schema-change `id`s — same "Set<number> of expanded ids"
+  // shape as `expandedGameIds` in `app/explorer/page.tsx`.
+  const [expandedChangeIds, setExpandedChangeIds] = useState<Set<number>>(
+    () => new Set()
+  );
 
   function handleSort(column: SchemaChangeColumn) {
     setSort((prev) => nextSortState(prev, column));
+  }
+
+  function toggleChange(id: number) {
+    setExpandedChangeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   }
 
   const sortedChanges = useMemo(() => {
@@ -146,6 +237,9 @@ export function SortableSchemaChangesTable({
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-8">
+            <span className="sr-only">Expand row</span>
+          </TableHead>
           <SortableHead label="Field" column="field_name" sort={sort} onSort={handleSort} />
           <SortableHead
             label="Change type"
@@ -166,27 +260,55 @@ export function SortableSchemaChangesTable({
       <TableBody>
         {sortedChanges.map((change) => {
           const { variant, icon } = schemaChangeBadgeVisual(change.change_type);
+          const expanded = expandedChangeIds.has(change.id);
+          const detailId = `schema-change-detail-${change.id}`;
           return (
-            <TableRow key={change.id}>
-              <TableCell className="font-mono text-foreground">
-                {change.field_name}
-              </TableCell>
-              <TableCell>
-                <Badge variant={variant}>
-                  {icon}
-                  {change.change_type}
-                </Badge>
-              </TableCell>
-              <TableCell className="font-mono text-muted-foreground">
-                {change.old_type ?? "–"}
-              </TableCell>
-              <TableCell className="font-mono text-muted-foreground">
-                {change.new_type ?? "–"}
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {change.detected_at}
-              </TableCell>
-            </TableRow>
+            <Fragment key={change.id}>
+              <TableRow>
+                <TableCell>
+                  <button
+                    type="button"
+                    onClick={() => toggleChange(change.id)}
+                    aria-expanded={expanded}
+                    aria-controls={detailId}
+                    aria-label={`${expanded ? "Hide" : "Show"} diff details for ${change.field_name}`}
+                    className={cn(
+                      "flex size-6 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
+                      FOCUS_RING
+                    )}
+                  >
+                    {expanded ? (
+                      <ChevronUp aria-hidden="true" className="size-4" />
+                    ) : (
+                      <ChevronDown aria-hidden="true" className="size-4" />
+                    )}
+                  </button>
+                </TableCell>
+                <TableCell className="font-mono text-foreground">
+                  {change.field_name}
+                </TableCell>
+                <TableCell>
+                  <Badge variant={variant}>
+                    {icon}
+                    {change.change_type}
+                  </Badge>
+                </TableCell>
+                <TableCell className="font-mono text-muted-foreground">
+                  {change.old_type ?? "–"}
+                </TableCell>
+                <TableCell className="font-mono text-muted-foreground">
+                  {change.new_type ?? "–"}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {change.detected_at}
+                </TableCell>
+              </TableRow>
+              {expanded && (
+                <TableRow id={detailId} className="hover:bg-transparent">
+                  <SchemaChangeDetailCell change={change} />
+                </TableRow>
+              )}
+            </Fragment>
           );
         })}
       </TableBody>
