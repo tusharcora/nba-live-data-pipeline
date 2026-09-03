@@ -569,6 +569,106 @@ Full verification: `db` 16/16, `ingestion` 69/69, `api` 86/86, `quality`
 (`ui-pass/integration` → `main`) opened with all of the above as the test
 plan, awaiting human sign-off.
 
+### NBA.com (`nba_api`) historical box-score backfill — local-only source (2026-09-03)
+
+Plan: `docs/superpowers/plans/2026-09-03-nba-stats-historical-box-score-backfill.md`.
+With `player_game_stats` permanently empty on balldontlie's free tier (see
+Known Issues), this adds a second, independent source for real player box
+scores: `nba_api`, a Python client wrapping `stats.nba.com`. Employee 1
+(`nba-stats-client-and-flow`) built `ingestion/src/ingestion/sources/
+nba_stats.py` (`NBAStatsClient`) and `ingestion/src/ingestion/flows/
+backfill_nba_stats_flow.py`.
+
+**A deliberate, named ToS trade-off — not a hidden footnote.** `nba_api`
+works around `stats.nba.com`'s Akamai bot protection by sending browser-
+style headers from a plain HTTP client; doing that, even from a real
+residential IP with no attempt to defeat a block once one happens, is very
+likely a violation of NBA.com's Terms of Service. For a portfolio project
+this is judged an acceptable, common, low-stakes choice — the same category
+of judgment call as Week 5's decision not to pay for balldontlie's
+ALL-STAR tier — but it comes with a hard constraint: **this flow is local-
+only, and must never be scheduled, deployed, or run in CI.**
+`stats.nba.com` blocks datacenter/cloud IPs outright, so a scheduled/CI run
+would fail immediately regardless; the ToS concern is the real reason it's
+excluded, the IP block is just why it would fail anyway.
+
+**New run order, since this is the first `ingestion` flow to read a Gold
+table.** Every prior flow only ever reads/writes Bronze. This one needs to
+know which games balldontlie already ingested for a date before it can
+match NBA.com's games onto them by team-name overlap
+(`quality.reconciliation.match_games_by_team_overlap`, reused directly, not
+reimplemented), so it reads the dbt-owned Gold `games` table via table
+reflection (mirroring `quality.volumetric.SQLAlchemyGoldReader`'s pattern).
+Real order: `backfill_flow` → `dbt run` → `backfill_nba_stats_flow` →
+`dbt run` again (for Employee 2's staging/mart model to pick up the new
+`raw_pulls` rows).
+
+**Team-name matching, verified analytically (no network access to
+`stats.nba.com` from this sandbox to confirm live).** Compared `nba_api`'s
+bundled canonical team list against balldontlie's confirmed `home_team`/
+`away_team` format — all 30 full team names match byte-for-byte, including
+"Los Angeles Clippers" (not the "LA Clippers" shorthand that's the most
+commonly-cited cross-source mismatch risk). Conclusion: no hardcoded
+canonical-name mapping needed before calling the existing matcher — flagged
+as an analytical determination, with the human's first real run being the
+actual proof.
+
+**Player identity gap — addressed at the schema level only, not solved.**
+`nba_api`'s `PLAYER_ID` and balldontlie's `player_id` are different id
+spaces with no shared key. `NBAStatsClient.get_boxscore` computes a
+`player_key` (via the existing `ingestion.normalization.
+normalize_player_key`) on every player row and the flow writes it straight
+into the Bronze payload, so Employee 2's dbt model can extract it with zero
+inline Python — actually resolving identity across sources is future work.
+
+**Deliberately deferred, not omitted:** wiring `source="nba_stats"` rows
+into `quality/`'s reconciliation or volumetric checks. Neither module was
+touched this round.
+
+**Runtime expectations, stated up front so a human isn't surprised:**
+`NBAStatsClient` sleeps ~600ms between every real request (a community-
+found safe pacing number per `github.com/swar/nba_api` issue discussion),
+one call per date plus one call per matched game. For this project's
+existing 3-day/26-game backfill window: ~20-30 real seconds. A full season
+(~1,230 games, ~170 game days): tens of minutes minimum.
+
+Tested entirely with mocks (`unittest.mock.patch` directly on
+`nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder` and
+`.boxscoretraditionalv2.BoxScoreTraditionalV2` — no real network call from
+this sandbox), including a mid-date-failure case proving a box-score fetch
+that raises does **not** advance that date's checkpoint, and a case proving
+an NBA.com game with no balldontlie match is skipped rather than written
+with a fabricated `balldontlie_game_id`. Full `ingestion` suite: 79/79
+passing (`test_nba_stats.py`, `test_backfill_nba_stats_flow.py` new).
+
+**Employee 2 (`dbt-nba-stats-staging-and-mart`)** parsed the new Bronze
+payload into `dbt/models/staging/stg_player_game_stats_nba.sql`, matching
+the existing balldontlie staging model's column contract exactly plus the
+new `player_key` column, then `UNION ALL`ed both into
+`dbt/models/marts/player_game_stats.sql`. Real payload details confirmed
+against Employee 1's merged code (not re-derived from the plan text): `TO`
+is nba_api's turnovers field name (not `TURNOVER`, unlike balldontlie), and
+`PLAYER_NAME` is a single "First Last" string needing a suffix-aware split
+— a real dbt `unit_tests` block proves this on "Gary Trent Jr.", "Stephen
+Curry", and "Nene" (single-word name, correctly degrades to a null last
+name rather than erroring or fabricating one).
+
+**A real bug found in review before this reached the human, fixed in the
+same round.** The boss's initial report flagged that Employee 2's
+synthetic `stat_id` for nba_api rows (`'nba_' || game_id || '_' ||
+player_id`, needed since nba_api rows carry no native ID) was a *text*
+key, forcing a `::text` cast on balldontlie's native bigint `stat_id` in
+the mart's `UNION ALL` — which would have silently broken `api/src/api/
+routers/player_stats.py`'s and `web/app/explorer/page.tsx`'s existing
+`stat_id: number` assumptions the moment real nba_stats rows landed
+(dormant today only because balldontlie's own stat path is empty). Since
+nothing anywhere joins on `stat_id` (confirmed by grep in the model's own
+decision log — it's ordering/display/React-key only), fixed by encoding it
+as a real bigint instead: `game_id * 10,000,000 + player_id` (safe — NBA.com
+player IDs have never exceeded 7 digits). Zero changes needed to `api`/
+`web`. PR #54 (`nba-stats-backfill-review` → `main`) carries this fix on
+top of both employees' merged work, open awaiting human sign-off.
+
 ---
 
 ## Known Issues / Caveats
@@ -610,17 +710,20 @@ plan, awaiting human sign-off.
   3-day backfill window exist). This is a standing decision the user wants
   revisited once `live_game_flow` has actually run during real game
   windows, not a dropped feature.
-- **`player_game_stats` is permanently empty on the current API plan.**
-  Week 5 built a real, correct ingestion path (`backfill_stats_flow` +
-  `BallDontLieClient.get_stats_pages()`), but running it for real
-  (2026-09-02) got a genuine `401 Unauthorized` from balldontlie's `/stats`
-  endpoint — confirmed via their own docs that player box scores require
-  the paid **ALL-STAR** tier ($9.99/mo+), which this project's free-tier
-  key doesn't have. `/games` remains free-tier-accessible and works fine.
-  **Decision: not paying for a higher tier** — this is an accepted,
-  documented limitation, not a bug. Historical Explorer's box-score search
-  is code-complete and will show its correctly-designed empty state
-  indefinitely unless this is revisited with a paid key.
+- **`player_game_stats` is permanently empty via balldontlie on the
+  current API plan** — Week 5's `backfill_stats_flow` +
+  `BallDontLieClient.get_stats_pages()` is real and correct, but running it
+  for real (2026-09-02) got a genuine `401 Unauthorized`: player box scores
+  require balldontlie's paid **ALL-STAR** tier ($9.99/mo+). **Decision: not
+  paying for a higher tier** — accepted, documented, not a bug.
+  **Superseded as a blocker (2026-09-03)** by a second, independent source:
+  the local-only `nba_api` backfill (see the Timeline entry above) can
+  populate this same table via `stats.nba.com` instead. As of this writing
+  that backfill has been built and tested against fakes but not yet run for
+  real by the human — until it is, `player_game_stats` (and Historical
+  Explorer's box-score search) still show their correctly-designed empty
+  state, but the *reason* is now "not run yet," not "structurally
+  blocked."
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
@@ -637,6 +740,14 @@ plan, awaiting human sign-off.
 - Mobile-breakpoint rendering (375px) remains unverified in a real browser
   — the `resize_window` tooling limitation from Week 6 persisted into this
   round too.
+- **The new `nba_stats` source (`backfill_nba_stats_flow`) has never been
+  run for real** — this sandbox has no network access to `stats.nba.com`,
+  so it's tested entirely against mocked `nba_api` endpoint classes. The
+  team-name-matching determination (all 30 NBA.com/balldontlie team names
+  match byte-for-byte) is analytical, not network-confirmed. It is also
+  local-only by design (a named ToS trade-off — see the Timeline entry) and
+  deliberately not wired into `quality/`'s reconciliation or volumetric
+  checks yet.
 
 ## What's Next
 

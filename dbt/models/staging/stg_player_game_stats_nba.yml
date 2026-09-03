@@ -1,0 +1,195 @@
+version: 2
+
+models:
+  - name: stg_player_game_stats_nba
+    description: >
+      Silver staging model. Parses nba_api's (stats.nba.com)
+      `boxscore_traditional` payload (`source='nba_stats'`) out of the
+      Bronze `raw_pulls` table (docs/prd.md §04, §06) into one row per
+      player/game box-score stat line, de-duplicated to the
+      most-recently-pulled version of each synthetic `stat_id`. Column
+      contract matches `stg_player_game_stats` (the balldontlie sibling)
+      plus one added column, `player_key`, so `player_game_stats.sql` can
+      UNION the two directly.
+
+      Payload shape confirmed against Employee 1's real, merged code on
+      this branch (`ingestion/src/ingestion/flows/
+      backfill_nba_stats_flow.py`, `ingestion/src/ingestion/sources/
+      nba_stats.py`) and their test fixtures
+      (`ingestion/tests/test_nba_stats.py`,
+      `ingestion/tests/test_backfill_nba_stats_flow.py`) -- see the model
+      SQL's header comment for the full decision log covering: the
+      synthetic `stat_id` scheme (and the `stat_id`-usage grep that
+      justified it), the suffix-aware name split, the already-computed
+      `player_key` passthrough, and the still-unconfirmed `MIN` format
+      (handled with the same defensive dual-format parser
+      `stg_player_game_stats.sql` uses for balldontlie's `min`). This has
+      only been reviewed via `dbt parse --no-partial-parse` and
+      `dbt compile --no-populate-cache` in this sandbox -- no live
+      Postgres or real `stats.nba.com` call was available here.
+    columns:
+      - name: stat_id
+        description: >
+          Synthetic per-row key: `game_id * 10,000,000 + PLAYER_ID`.
+          nba_api's PlayerStats rows have no standalone primary key the
+          way balldontlie's `data[].id` is a real id from their API.
+          Confirmed via grep (see model header) that nothing in the
+          codebase (`api/`, `web/`) joins on `stat_id` -- it's only ever
+          used as a display/ordering/dedup key -- so a synthetic,
+          deterministic, per-(game,player)-unique bigint is safe here.
+          Kept numeric (not a text key) specifically so it matches
+          balldontlie's bigint `stat_id` with no `UNION ALL` type
+          reconciliation needed in `player_game_stats.sql`, and so `api/`'s
+          and `web/`'s existing `stat_id: number` assumptions stay valid.
+        data_tests:
+          - not_null
+          - unique
+      - name: game_id
+        description: >
+          FK to the game this stat line belongs to. A direct passthrough
+          of the payload's `balldontlie_game_id` -- Employee 1's flow
+          already matched NBA.com's game onto balldontlie's Gold `games`
+          table by team-name overlap at ingestion time, so no matching
+          logic belongs here.
+        data_tests:
+          - not_null
+      - name: player_id
+        description: FK to the player this stat line belongs to, sourced from `player_stats[].PLAYER_ID`.
+        data_tests:
+          - not_null
+      - name: player_first_name
+        description: >
+          Player's first name, suffix-aware-split from
+          `player_stats[].PLAYER_NAME` (a single "First Last" string) --
+          see model header decision log (2) for the regex approach and
+          worked examples. NULL is possible only for a single-word name
+          (e.g. "Nene") with nothing to split off as a last name.
+      - name: player_last_name
+        description: >
+          Player's last name, suffix-aware-split from
+          `player_stats[].PLAYER_NAME`. A trailing suffix (Jr./Sr./II/III/
+          IV, mirroring `ingestion.normalization._SUFFIX_RE`) is kept
+          attached to the last name (e.g. "Gary Trent Jr." ->
+          "Trent Jr."), not split off on its own. NULL for a single-word
+          name with no suffix.
+      - name: player_key
+        description: >
+          Diacritic-stripped, lowercase matching key for cross-source
+          player identity, already computed in Python by
+          `NBAStatsClient.get_boxscore` (`ingestion.normalization.
+          normalize_player_key`) and passed through Bronze unmodified --
+          extracted directly via `->> 'player_key'`, no computation done
+          in this model.
+      - name: team
+        description: >
+          `player_stats[].TEAM_ABBREVIATION` (e.g. "POR"), chosen over
+          `TEAM_CITY` because it unambiguously distinguishes same-city
+          franchises (Lakers/Clippers) that `TEAM_CITY` alone can't. Note
+          this is a different *format* than balldontlie's full team name
+          (e.g. "Dallas Mavericks") -- a deliberate, documented
+          simplification since nba_api's PlayerStats rows carry no single
+          full-team-name column; see model header.
+      - name: points
+        description: Points scored, sourced from `player_stats[].PTS`.
+      - name: rebounds
+        description: Total rebounds, sourced from `player_stats[].REB`.
+      - name: assists
+        description: Assists, sourced from `player_stats[].AST`.
+      - name: steals
+        description: Steals, sourced from `player_stats[].STL`.
+      - name: blocks
+        description: Blocks, sourced from `player_stats[].BLK`.
+      - name: turnovers
+        description: >
+          Turnovers, sourced from `player_stats[].TO` -- note nba_api
+          names this column "TO", not "TURNOVER" (different from
+          balldontlie's "turnover").
+      - name: minutes_played
+        description: >
+          Minutes played as a decimal, parsed from `player_stats[].MIN`
+          using the same defensive dual-format parser
+          `stg_player_game_stats.sql` uses for balldontlie's `min` (bare
+          minutes-only string, or "MM:SS"). nba_api's real `MIN` format
+          was NOT confirmed with certainty (no live `stats.nba.com` call
+          was possible) -- this is a defensively-parsed shape, not a
+          confirmed one; see model header.
+      - name: pulled_at
+        description: Timestamp of the raw_pulls row this de-duplicated version was sourced from.
+
+unit_tests:
+  - name: test_stg_player_game_stats_nba_suffix_name_split
+    description: >
+      Proves the suffix-aware first/last name split (model header decision
+      log (2)): a suffixed name keeps the suffix attached to the last
+      name, an unsuffixed two-word name splits normally on its single
+      space, and a single-word name degrades to a NULL last name rather
+      than erroring or fabricating one.
+    model: stg_player_game_stats_nba
+    given:
+      - input: source('raw', 'raw_pulls')
+        rows:
+          - id: 1
+            source: nba_stats
+            endpoint: boxscore_traditional
+            pulled_at: "2024-01-01 00:00:00"
+            payload:
+              balldontlie_game_id: 111
+              player_stats:
+                - PLAYER_ID: 1001
+                  PLAYER_NAME: "Gary Trent Jr."
+                  player_key: "gary trent jr."
+                  TEAM_ABBREVIATION: "POR"
+                  PTS: 20
+                  REB: 4
+                  AST: 3
+                  STL: 1
+                  BLK: 0
+                  TO: 2
+                  MIN: "34:12"
+          - id: 2
+            source: nba_stats
+            endpoint: boxscore_traditional
+            pulled_at: "2024-01-01 00:00:00"
+            payload:
+              balldontlie_game_id: 222
+              player_stats:
+                - PLAYER_ID: 2002
+                  PLAYER_NAME: "Stephen Curry"
+                  player_key: "stephen curry"
+                  TEAM_ABBREVIATION: "GSW"
+                  PTS: 30
+                  REB: 5
+                  AST: 6
+                  STL: 2
+                  BLK: 1
+                  TO: 3
+                  MIN: "35"
+          - id: 3
+            source: nba_stats
+            endpoint: boxscore_traditional
+            pulled_at: "2024-01-01 00:00:00"
+            payload:
+              balldontlie_game_id: 333
+              player_stats:
+                - PLAYER_ID: 3003
+                  PLAYER_NAME: "Nene"
+                  player_key: "nene"
+                  TEAM_ABBREVIATION: "HOU"
+                  PTS: 10
+                  REB: 2
+                  AST: 1
+                  STL: 0
+                  BLK: 0
+                  TO: 0
+                  MIN: "20"
+    expect:
+      rows:
+        - stat_id: 1110001001
+          player_first_name: "Gary"
+          player_last_name: "Trent Jr."
+        - stat_id: 2220002002
+          player_first_name: "Stephen"
+          player_last_name: "Curry"
+        - stat_id: 3330003003
+          player_first_name: "Nene"
+          player_last_name: null

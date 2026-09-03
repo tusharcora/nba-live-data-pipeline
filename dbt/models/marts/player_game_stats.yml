@@ -4,13 +4,24 @@ models:
   - name: player_game_stats
     description: >
       Gold mart (docs/prd.md §06). One row per player/game box-score line.
-      Currently a passthrough of stg_player_game_stats — cross-source
-      reconciliation between balldontlie and the public feed lands in a
-      later week once the public feed also contributes player-level box
-      scores to `raw_pulls`.
+      `UNION ALL` of two independent Bronze sources: balldontlie's
+      `/stats` endpoint (`stg_player_game_stats`, realistically
+      permanently empty on the current free API tier) and nba_api's
+      local-only historical backfill (`stg_player_game_stats_nba`). No
+      cross-source dedup/priority logic is implemented — deliberate
+      simplification, see `player_game_stats.sql`'s header. Further
+      cross-source reconciliation (vs. a third public feed) remains a
+      later week's work.
     columns:
       - name: stat_id
-        description: Primary key of one player/game box-score stat line.
+        description: >
+          Primary key of one player/game box-score stat line. A real
+          bigint on both sides of the `UNION ALL` — balldontlie's native
+          bigint id, and nba_api's synthetic `game_id * 10,000,000 +
+          PLAYER_ID` composite (see `stg_player_game_stats_nba.sql`'s
+          header) — deliberately kept numeric on both sides so no
+          type-unification cast is needed here and `api`'s/`web`'s
+          existing `stat_id: number` assumptions stay valid unchanged.
         data_tests:
           - not_null
           - unique
@@ -19,11 +30,6 @@ models:
         data_tests:
           - not_null
           - relationships:
-              # TODO(boss): same cross-model caveat as stg_player_game_stats.yml
-              # — will only resolve/run once the sibling stg_games PR is merged
-              # alongside this one. Ideally this would point at the `games`
-              # mart rather than `stg_games`, but that mart is also owned by
-              # the sibling PR and isn't guaranteed to exist yet either.
               arguments:
                 to: ref('stg_games')
                 field: game_id
@@ -35,8 +41,21 @@ models:
         description: Player's first name.
       - name: player_last_name
         description: Player's last name.
+      - name: player_key
+        description: >
+          Diacritic-stripped, lowercase cross-source player-matching key.
+          Always NULL for balldontlie rows (no such field in their Bronze
+          payload — deliberate simplification, see
+          `stg_player_game_stats.yml`); populated for nba_stats rows,
+          already computed in Python at ingestion time.
       - name: team
-        description: Full name of the team the player suited up for in this game.
+        description: >
+          Team the player suited up for in this game. Format differs by
+          source: balldontlie rows carry a full team name (e.g. "Dallas
+          Mavericks"); nba_stats rows carry a team abbreviation (e.g.
+          "POR") since nba_api's box-score rows don't expose a single
+          full-team-name column — see `stg_player_game_stats_nba.sql`'s
+          header. Deliberate, documented inconsistency, not a bug.
       - name: points
         description: Points scored.
       - name: rebounds
