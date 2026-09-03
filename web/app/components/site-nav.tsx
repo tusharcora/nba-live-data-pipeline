@@ -6,6 +6,7 @@ import { Activity, BarChart3, Radio, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
+import { LastVisitedTracker } from "./last-visited-tracker";
 import { ThemeToggle } from "./theme-toggle";
 
 const NAV_LINKS = [
@@ -22,6 +23,7 @@ export function SiteNav() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/70 backdrop-blur-md supports-[backdrop-filter]:bg-background/50">
+      <LastVisitedTracker />
       <nav
         aria-label="Primary"
         className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6"
