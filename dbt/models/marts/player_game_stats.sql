@@ -17,22 +17,8 @@
 -- view. Revisit if/when balldontlie's paid tier (or another source) is
 -- ever added for the same games nba_api already covers.
 --
--- **stat_id type note:** balldontlie's `stg_player_game_stats.stat_id` is
--- a real bigint (their own API's primary key); nba_api rows have no such
--- id, so `stg_player_game_stats_nba.stat_id` is a synthetic *text* key
--- (see that model's header decision log). `UNION ALL` requires both sides
--- of a column to share a type, so balldontlie's side is cast to text here
--- — this only happens in this Gold mart, not in `stg_player_game_stats`
--- itself (which keeps its native bigint `stat_id` for its own tests/
--- lineage). Known follow-up, out of scope for this dbt-only change: `api/`
--- reflects this table's columns via SQLAlchemy autoload
--- (`api/src/api/routers/player_stats.py`), and `web/`'s TypeScript type
--- (`web/app/explorer/page.tsx`: `stat_id: number`) both assume a numeric
--- `stat_id` — neither is touched here, since both currently only ever see
--- balldontlie rows (empty in practice) and this task is dbt-only scope.
-
 select
-    stat_id::text as stat_id,
+    stat_id,
     game_id,
     player_id,
     player_first_name,

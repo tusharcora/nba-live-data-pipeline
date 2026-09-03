@@ -15,12 +15,13 @@ models:
     columns:
       - name: stat_id
         description: >
-          Primary key of one player/game box-score stat line. Text here
-          (cast from balldontlie's native bigint, alongside nba_api's
-          native synthetic text key) so the two sources' differently-typed
-          IDs can be UNIONed — see `player_game_stats.sql`'s header for
-          the full type-unification note and the known `api`/`web`
-          follow-up this implies.
+          Primary key of one player/game box-score stat line. A real
+          bigint on both sides of the `UNION ALL` — balldontlie's native
+          bigint id, and nba_api's synthetic `game_id * 10,000,000 +
+          PLAYER_ID` composite (see `stg_player_game_stats_nba.sql`'s
+          header) — deliberately kept numeric on both sides so no
+          type-unification cast is needed here and `api`'s/`web`'s
+          existing `stat_id: number` assumptions stay valid unchanged.
         data_tests:
           - not_null
           - unique
@@ -29,11 +30,6 @@ models:
         data_tests:
           - not_null
           - relationships:
-              # TODO(boss): same cross-model caveat as stg_player_game_stats.yml
-              # — will only resolve/run once the sibling stg_games PR is merged
-              # alongside this one. Ideally this would point at the `games`
-              # mart rather than `stg_games`, but that mart is also owned by
-              # the sibling PR and isn't guaranteed to exist yet either.
               arguments:
                 to: ref('stg_games')
                 field: game_id

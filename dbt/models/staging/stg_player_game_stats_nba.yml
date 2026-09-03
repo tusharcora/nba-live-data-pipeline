@@ -30,16 +30,17 @@ models:
     columns:
       - name: stat_id
         description: >
-          Synthetic per-row key: `'nba_' || balldontlie_game_id || '_' ||
-          PLAYER_ID`. nba_api's PlayerStats rows have no standalone
-          primary key the way balldontlie's `data[].id` is a real id from
-          their API. Confirmed via grep (see model header) that nothing in
-          the codebase (`api/`, `web/`) joins on `stat_id` -- it's only
-          ever used as a display/ordering/dedup key -- so a synthetic,
-          deterministic, per-(game,player)-unique string is safe here.
-          Note this makes the *type* of this column text, unlike
-          balldontlie's bigint `stat_id` -- see player_game_stats.sql's
-          header for how the UNION ALL reconciles that.
+          Synthetic per-row key: `game_id * 10,000,000 + PLAYER_ID`.
+          nba_api's PlayerStats rows have no standalone primary key the
+          way balldontlie's `data[].id` is a real id from their API.
+          Confirmed via grep (see model header) that nothing in the
+          codebase (`api/`, `web/`) joins on `stat_id` -- it's only ever
+          used as a display/ordering/dedup key -- so a synthetic,
+          deterministic, per-(game,player)-unique bigint is safe here.
+          Kept numeric (not a text key) specifically so it matches
+          balldontlie's bigint `stat_id` with no `UNION ALL` type
+          reconciliation needed in `player_game_stats.sql`, and so `api/`'s
+          and `web/`'s existing `stat_id: number` assumptions stay valid.
         data_tests:
           - not_null
           - unique
@@ -183,12 +184,12 @@ unit_tests:
                   MIN: "20"
     expect:
       rows:
-        - stat_id: "nba_111_1001"
+        - stat_id: 1110001001
           player_first_name: "Gary"
           player_last_name: "Trent Jr."
-        - stat_id: "nba_222_2002"
+        - stat_id: 2220002002
           player_first_name: "Stephen"
           player_last_name: "Curry"
-        - stat_id: "nba_333_3003"
+        - stat_id: 3330003003
           player_first_name: "Nene"
           player_last_name: null

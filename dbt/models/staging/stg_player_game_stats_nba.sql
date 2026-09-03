@@ -53,16 +53,15 @@
 --      - api/tests/test_player_stats.py: asserts on stat_id values as
 --        plain per-row identifiers/ordering, never a join.
 --    No usage anywhere treats stat_id as a real foreign key/join target.
---    Conclusion: a synthetic, deterministic, per-row-unique key is safe.
---    Built as `'nba_' || balldontlie_game_id || '_' || PLAYER_ID` -- unique
---    per (game, player), stable across re-pulls (so de-dup by pull
---    recency still works), and self-evidently not a real balldontlie/
---    nba.com id (the `nba_` prefix makes it unambiguous in logs/joins).
---
---    Side effect flagged for whoever touches `api`/`web` next: this makes
---    stat_id's *type* text instead of bigint once nba_stats rows exist in
---    the Gold mart (see player_game_stats.sql's header for the UNION ALL
---    type-unification this required). Out of scope for this dbt-only PR.
+--    Conclusion: a synthetic, deterministic, per-row-unique key is safe --
+--    and since nothing joins on it, it can stay a plain bigint rather than
+--    a text key: `game_id * 10,000,000 + PLAYER_ID`. Unique per (game,
+--    player) as long as PLAYER_ID stays under 10 million (true across
+--    NBA.com's entire player-ID history to date) and stable across
+--    re-pulls (de-dup by pull recency still works). This keeps `api`'s and
+--    `web`'s existing `stat_id: number`/bigint assumptions valid with zero
+--    changes there, avoiding the type-unification `UNION ALL` would
+--    otherwise force in `player_game_stats.sql` if this were text.
 --
 -- 2) player_first_name / player_last_name (suffix-aware split) --
 --    nba_api's PLAYER_NAME is a single "First Last" string (e.g. "Gary
@@ -186,8 +185,14 @@ typed as (
         game_id,
         -- Synthetic per-row key -- see header decision log (1). Safe
         -- because nothing in the codebase joins on stat_id (grep
-        -- findings also in the header).
-        'nba_' || game_id::text || '_' || (player_row ->> 'PLAYER_ID') as stat_id,
+        -- findings also in the header). Kept as a real bigint (not text)
+        -- by encoding player_id into game_id's low 7 digits --
+        -- balldontlie game_id is currently ~7 digits and NBA.com
+        -- PLAYER_ID has never exceeded 7 digits across the league's
+        -- history -- so this stays unique per (game, player), stable
+        -- across re-pulls, and requires zero changes to api/'s or web/'s
+        -- existing `stat_id: number`/bigint assumptions, unlike a text key.
+        game_id * 10000000 + (player_row ->> 'PLAYER_ID')::bigint as stat_id,
         (player_row ->> 'PLAYER_ID')::bigint as player_id,
         coalesce(last_space_match[1], base_name) as player_first_name,
         case
