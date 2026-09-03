@@ -1023,7 +1023,7 @@ export default function ExplorerPage() {
         </section>
 
         {gamesState.status === "loaded" && (
-          <GameComparisonSection key={compareResetKey} games={gamesState.result.data} />
+          <GameComparisonSection key={compareResetKey} games={visibleGames} />
         )}
 
         {playerSearchState && (
