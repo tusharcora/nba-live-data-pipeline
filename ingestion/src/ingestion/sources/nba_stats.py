@@ -48,25 +48,6 @@ sandbox):
   `PlayerStats` result matches this project's "no positional parsing in
   dbt" requirement exactly). Flagged in the PR for the human to keep in
   mind if this is ever pointed at a current-season date.
-
-Team-name-matching verification (Global Constraints step 3): compared
-`nba_api`'s bundled canonical team list (`nba_api.stats.static.teams.
-get_teams()`, which `nba_api` sources from `stats.nba.com`'s own team
-master data — the same domain `TEAM_NAME` values come from) against
-balldontlie's confirmed real `full_name` format (`dbt/models/marts/
-games.sql` / `stg_games.sql`: "Atlanta Hawks", "Boston Celtics", "Dallas
-Mavericks", etc.). All 30 team full names match byte-for-byte between the
-two lists, **including the one name most commonly flagged as a cross-source
-mismatch risk**: NBA.com's canonical list uses "Los Angeles Clippers" (not
-the "LA Clippers" shorthand ESPN and some broadcasts use), which is exactly
-balldontlie's format too. Conclusion: no hardcoded 30-team canonical-name
-mapping is needed before calling `match_games_by_team_overlap` — both
-sources are expected to use identical full team names. This is an
-analytical determination from static reference data, not a live
-`stats.nba.com` response, since this sandbox has no network access to that
-host — the human's first real run against `LeagueGameFinder` is the actual
-proof, and this client does not silently swallow a mismatch: an unmatched
-NBA.com game is logged, not guessed at (see the flow).
 """
 
 from __future__ import annotations
