@@ -217,7 +217,7 @@ export default function Home() {
             Data engineering portfolio project
           </Badge>
           <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-            Live Box Score Pipeline &amp; Data Quality Observatory
+            Boxscore.gg
           </h1>
           <p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
             An end-to-end NBA data pipeline where the portfolio-differentiating

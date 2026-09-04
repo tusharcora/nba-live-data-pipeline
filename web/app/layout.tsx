@@ -54,7 +54,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Live Box Score Pipeline & Data Quality Observatory",
+  title: "Boxscore.gg",
   description:
     "An NBA data pipeline showcasing ingestion, source reconciliation, and drift monitoring.",
 };

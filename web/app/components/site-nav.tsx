@@ -36,7 +36,7 @@ export function SiteNav() {
           )}
         >
           <Activity aria-hidden="true" className="size-5 text-primary" />
-          <span className="font-mono">Box Score Pipeline</span>
+          <span className="font-mono">Boxscore.gg</span>
         </Link>
 
         <ul className="flex flex-wrap items-center gap-1 sm:gap-2">
