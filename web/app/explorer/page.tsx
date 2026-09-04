@@ -891,7 +891,20 @@ function GameCard({
   boxScoreState: FetchState<ApiList<PlayerStatRow>> | undefined;
 }) {
   return (
-    <Card className="gap-3">
+    <Card
+      className="cursor-pointer gap-3 transition-colors hover:bg-muted/40"
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      aria-label={expanded ? "Hide box score" : "View box score"}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+    >
       <CardHeader className="flex-row items-center justify-between gap-2">
         <CardTitle className="font-geist-mono text-xs font-medium tracking-wide text-muted-foreground">
           {formatGameDate(game.game_date)}
@@ -908,6 +921,7 @@ function GameCard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             href={`/games/${game.game_id}`}
+            onClick={(e) => e.stopPropagation()}
             className="-mx-2 -my-1 flex flex-wrap items-center gap-2 rounded-md px-2 py-1 font-geist-mono text-sm transition-colors hover:bg-muted"
           >
             <span
@@ -947,24 +961,18 @@ function GameCard({
             </span>
           </Link>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="cursor-pointer"
-            aria-expanded={expanded}
-            onClick={onToggle}
-          >
-            {expanded ? "Hide box score" : "View box score"}
-            {expanded ? (
-              <ChevronUp aria-hidden="true" data-icon="inline-end" className="size-4" />
-            ) : (
-              <ChevronDown aria-hidden="true" data-icon="inline-end" className="size-4" />
-            )}
-          </Button>
+          {expanded ? (
+            <ChevronUp aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          )}
         </div>
 
-        {expanded && <BoxScoreSection state={boxScoreState} />}
+        {expanded && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <BoxScoreSection state={boxScoreState} />
+          </div>
+        )}
       </CardContent>
     </Card>
   );
