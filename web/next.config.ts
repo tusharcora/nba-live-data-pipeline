@@ -13,6 +13,17 @@ const nextConfig: NextConfig = {
         hostname: "cdn.nba.com",
         pathname: "/headshots/**",
       },
+      {
+        // ESPN's team-logo CDN -- NBA.com doesn't expose one keyed by the
+        // 3-letter abbreviation this app already has (only by numeric
+        // team_id, which isn't in this app's data), so this uses ESPN's
+        // instead. Every code was checked directly against the CDN before
+        // use (see teamLogoUrlFromAbbreviation's comment in
+        // app/explorer/page.tsx).
+        protocol: "https",
+        hostname: "a.espncdn.com",
+        pathname: "/i/teamlogos/nba/**",
+      },
     ],
   },
 };
