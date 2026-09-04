@@ -73,16 +73,18 @@ nba_api's own `GAME_ID`, cast straight to bigint, could theoretically collide wi
 
 ```python
 # ingestion/src/ingestion/sources/nba_stats.py
-NBA_GAME_ID_OFFSET = 1_000_000_000_000  # 1 trillion
+NBA_GAME_ID_OFFSET = 100_000_000_000  # 100 billion
 
-def _offset_game_id(nba_game_id: str) -> int:
+def offset_game_id(nba_game_id: str) -> int:
     """Guarantees nba_api-sourced game_id never collides with balldontlie's
     native sequential games.id (currently ~1,038,000 and growing) — offset
-    is large enough that balldontlie would need to grow past a trillion rows
-    to ever reach it, which is not a real possibility.
+    is ~96,000x balldontlie's current id, far more headroom than that
+    sequence will plausibly reach.
     """
     return NBA_GAME_ID_OFFSET + int(nba_game_id)
 ```
+
+**Correction found while writing the implementation plan** (the original draft of this spec used a 1-trillion offset): `stg_player_game_stats_nba.sql`'s existing `stat_id` composite key is `game_id * 10,000,000 + player_id` — multiplying a 1-trillion-scale `game_id` by 10,000,000 overflows Postgres `bigint` (max ~9.22×10^18) by several orders of magnitude. A 100-billion offset keeps `stat_id`'s maximum realistic value (~1.0×10^18, worked out from an 8-digit raw nba_api game id and a 7-digit player id) within bigint with ~9x headroom, while still sitting ~96,000x above balldontlie's current native `games.id` (~1,038,000) — this is the real, checked constant, not the 1-trillion one mentioned earlier in this document's first draft.
 
 Applied once, in the client, to both the `game` payload's `game_id` and the `boxscore_traditional` payload's `game_id` (so the two payload types agree on the same offset id for the same real game). A `unique` dbt test on the `games` mart's `game_id` column (across the `UNION ALL`) empirically verifies no real collision, rather than trusting the scheme blindly.
 
