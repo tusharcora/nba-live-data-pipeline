@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useEffect,
   useMemo,
@@ -39,6 +40,7 @@ import {
   BoxScoreTable,
   displayScore,
   formatGameDate,
+  type GameRow,
   scoreColorClass,
   TeamLogo,
   teamLogoUrlFromName,
@@ -52,19 +54,6 @@ import * as localStore from "@/lib/local-store";
 // already merged) as fanned out by this page's own `/api/explorer` BFF
 // route (`app/api/explorer/route.ts`) — see that file's header for the
 // exact request/response contract.
-type GameRow = {
-  game_id: number;
-  game_date: string;
-  season: number;
-  status: string;
-  postseason: boolean;
-  home_team: string;
-  away_team: string;
-  home_score: number | null;
-  away_score: number | null;
-  source_pulled_at: string;
-};
-
 type ApiList<T> = { data: T[]; count: number };
 
 type ExplorerResponse = {
@@ -917,7 +906,10 @@ function GameCard({
 
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
+          <Link
+            href={`/games/${game.game_id}`}
+            className="flex flex-wrap items-center gap-2 rounded font-mono text-sm hover:underline"
+          >
             <span
               className={cn(
                 "inline-flex items-center gap-1.5",
@@ -953,7 +945,7 @@ function GameCard({
             >
               {displayScore(game.home_score)}
             </span>
-          </div>
+          </Link>
 
           <Button
             type="button"

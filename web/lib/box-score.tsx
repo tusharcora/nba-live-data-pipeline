@@ -6,6 +6,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { cn } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -14,6 +15,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+/** Mirrors `ingestion/src/ingestion/sources/nba_stats.py`'s
+ * `NBA_GAME_ID_OFFSET` -- nba_stats-sourced game_ids are this real
+ * balldontlie-space offset plus the raw NBA.com game id, so any real
+ * backfilled game_id is far above this threshold. balldontlie's own 2024
+ * pilot data (this project's very first, pre-backfill games) sits below
+ * it. Used to pick a team's most recent *real* season without a max-season
+ * computation mistakenly preferring the pilot's stale 2023 season value
+ * over the real, still-growing nba_stats seasons. */
+export const NBA_GAME_ID_OFFSET = 100_000_000_000;
+
+export type GameRow = {
+  game_id: number;
+  game_date: string;
+  season: number;
+  status: string;
+  postseason: boolean;
+  home_team: string;
+  away_team: string;
+  home_score: number | null;
+  away_score: number | null;
+  source_pulled_at: string;
+};
 
 export type PlayerStatRow = {
   // Serialized as a string by the API (see
@@ -152,6 +176,57 @@ export function teamLogoUrlFromName(teamName: string): string | null {
   return abbreviation ? teamLogoUrlFromAbbreviation(abbreviation) : null;
 }
 
+/** Every full name `TEAM_NAME_TO_ABBREVIATION` maps to a given abbreviation
+ * -- e.g. `namesForAbbreviation("CHA")` returns both "Charlotte Hornets"
+ * and "Charlotte Bobcats". Used by the team detail page to ask `GET
+ * /games?team=...` (repeatable) for every game under any historical name
+ * a franchise has played under, since the Gold `games` table has no
+ * team-id column to key on directly (see `api/src/api/routers/games.py`). */
+export function namesForAbbreviation(abbreviation: string): string[] {
+  return Object.entries(TEAM_NAME_TO_ABBREVIATION)
+    .filter(([, abbr]) => abbr === abbreviation)
+    .map(([name]) => name);
+}
+
+/** The current (2026), display name for each of the 30 active
+ * franchises' abbreviations -- the team detail page's header and its
+ * `/teams/<abbreviation>` route only ever address a *current* franchise,
+ * never a retired historical one, so this is deliberately not derived
+ * from `TEAM_NAME_TO_ABBREVIATION` (which has no marked "current" entry
+ * where a franchise has more than one historical name, e.g. CHA). */
+export const ABBREVIATION_TO_TEAM_NAME: Record<string, string> = {
+  ATL: "Atlanta Hawks",
+  BOS: "Boston Celtics",
+  BKN: "Brooklyn Nets",
+  CHA: "Charlotte Hornets",
+  CHI: "Chicago Bulls",
+  CLE: "Cleveland Cavaliers",
+  DAL: "Dallas Mavericks",
+  DEN: "Denver Nuggets",
+  DET: "Detroit Pistons",
+  GSW: "Golden State Warriors",
+  HOU: "Houston Rockets",
+  IND: "Indiana Pacers",
+  LAC: "LA Clippers",
+  LAL: "Los Angeles Lakers",
+  MEM: "Memphis Grizzlies",
+  MIA: "Miami Heat",
+  MIL: "Milwaukee Bucks",
+  MIN: "Minnesota Timberwolves",
+  NOP: "New Orleans Pelicans",
+  NYK: "New York Knicks",
+  OKC: "Oklahoma City Thunder",
+  ORL: "Orlando Magic",
+  PHI: "Philadelphia 76ers",
+  PHX: "Phoenix Suns",
+  POR: "Portland Trail Blazers",
+  SAC: "Sacramento Kings",
+  SAS: "San Antonio Spurs",
+  TOR: "Toronto Raptors",
+  UTA: "Utah Jazz",
+  WAS: "Washington Wizards",
+};
+
 /** Small team badge -- `src === null` (a team name not in the lookup
  * table above) renders nothing rather than a broken image. */
 export function TeamLogo({ src, alt }: { src: string | null; alt: string }) {
@@ -165,6 +240,26 @@ export function TeamLogo({ src, alt }: { src: string | null; alt: string }) {
       unoptimized
       className="size-[18px] shrink-0 object-contain"
     />
+  );
+}
+
+/** Links to the team detail page (`app/teams/[abbreviation]/page.tsx`).
+ * Takes an abbreviation directly (the form already available everywhere
+ * this is used -- `PlayerStatRow.team`, or a full name already resolved
+ * through `TEAM_NAME_TO_ABBREVIATION`). */
+export function TeamLink({
+  abbreviation,
+  className,
+  children,
+}: {
+  abbreviation: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link href={`/teams/${abbreviation}`} className={className}>
+      {children}
+    </Link>
   );
 }
 
@@ -249,10 +344,13 @@ export function BoxScoreTable({
               </Link>
             </TableCell>
             <TableCell className="text-muted-foreground">
-              <div className="flex items-center gap-1.5">
+              <TeamLink
+                abbreviation={row.team}
+                className="flex items-center gap-1.5 hover:underline"
+              >
                 <TeamLogo src={teamLogoUrlFromAbbreviation(row.team)} alt="" />
                 <span>{row.team}</span>
-              </div>
+              </TeamLink>
             </TableCell>
             {showGameContext && (
               <TableCell className="whitespace-nowrap text-muted-foreground">
@@ -261,18 +359,34 @@ export function BoxScoreTable({
             )}
             {showGameContext && (
               <TableCell className="whitespace-nowrap">
-                <div className="flex items-center gap-1.5 text-sm">
-                  <TeamLogo src={teamLogoUrlFromName(row.away_team)} alt="" />
-                  <span className={scoreColorClass(row.away_score, row.home_score)}>
-                    {TEAM_NAME_TO_ABBREVIATION[row.away_team] ?? row.away_team}{" "}
-                    {displayScore(row.away_score)}
-                  </span>
+                <div className="flex items-center gap-2 text-sm">
+                  <TeamLink
+                    abbreviation={TEAM_NAME_TO_ABBREVIATION[row.away_team] ?? row.away_team}
+                    className={cn(
+                      "flex items-center gap-1.5 hover:underline",
+                      scoreColorClass(row.away_score, row.home_score)
+                    )}
+                  >
+                    <TeamLogo src={teamLogoUrlFromName(row.away_team)} alt="" />
+                    <span>
+                      {TEAM_NAME_TO_ABBREVIATION[row.away_team] ?? row.away_team}{" "}
+                      {displayScore(row.away_score)}
+                    </span>
+                  </TeamLink>
                   <span className="text-muted-foreground">@</span>
-                  <TeamLogo src={teamLogoUrlFromName(row.home_team)} alt="" />
-                  <span className={scoreColorClass(row.home_score, row.away_score)}>
-                    {TEAM_NAME_TO_ABBREVIATION[row.home_team] ?? row.home_team}{" "}
-                    {displayScore(row.home_score)}
-                  </span>
+                  <TeamLink
+                    abbreviation={TEAM_NAME_TO_ABBREVIATION[row.home_team] ?? row.home_team}
+                    className={cn(
+                      "flex items-center gap-1.5 hover:underline",
+                      scoreColorClass(row.home_score, row.away_score)
+                    )}
+                  >
+                    <TeamLogo src={teamLogoUrlFromName(row.home_team)} alt="" />
+                    <span>
+                      {TEAM_NAME_TO_ABBREVIATION[row.home_team] ?? row.home_team}{" "}
+                      {displayScore(row.home_score)}
+                    </span>
+                  </TeamLink>
                 </div>
               </TableCell>
             )}
