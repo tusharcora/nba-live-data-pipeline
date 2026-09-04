@@ -918,8 +918,13 @@ function GameCard({
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm">
-            <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
-            <span className={scoreColorClass(game.away_score, game.home_score)}>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5",
+                scoreColorClass(game.away_score, game.home_score)
+              )}
+            >
+              <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
               {game.away_team}
             </span>
             <span
@@ -931,8 +936,13 @@ function GameCard({
               {displayScore(game.away_score)}
             </span>
             <span className="text-muted-foreground">@</span>
-            <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
-            <span className={scoreColorClass(game.home_score, game.away_score)}>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5",
+                scoreColorClass(game.home_score, game.away_score)
+              )}
+            >
+              <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
               {game.home_team}
             </span>
             <span
