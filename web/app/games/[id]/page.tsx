@@ -91,7 +91,7 @@ export default function GamePage({
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
       <Link
         href="/explorer"
-        className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground hover:underline"
+        className="-mx-2 -my-1 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <ArrowLeft aria-hidden="true" className="size-4" />
         Back to Historical Explorer
@@ -157,7 +157,7 @@ function GameDetail({
             <TeamLink
               abbreviation={awayAbbreviation}
               className={cn(
-                "inline-flex items-center gap-1.5 hover:underline",
+                "-mx-1 -my-0.5 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted",
                 scoreColorClass(game.away_score, game.home_score)
               )}
             >
@@ -176,7 +176,7 @@ function GameDetail({
             <TeamLink
               abbreviation={homeAbbreviation}
               className={cn(
-                "inline-flex items-center gap-1.5 hover:underline",
+                "-mx-1 -my-0.5 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted",
                 scoreColorClass(game.home_score, game.away_score)
               )}
             >

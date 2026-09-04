@@ -608,7 +608,7 @@ function TeamFilterDropdown({
                   type="button"
                   onClick={onClear}
                   className={cn(
-                    "cursor-pointer rounded-sm text-xs font-medium text-primary hover:underline",
+                    "cursor-pointer rounded-sm px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10",
                     FOCUS_RING
                   )}
                 >

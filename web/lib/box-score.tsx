@@ -280,7 +280,7 @@ export function BoxScoreTable({
             <TableCell className="font-medium text-foreground">
               <Link
                 href={`/players/${row.player_id}`}
-                className="flex items-center gap-2 hover:underline"
+                className="-mx-1 -my-0.5 flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-muted"
               >
                 <Image
                   src={playerHeadshotUrl(row.player_id)}
@@ -298,7 +298,7 @@ export function BoxScoreTable({
             <TableCell className="text-muted-foreground">
               <TeamLink
                 abbreviation={row.team}
-                className="flex items-center gap-1.5 font-geist-mono hover:underline"
+                className="-mx-1 -my-0.5 flex items-center gap-1.5 rounded-md px-1 py-0.5 font-geist-mono transition-colors hover:bg-muted"
               >
                 <TeamLogo src={teamLogoUrlFromAbbreviation(row.team)} alt="" />
                 <span>{row.team}</span>
@@ -315,7 +315,7 @@ export function BoxScoreTable({
                   <TeamLink
                     abbreviation={TEAM_NAME_TO_ABBREVIATION[row.away_team] ?? row.away_team}
                     className={cn(
-                      "flex items-center gap-1.5 hover:underline",
+                      "-mx-1 -my-0.5 flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted",
                       scoreColorClass(row.away_score, row.home_score)
                     )}
                   >
@@ -329,7 +329,7 @@ export function BoxScoreTable({
                   <TeamLink
                     abbreviation={TEAM_NAME_TO_ABBREVIATION[row.home_team] ?? row.home_team}
                     className={cn(
-                      "flex items-center gap-1.5 hover:underline",
+                      "-mx-1 -my-0.5 flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted",
                       scoreColorClass(row.home_score, row.away_score)
                     )}
                   >
