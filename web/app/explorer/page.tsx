@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   useEffect,
   useMemo,
@@ -100,6 +101,22 @@ const GAMES_FETCH_ERROR =
 const PLAYER_SEARCH_FETCH_ERROR =
   "Couldn't reach the player stats service. Please try your search again.";
 const BOX_SCORE_FETCH_ERROR = "Couldn't load the box score. Try again.";
+
+/**
+ * NBA.com's own player-headshot CDN, keyed by `player_id` -- unofficial
+ * (not a public documented API, same low-stakes trade-off category as this
+ * project's `nba_api` backfill), but a widely-used, stable convention.
+ * `player_id` on `PlayerStatRow` is nba_api's own id space, which is
+ * exactly what this endpoint expects (this only works for nba_stats-
+ * sourced rows -- balldontlie's `player_id` space is different, but that
+ * source's own box-score path is realistically permanently empty, so this
+ * isn't a real near-term gap). Players NBA.com hasn't photographed
+ * (mostly obscure/historical role players) resolve to a generic silhouette
+ * placeholder server-side rather than a broken image or a 404.
+ */
+function playerHeadshotUrl(playerId: number): string {
+  return `https://cdn.nba.com/headshots/nba/latest/1040x760/${playerId}.png`;
+}
 
 /** "YYYY-MM-DD" -> "Jan 5, 2026", parsed as a calendar date (no timezone shift). */
 function formatGameDate(dateStr: string): string {
@@ -477,7 +494,19 @@ function BoxScoreTable({ rows }: { rows: PlayerStatRow[] }) {
         {rows.map((row) => (
           <TableRow key={row.stat_id}>
             <TableCell className="font-medium text-foreground">
-              {row.player_first_name} {row.player_last_name}
+              <div className="flex items-center gap-2">
+                <Image
+                  src={playerHeadshotUrl(row.player_id)}
+                  alt=""
+                  width={28}
+                  height={28}
+                  unoptimized
+                  className="size-7 shrink-0 rounded-full object-cover bg-muted"
+                />
+                <span>
+                  {row.player_first_name} {row.player_last_name}
+                </span>
+              </div>
             </TableCell>
             <TableCell className="text-muted-foreground">{row.team}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">
