@@ -917,7 +917,7 @@ function GameCard({
 
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm">
+          <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
             <span
               className={cn(
                 "inline-flex items-center gap-1.5",
