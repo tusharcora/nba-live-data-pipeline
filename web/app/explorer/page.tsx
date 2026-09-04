@@ -10,6 +10,8 @@ import {
 import {
   CalendarX,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Filter,
   Inbox,
@@ -77,6 +79,7 @@ const GAMES_FETCH_ERROR =
 const PLAYER_SEARCH_FETCH_ERROR =
   "Couldn't reach the player stats service. Please try your search again.";
 const BOX_SCORE_FETCH_ERROR = "Couldn't load the box score. Try again.";
+const PLAYER_RESULTS_PAGE_SIZE = 25;
 
 function prettifyStatus(status: string): string {
   const cleaned = status.replace(/^status[_-]?/i, "").trim();
@@ -382,6 +385,65 @@ function EmptyState({
       {icon}
       <p className="text-sm font-medium text-foreground">{title}</p>
       <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+/** Player-name search results, 25 rows per page (`PLAYER_RESULTS_PAGE_SIZE`)
+ * rather than every game a prolific career has ever shown at once. */
+function PaginatedPlayerResults({
+  rows,
+  page,
+  onPageChange,
+}: {
+  rows: PlayerStatRow[];
+  page: number;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / PLAYER_RESULTS_PAGE_SIZE));
+  // Clamp rather than assume `page` is always in range -- the result set
+  // can shrink between renders (a new, smaller search) faster than the
+  // page-reset effect in `handleSubmit` runs.
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const start = (currentPage - 1) * PLAYER_RESULTS_PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PLAYER_RESULTS_PAGE_SIZE);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <BoxScoreTable rows={pageRows} showGameContext />
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            Showing {start + 1}–{Math.min(start + PLAYER_RESULTS_PAGE_SIZE, rows.length)} of{" "}
+            {rows.length}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={currentPage === 1}
+              onClick={() => onPageChange(currentPage - 1)}
+            >
+              <ChevronLeft aria-hidden="true" className="size-4" />
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={currentPage === totalPages}
+              onClick={() => onPageChange(currentPage + 1)}
+            >
+              Next
+              <ChevronRight aria-hidden="true" className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -882,6 +944,12 @@ export default function ExplorerPage() {
     FetchState<ApiList<PlayerStatRow>> | null
   >(null);
   const [lastSearchedName, setLastSearchedName] = useState("");
+  // A prolific player's career can span hundreds of games (e.g. Michael
+  // Jordan's real backfilled data already has 348 rows) -- shown 25 at a
+  // time rather than all at once. Reset to page 1 on every new search
+  // (see `handleSubmit`), not carried over from a previous player's
+  // result set.
+  const [playerResultsPage, setPlayerResultsPage] = useState(1);
 
   const [expandedGameIds, setExpandedGameIds] = useState<Set<number>>(
     () => new Set()
@@ -1113,6 +1181,7 @@ export default function ExplorerPage() {
     if (dateRangeInvalid) return;
     setGamesState({ status: "loading" });
     setPlayerSearchState(playerName.trim() ? { status: "loading" } : null);
+    setPlayerResultsPage(1);
     // A fresh search invalidates any previously-expanded per-game box
     // scores from a prior result set.
     setExpandedGameIds(new Set());
@@ -1361,7 +1430,11 @@ export default function ExplorerPage() {
 
             {playerSearchState.status === "loaded" &&
               playerSearchState.result.data.length > 0 && (
-                <BoxScoreTable rows={playerSearchState.result.data} showGameContext />
+                <PaginatedPlayerResults
+                  rows={playerSearchState.result.data}
+                  page={playerResultsPage}
+                  onPageChange={setPlayerResultsPage}
+                />
               )}
           </section>
         )}
