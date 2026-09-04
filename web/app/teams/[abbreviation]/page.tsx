@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowLeft, TriangleAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -411,7 +411,60 @@ function TeamRoster({ abbreviation, gameIds }: { abbreviation: string; gameIds: 
   );
 }
 
+type RosterSortColumn = "gamesPlayed" | "points" | "rebounds" | "assists" | "minutes";
+
+/** Always descending -- a player with no recorded average for the sorted
+ * stat (null, e.g. never logged a minute) sinks to the bottom rather than
+ * competing via a null-as-zero coercion. gamesPlayed is never null. */
+function compareRosterDescending(
+  a: RosterEntry,
+  b: RosterEntry,
+  column: RosterSortColumn
+): number {
+  const aValue = a[column];
+  const bValue = b[column];
+  if (aValue === null && bValue === null) return 0;
+  if (aValue === null) return 1;
+  if (bValue === null) return -1;
+  return bValue - aValue;
+}
+
+function RosterSortableHeader({
+  label,
+  column,
+  activeColumn,
+  onSort,
+}: {
+  label: string;
+  column: RosterSortColumn;
+  activeColumn: RosterSortColumn;
+  onSort: (column: RosterSortColumn) => void;
+}) {
+  const isActive = column === activeColumn;
+  return (
+    <TableHead className="text-right">
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={cn(
+          "inline-flex flex-row-reverse cursor-pointer items-center gap-1 hover:text-foreground",
+          isActive ? "font-semibold text-foreground" : "text-muted-foreground"
+        )}
+      >
+        {label}
+        {isActive && <ArrowDown aria-hidden="true" className="size-3" />}
+      </button>
+    </TableHead>
+  );
+}
+
 function RosterTable({ roster }: { roster: RosterEntry[] }) {
+  const [sortColumn, setSortColumn] = useState<RosterSortColumn>("gamesPlayed");
+  const sortedRoster = useMemo(
+    () => [...roster].sort((a, b) => compareRosterDescending(a, b, sortColumn)),
+    [roster, sortColumn]
+  );
+
   if (roster.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-6 py-10 text-center">
@@ -428,15 +481,40 @@ function RosterTable({ roster }: { roster: RosterEntry[] }) {
       <TableHeader>
         <TableRow>
           <TableHead>Player</TableHead>
-          <TableHead className="text-right">GP</TableHead>
-          <TableHead className="text-right">PPG</TableHead>
-          <TableHead className="text-right">RPG</TableHead>
-          <TableHead className="text-right">APG</TableHead>
-          <TableHead className="text-right">MPG</TableHead>
+          <RosterSortableHeader
+            label="GP"
+            column="gamesPlayed"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
+          <RosterSortableHeader
+            label="PPG"
+            column="points"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
+          <RosterSortableHeader
+            label="RPG"
+            column="rebounds"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
+          <RosterSortableHeader
+            label="APG"
+            column="assists"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
+          <RosterSortableHeader
+            label="MPG"
+            column="minutes"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
         </TableRow>
       </TableHeader>
       <TableBody>
-        {roster.map((player) => (
+        {sortedRoster.map((player) => (
           <TableRow key={player.playerId}>
             <TableCell className="font-medium text-foreground">
               <Link
