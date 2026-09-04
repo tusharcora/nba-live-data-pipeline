@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchFromApi } from "@/lib/fastapi-client";
-import { namesForAbbreviation } from "@/lib/box-score";
+import { namesForAbbreviation } from "@/lib/team-names";
 
 // Dedicated BFF route for the team detail page (app/teams/[abbreviation]/page.tsx).
 // The Gold `games` table has no team-id column (see api/src/api/routers/games.py),

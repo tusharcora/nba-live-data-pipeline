@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fira_Sans, Fira_Code } from "next/font/google";
+import { Fira_Sans, Fira_Code, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
@@ -43,6 +43,16 @@ const firaCode = Fira_Code({
   weight: ["400", "500", "600", "700"],
 });
 
+// Team names, game/final scores, and dates use this dedicated mono face
+// (distinct from --font-fira-code, the app's general-purpose --font-mono)
+// everywhere they appear -- Explorer's Games list and player-search
+// results, the game and team detail pages, and BoxScoreTable.
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono-raw",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
 export const metadata: Metadata = {
   title: "Live Box Score Pipeline & Data Quality Observatory",
   description:
@@ -53,7 +63,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${firaSans.variable} ${firaCode.variable} h-full antialiased`}
+      className={`${firaSans.variable} ${firaCode.variable} ${jetbrainsMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
