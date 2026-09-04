@@ -225,3 +225,45 @@
 [data-slot="table-head"] {
   height: var(--density-table-head-h);
 }
+
+/*
+ * Text-size preference (normal/large/larger), driven by
+ * `web/lib/text-size.ts`. Toggling it sets `data-text-size="normal" |
+ * "large" | "larger"` on `<html>` (see `web/app/layout.tsx`'s inline init
+ * script), which this block reads to scale a `--text-scale` multiplier.
+ *
+ * Rather than introducing new tokens the way the density section above
+ * does, this redefines Tailwind's OWN `--text-xs`/`--text-sm`/etc. theme
+ * variables in terms of that multiplier -- every `text-*` utility class
+ * Tailwind generates already reads its font-size from exactly these
+ * variables, so overriding them here rescales all typography app-wide
+ * with no per-component changes. Deliberately UNLAYERED, same rationale
+ * as the density section: Tailwind's own `@theme`-emitted `:root
+ * { --text-sm: ... }` declaration is itself unlayered, so this needs to
+ * be unlayered too for plain CSS specificity (not layer order) to decide
+ * the winner -- `:root[data-text-size="..."]` beats a bare `:root`
+ * regardless of source order.
+ *
+ * Default multiplier is 1.125 (the "large" tier), not 1 -- this app's
+ * baseline text size is a step up from stock Tailwind sizing by design;
+ * "normal" (1) is offered as an opt-out on the settings page.
+ */
+:root {
+  --text-scale: 1.125;
+  --text-xs: calc(0.75rem * var(--text-scale));
+  --text-sm: calc(0.875rem * var(--text-scale));
+  --text-base: calc(1rem * var(--text-scale));
+  --text-lg: calc(1.125rem * var(--text-scale));
+  --text-xl: calc(1.25rem * var(--text-scale));
+  --text-2xl: calc(1.5rem * var(--text-scale));
+  --text-3xl: calc(1.875rem * var(--text-scale));
+  --text-4xl: calc(2.25rem * var(--text-scale));
+}
+
+:root[data-text-size="normal"] {
+  --text-scale: 1;
+}
+
+:root[data-text-size="larger"] {
+  --text-scale: 1.25;
+}

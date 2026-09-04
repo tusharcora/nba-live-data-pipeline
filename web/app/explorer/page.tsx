@@ -106,8 +106,10 @@ type SavedSearch = {
   playerName: string;
 };
 
-const FAVORITE_TEAMS_KEY = "explorer:favoriteTeams";
-const SAVED_SEARCHES_KEY = "explorer:savedSearches";
+// Exported so the settings page can offer "clear my saved data" resets
+// without duplicating these key strings.
+export const FAVORITE_TEAMS_KEY = "explorer:favoriteTeams";
+export const SAVED_SEARCHES_KEY = "explorer:savedSearches";
 
 const emptySubscribe = () => () => {};
 
