@@ -22,6 +22,7 @@ import {
 import {
   displayScore,
   formatGameDate,
+  parseMinutesPlayed,
   playerHeadshotUrl,
   scoreColorClass,
   TEAM_NAME_TO_ABBREVIATION,
@@ -36,10 +37,13 @@ import {
 // "use client" directive can't be imported into a plain route.ts.
 export {
   ABBREVIATION_TO_TEAM_NAME,
+  average,
   displayScore,
+  formatAverage,
   formatGameDate,
   namesForAbbreviation,
   NBA_GAME_ID_OFFSET,
+  parseMinutesPlayed,
   playerHeadshotUrl,
   scoreColorClass,
   TEAM_NAME_TO_ABBREVIATION,
@@ -101,16 +105,6 @@ type SortableColumn =
   // all, so it stays defaulted to "points" instead.
   | "date";
 
-/** `minutes_played` is a display string (e.g. "34", already rounded to a
- * whole minute -- see stg_player_game_stats*.sql), or `null` for a
- * DNP/inactive row. Parsed back to a number purely for sorting; `null`
- * (and any unparseable value) sorts last regardless of column. */
-function parseMinutesForSort(minutesPlayed: string | null): number | null {
-  if (minutesPlayed === null) return null;
-  const value = Number(minutesPlayed);
-  return Number.isFinite(value) ? value : null;
-}
-
 /** Every numeric stat column is typed `number` on `PlayerStatRow`, but a
  * DNP/inactive row's real API response actually sends `null` for these
  * (rendered as a blank cell below) -- so this returns `number | null`
@@ -142,7 +136,7 @@ function sortValue(row: PlayerStatRow, column: SortableColumn): number | string 
     case "turnovers":
       return row.turnovers as number | null;
     case "minutes":
-      return parseMinutesForSort(row.minutes_played);
+      return parseMinutesPlayed(row.minutes_played);
     case "date":
       // ISO "YYYY-MM-DD" sorts correctly as a plain string (most-recent-
       // first under compareDescending's string branch below).

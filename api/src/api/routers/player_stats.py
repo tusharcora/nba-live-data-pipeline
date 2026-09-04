@@ -51,7 +51,7 @@ class PlayerStatsReader(Protocol):
     """
 
     def list_player_stats(
-        self, game_id: int | None, player_name: str | None, player_id: int | None = None
+        self, game_id: list[int] | None, player_name: str | None, player_id: int | None = None
     ) -> list[dict]: ...
 
 
@@ -59,18 +59,20 @@ class SQLAlchemyPlayerStatsReader:
     """Production `PlayerStatsReader`, backed by the dbt-owned Gold
     `player_game_stats` table.
 
-    `game_id` and `player_id` filter on exact equality. `player_name`
-    filters on a case-insensitive partial match against the combined
-    `player_first_name || ' ' || player_last_name`. Any combination may be
-    supplied; rows are ordered by `stat_id` descending (most recently
-    loaded first) with no limit — this table is expected to be small enough
-    per query (a handful of players per game, or matches on a name/id) that
-    a `DEFAULT_LIMIT`-style cap isn't needed the way `/games`'s unfiltered
-    case needs one. `player_id` is the exact-identity filter the player
-    detail page uses (nba_api's own id, stable across a player's whole
-    career) -- `player_name` alone can't disambiguate two players who
-    share a name, and isn't guaranteed to return every game for one player
-    if their name was ever recorded inconsistently.
+    `game_id` (one or more, matched via `IN`) and `player_id` filter on
+    exact equality. `player_name` filters on a case-insensitive partial
+    match against the combined `player_first_name || ' ' || player_last_name`.
+    Any combination may be supplied; rows are ordered by `stat_id`
+    descending (most recently loaded first) with no limit -- a single game
+    or player is small by construction, and even a full season's worth of
+    `game_id`s (the team detail page's roster view, up to ~100 games) is
+    still small enough that a `DEFAULT_LIMIT`-style cap isn't needed the
+    way `/games`'s unfiltered case needs one. `player_id` is the
+    exact-identity filter the player detail page uses (nba_api's own id,
+    stable across a player's whole career) -- `player_name` alone can't
+    disambiguate two players who share a name, and isn't guaranteed to
+    return every game for one player if their name was ever recorded
+    inconsistently.
 
     Joined against the Gold `games` table (inner join -- every real
     `player_game_stats` row's `game_id` always has a matching `games` row
@@ -84,7 +86,7 @@ class SQLAlchemyPlayerStatsReader:
         self._engine = engine or get_engine()
 
     def list_player_stats(
-        self, game_id: int | None, player_name: str | None, player_id: int | None = None
+        self, game_id: list[int] | None, player_name: str | None, player_id: int | None = None
     ) -> list[dict]:
         metadata = MetaData()
         player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
@@ -102,8 +104,8 @@ class SQLAlchemyPlayerStatsReader:
             .join(games, player_game_stats.c.game_id == games.c.game_id)
             .order_by(player_game_stats.c.stat_id.desc())
         )
-        if game_id is not None:
-            stmt = stmt.where(player_game_stats.c.game_id == game_id)
+        if game_id:
+            stmt = stmt.where(player_game_stats.c.game_id.in_(game_id))
         if player_id is not None:
             stmt = stmt.where(player_game_stats.c.player_id == player_id)
         if player_name is not None:
@@ -138,7 +140,12 @@ def get_player_stats_reader() -> PlayerStatsReader:
 @limiter.limit(DEFAULT_RATE_LIMIT)
 def list_player_stats(
     request: Request,
-    game_id: int | None = Query(default=None, description="Filter to an exact game_id."),
+    game_id: list[int] | None = Query(
+        default=None,
+        description="Filter to one or more exact game_ids (repeat the param for "
+        "more than one, e.g. ?game_id=1&game_id=2 -- the team detail page's "
+        "roster view passes every game_id in a season this way).",
+    ),
     player_name: str | None = Query(
         default=None,
         description="Case-insensitive partial match on the player's combined "
@@ -153,7 +160,10 @@ def list_player_stats(
 ) -> dict:
     """Per-player, per-game box-score lines from Gold `player_game_stats`.
 
-    - `?game_id=<int>` — return every player line for that game.
+    - `?game_id=<int>` (repeatable) — return every player line for those
+      game(s). A single value returns one game's box score; repeating the
+      param returns every player line across all of them (the team detail
+      page's roster view, one season's worth of game_ids at once).
     - `?player_name=<text>` — case-insensitive partial match against the
       combined first + last name (e.g. `"lebron"` or `"james"` both match
       "LeBron James").
@@ -181,9 +191,11 @@ def list_player_stats(
         return {"data": rows, "count": len(rows)}
 
     # Cache key incorporates every filter param's raw value so filtered and
-    # unfiltered responses never collide in the cache.
+    # unfiltered responses never collide in the cache. game_id is sorted so
+    # the same set of ids in a different request order still hits the same
+    # cache entry.
     cache_key = (
-        f"player-stats:game_id={game_id if game_id is not None else ''}"
+        f"player-stats:game_id={','.join(map(str, sorted(game_id))) if game_id else ''}"
         f":player_name={(player_name or '').lower()}"
         f":player_id={player_id if player_id is not None else ''}"
     )

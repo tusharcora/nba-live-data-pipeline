@@ -246,3 +246,27 @@ export function scoreColorClass(
   }
   return thisScore > otherScore ? "font-bold text-emerald-500" : "font-bold text-red-500/70";
 }
+
+/** `minutes_played` is a display string (e.g. "34", already rounded to a
+ * whole minute -- see stg_player_game_stats*.sql), or `null` for a
+ * DNP/inactive row. Parsed back to a number for sorting/averaging; `null`
+ * (and any unparseable value) is excluded from both, never coerced to 0. */
+export function parseMinutesPlayed(minutesPlayed: string | null): number | null {
+  if (minutesPlayed === null) return null;
+  const value = Number(minutesPlayed);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Average of a stat across every row where it's non-null (a DNP/inactive
+ * row has null stats -- see stg_player_game_stats_nba.sql's header -- and
+ * must not be averaged in as a zero, which would understate real per-game
+ * production). Returns null if no row has that stat at all. */
+export function average(values: (number | null)[]): number | null {
+  const real = values.filter((v): v is number => v !== null);
+  if (real.length === 0) return null;
+  return real.reduce((sum, v) => sum + v, 0) / real.length;
+}
+
+export function formatAverage(value: number | null): string {
+  return value === null ? "–" : value.toFixed(1);
+}
