@@ -1,3 +1,5 @@
+"use client";
+
 // Shared player/team box-score rendering -- used by both the Historical
 // Explorer (per-game box scores and player-name search results) and the
 // player detail page (`app/players/[id]/page.tsx`). Extracted here rather
@@ -5,6 +7,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useMemo, useState } from "react";
+import { ArrowDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -294,6 +298,108 @@ export function scoreColorClass(
   return thisScore > otherScore ? "font-bold text-emerald-500" : "text-red-500/70";
 }
 
+type SortableColumn =
+  | "player"
+  | "points"
+  | "rebounds"
+  | "assists"
+  | "steals"
+  | "blocks"
+  | "turnovers"
+  | "minutes";
+
+/** `minutes_played` is a display string (e.g. "34", already rounded to a
+ * whole minute -- see stg_player_game_stats*.sql), or `null` for a
+ * DNP/inactive row. Parsed back to a number purely for sorting; `null`
+ * (and any unparseable value) sorts last regardless of column. */
+function parseMinutesForSort(minutesPlayed: string | null): number | null {
+  if (minutesPlayed === null) return null;
+  const value = Number(minutesPlayed);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Every numeric stat column is typed `number` on `PlayerStatRow`, but a
+ * DNP/inactive row's real API response actually sends `null` for these
+ * (rendered as a blank cell below) -- so this returns `number | null`
+ * despite the type, and callers must not assume non-null. */
+function sortValue(row: PlayerStatRow, column: SortableColumn): number | string | null {
+  switch (column) {
+    case "player": {
+      // A roster slot with no resolved player identity at all (both name
+      // fields `null` at runtime despite the `string` type -- confirmed
+      // against real data, e.g. two Bulls rows in the 1998 Finals Game 6
+      // box score) sorts last here too, matching every numeric column's
+      // "incomplete row sinks to the bottom" rule -- otherwise the literal
+      // string "null null" would sort alphabetically among real names.
+      const lastName = row.player_last_name as string | null;
+      const firstName = row.player_first_name as string | null;
+      if (lastName === null && firstName === null) return null;
+      return `${lastName ?? ""} ${firstName ?? ""}`.toLowerCase();
+    }
+    case "points":
+      return row.points as number | null;
+    case "rebounds":
+      return row.rebounds as number | null;
+    case "assists":
+      return row.assists as number | null;
+    case "steals":
+      return row.steals as number | null;
+    case "blocks":
+      return row.blocks as number | null;
+    case "turnovers":
+      return row.turnovers as number | null;
+    case "minutes":
+      return parseMinutesForSort(row.minutes_played);
+  }
+}
+
+/** Always descending -- a DNP/inactive row (`null` for the sorted column)
+ * sorts to the bottom no matter which column is active, rather than
+ * competing with real values via a numeric coercion of `null`. */
+function compareDescending(a: PlayerStatRow, b: PlayerStatRow, column: SortableColumn): number {
+  const aValue = sortValue(a, column);
+  const bValue = sortValue(b, column);
+  if (aValue === null && bValue === null) return 0;
+  if (aValue === null) return 1;
+  if (bValue === null) return -1;
+  if (typeof aValue === "string" || typeof bValue === "string") {
+    return String(bValue).localeCompare(String(aValue));
+  }
+  return bValue - aValue;
+}
+
+function SortableHeader({
+  label,
+  column,
+  activeColumn,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  column: SortableColumn;
+  activeColumn: SortableColumn;
+  onSort: (column: SortableColumn) => void;
+  align?: "left" | "right";
+}) {
+  const isActive = column === activeColumn;
+  return (
+    <TableHead className={align === "right" ? "text-right" : undefined}>
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={cn(
+          "inline-flex cursor-pointer items-center gap-1 hover:text-foreground",
+          align === "right" && "flex-row-reverse",
+          isActive ? "font-semibold text-foreground" : "text-muted-foreground"
+        )}
+      >
+        {label}
+        {isActive && <ArrowDown aria-hidden="true" className="size-3" />}
+      </button>
+    </TableHead>
+  );
+}
+
 export function BoxScoreTable({
   rows,
   showGameContext = false,
@@ -305,25 +411,78 @@ export function BoxScoreTable({
   // player-name search, or a player's full game log) need this.
   showGameContext?: boolean;
 }) {
+  const [sortColumn, setSortColumn] = useState<SortableColumn>("points");
+  const sortedRows = useMemo(
+    () => [...rows].sort((a, b) => compareDescending(a, b, sortColumn)),
+    [rows, sortColumn]
+  );
+
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Player</TableHead>
+          <SortableHeader
+            label="Player"
+            column="player"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+          />
           <TableHead>Team</TableHead>
           {showGameContext && <TableHead>Date</TableHead>}
           {showGameContext && <TableHead>Result</TableHead>}
-          <TableHead className="text-right">Pts</TableHead>
-          <TableHead className="text-right">Reb</TableHead>
-          <TableHead className="text-right">Ast</TableHead>
-          <TableHead className="text-right">Stl</TableHead>
-          <TableHead className="text-right">Blk</TableHead>
-          <TableHead className="text-right">TO</TableHead>
-          <TableHead className="text-right">Min</TableHead>
+          <SortableHeader
+            label="Pts"
+            column="points"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="Reb"
+            column="rebounds"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="Ast"
+            column="assists"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="Stl"
+            column="steals"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="Blk"
+            column="blocks"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="TO"
+            column="turnovers"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <SortableHeader
+            label="Min"
+            column="minutes"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((row) => (
+        {sortedRows.map((row) => (
           <TableRow key={row.stat_id}>
             <TableCell className="font-medium text-foreground">
               <Link
