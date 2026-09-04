@@ -93,7 +93,13 @@ type SortableColumn =
   | "steals"
   | "blocks"
   | "turnovers"
-  | "minutes";
+  | "minutes"
+  // Not exposed as a clickable header (Date has no SortableHeader below) --
+  // only used as the initial default for a `showGameContext` table (player
+  // search results, a player's game log), where most-recent-first is the
+  // natural order. A single-game box score has no `game_date` column at
+  // all, so it stays defaulted to "points" instead.
+  | "date";
 
 /** `minutes_played` is a display string (e.g. "34", already rounded to a
  * whole minute -- see stg_player_game_stats*.sql), or `null` for a
@@ -137,6 +143,10 @@ function sortValue(row: PlayerStatRow, column: SortableColumn): number | string 
       return row.turnovers as number | null;
     case "minutes":
       return parseMinutesForSort(row.minutes_played);
+    case "date":
+      // ISO "YYYY-MM-DD" sorts correctly as a plain string (most-recent-
+      // first under compareDescending's string branch below).
+      return row.game_date;
   }
 }
 
@@ -198,7 +208,9 @@ export function BoxScoreTable({
   // player-name search, or a player's full game log) need this.
   showGameContext?: boolean;
 }) {
-  const [sortColumn, setSortColumn] = useState<SortableColumn>("points");
+  const [sortColumn, setSortColumn] = useState<SortableColumn>(
+    showGameContext ? "date" : "points"
+  );
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => compareDescending(a, b, sortColumn)),
     [rows, sortColumn]
