@@ -146,14 +146,14 @@ function GameDetail({
     <div className="flex flex-col gap-8">
       <Card className="gap-3">
         <CardHeader className="flex-row items-center justify-between gap-2">
-          <CardTitle className="font-jetbrains-mono text-xs font-medium tracking-wide text-muted-foreground">
+          <CardTitle className="font-geist-mono text-xs font-medium tracking-wide text-muted-foreground">
             {formatGameDate(game.game_date)}
             {game.postseason ? " · Postseason" : ""}
           </CardTitle>
           <Badge variant={statusBadgeVariant(game.status)}>{prettifyStatus(game.status)}</Badge>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-center gap-2 font-jetbrains-mono text-sm">
+          <div className="flex flex-wrap items-center gap-2 font-geist-mono text-sm">
             <TeamLink
               abbreviation={awayAbbreviation}
               className={cn(

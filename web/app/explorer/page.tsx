@@ -710,7 +710,7 @@ function GameComparisonCard({ game }: { game: GameRow }) {
   return (
     <Card className="gap-3">
       <CardHeader className="flex-row items-center justify-between gap-2">
-        <CardTitle className="font-jetbrains-mono text-xs font-medium tracking-wide text-muted-foreground">
+        <CardTitle className="font-geist-mono text-xs font-medium tracking-wide text-muted-foreground">
           {formatGameDate(game.game_date)}
           {game.postseason ? " · Postseason" : ""}
         </CardTitle>
@@ -722,7 +722,7 @@ function GameComparisonCard({ game }: { game: GameRow }) {
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5 font-jetbrains-mono text-sm">
+        <div className="flex flex-col gap-1.5 font-geist-mono text-sm">
           <div className="flex items-center justify-between gap-2">
             <span
               className={cn(
@@ -893,7 +893,7 @@ function GameCard({
   return (
     <Card className="gap-3">
       <CardHeader className="flex-row items-center justify-between gap-2">
-        <CardTitle className="font-jetbrains-mono text-xs font-medium tracking-wide text-muted-foreground">
+        <CardTitle className="font-geist-mono text-xs font-medium tracking-wide text-muted-foreground">
           {formatGameDate(game.game_date)}
           {game.postseason ? " · Postseason" : ""}
         </CardTitle>
@@ -908,7 +908,7 @@ function GameCard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             href={`/games/${game.game_id}`}
-            className="-mx-2 -my-1 flex flex-wrap items-center gap-2 rounded-md px-2 py-1 font-jetbrains-mono text-sm transition-colors hover:bg-muted"
+            className="-mx-2 -my-1 flex flex-wrap items-center gap-2 rounded-md px-2 py-1 font-geist-mono text-sm transition-colors hover:bg-muted"
           >
             <span
               className={cn(

@@ -298,20 +298,20 @@ export function BoxScoreTable({
             <TableCell className="text-muted-foreground">
               <TeamLink
                 abbreviation={row.team}
-                className="flex items-center gap-1.5 font-jetbrains-mono hover:underline"
+                className="flex items-center gap-1.5 font-geist-mono hover:underline"
               >
                 <TeamLogo src={teamLogoUrlFromAbbreviation(row.team)} alt="" />
                 <span>{row.team}</span>
               </TeamLink>
             </TableCell>
             {showGameContext && (
-              <TableCell className="whitespace-nowrap font-jetbrains-mono text-muted-foreground">
+              <TableCell className="whitespace-nowrap font-geist-mono text-muted-foreground">
                 {formatGameDate(row.game_date)}
               </TableCell>
             )}
             {showGameContext && (
               <TableCell className="whitespace-nowrap">
-                <div className="flex items-center gap-2 font-jetbrains-mono text-sm">
+                <div className="flex items-center gap-2 font-geist-mono text-sm">
                   <TeamLink
                     abbreviation={TEAM_NAME_TO_ABBREVIATION[row.away_team] ?? row.away_team}
                     className={cn(

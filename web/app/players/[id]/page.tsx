@@ -239,10 +239,10 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
             {teamTenure.map((stint) => (
               <li key={stint.team} className="flex items-center gap-2 text-sm">
                 <TeamLogo src={teamLogoUrlFromAbbreviation(stint.team)} alt="" />
-                <span className="font-jetbrains-mono font-medium text-foreground">
+                <span className="font-geist-mono font-medium text-foreground">
                   {stint.team}
                 </span>
-                <span className="font-jetbrains-mono text-muted-foreground">
+                <span className="font-geist-mono text-muted-foreground">
                   {formatGameDate(stint.firstGame)} – {formatGameDate(stint.lastGame)} (
                   {stint.games} game{stint.games === 1 ? "" : "s"})
                 </span>
