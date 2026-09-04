@@ -295,7 +295,7 @@ export function scoreColorClass(
   if (thisScore === null || otherScore === null || thisScore === otherScore) {
     return "text-muted-foreground";
   }
-  return thisScore > otherScore ? "font-bold text-emerald-500" : "text-red-500/70";
+  return thisScore > otherScore ? "font-bold text-emerald-500" : "font-bold text-red-500/70";
 }
 
 type SortableColumn =
