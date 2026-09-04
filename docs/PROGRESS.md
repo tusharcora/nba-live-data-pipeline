@@ -727,6 +727,27 @@ top of both employees' merged work, open awaiting human sign-off.
   Banchero 43pts, Luka Dončić 41pts, both diacritics and point totals
   correct); 116 of the 699 rows have null stat columns, which is real
   nba_api behavior for inactive/DNP players, not a parsing bug.
+  **Superseded again (2026-09-03, PR #55):** the balldontlie-matching
+  design above was replaced with nba_api as an independent `games` source
+  (new `stg_games_nba.sql`, unioned into the Gold `games` mart) after
+  finding the team-name-overlap matcher breaks for NBA franchises renamed
+  since 1996 (Vancouver→Memphis Grizzlies, Seattle→OKC Thunder, etc. —
+  nba_api keeps period-accurate historical names, balldontlie normalizes to
+  the current one) and after finding balldontlie's free-tier API key is
+  rate-limited to 5 req/min. `backfill_nba_stats_flow` now takes
+  `start_season`/`end_season` and fetches an entire season in 2 calls
+  instead of one call per calendar day. The 1996-97 season was then run for
+  real end-to-end under this new design: 1,261 games, 205 dates, 2,522
+  `raw_pulls` rows, zero mid-run failures. A subsequent `dbt run` produced
+  1,287 `games` rows and 43,157 `player_game_stats` rows — the `unique`
+  test on `stat_id` passed across all 43,157 real rows, confirming the
+  `NBA_GAME_ID_OFFSET` collision-avoidance scheme holds at real scale, not
+  just in unit tests. Spot-checked: Michael Jordan 55pts, Allen Iverson
+  50pts (his rookie season), Hakeem Olajuwon 48pts — all real, correct
+  historical box scores; season correctly spans 1996-11-01 through
+  1997-06-13 (the actual date of Bulls–Jazz Finals Game 6). Remaining 29
+  seasons (1997-98 through 2025-26) are being run the same way, one at a
+  time, per the module docstring's runbook.
 - Two of Week 5's three boss agents did not reliably land in their own
   isolated worktree despite being dispatched with `isolation: "worktree"`
   — see the Week 5 timeline entry above and project memory for the
@@ -770,6 +791,22 @@ top of both employees' merged work, open awaiting human sign-off.
     that would actually hit the error. Fixed with a new migration
     (`20a909ed3f0d`) granting `ingestion_writer` `SELECT` on the existing
     Gold tables plus a matching `ALTER DEFAULT PRIVILEGES` for future ones.
+  - **A third instance of this same blind spot, found 2026-09-03 running
+    `dbt test` for real for the first time**: dbt-core 1.12.3 / dbt-postgres
+    1.11.0's unit-test compiler renders a nested-dict/list YAML fixture
+    value targeting a `jsonb` column using Python's `repr()` (e.g.
+    `cast({'game_id': 100029600001, 'status': 'Final', ...} as jsonb)` —
+    note the Python-style `False`/single quotes) instead of valid JSON, so
+    Postgres rejects it with a syntax error. This affects all three of this
+    project's `nba_stats`-source unit tests (their `payload` fixtures are
+    nested dicts) and was invisible to `dbt parse`/`dbt compile` (neither
+    executes unit tests) — only surfaced running `dbt test` against a real
+    Postgres, which nothing in this project had done before this backfill's
+    real run. Not yet fixed (real data tests are unaffected and all pass;
+    this only blocks the 3 synthetic unit tests) — the likely fix is
+    rewriting those fixtures' `given` blocks to `format: sql` with an
+    explicit `'{"...": ...}'::jsonb` string literal instead of a YAML dict,
+    bypassing dbt's buffered dict-to-SQL serialization entirely.
 
 ## What's Next
 
