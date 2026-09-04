@@ -908,7 +908,7 @@ function GameCard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             href={`/games/${game.game_id}`}
-            className="flex flex-wrap items-center gap-2 rounded font-mono text-sm hover:underline"
+            className="-mx-2 -my-1 flex flex-wrap items-center gap-2 rounded-md px-2 py-1 font-mono text-sm transition-colors hover:bg-muted"
           >
             <span
               className={cn(
