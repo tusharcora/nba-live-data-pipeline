@@ -14,10 +14,11 @@ class FakePlayerStatsReader:
     """Test double for the player-stats-reader DI seam (`PlayerStatsReader`
     protocol).
 
-    Applies the same `game_id` equality / case-insensitive-partial
-    `player_name` filtering a real SQL query would, so the filter tests
-    exercise real route behavior rather than a pre-filtered fixture. Also
-    counts calls so cache tests can prove a hit skips this reader entirely.
+    Applies the same `game_id`/`player_id` equality and case-insensitive-
+    partial `player_name` filtering a real SQL query would, so the filter
+    tests exercise real route behavior rather than a pre-filtered fixture.
+    Also counts calls so cache tests can prove a hit skips this reader
+    entirely.
     """
 
     def __init__(self, rows: list[dict]) -> None:
@@ -25,15 +26,21 @@ class FakePlayerStatsReader:
         self.call_count = 0
         self.received_game_id: int | None | str = "not-called"
         self.received_player_name: str | None | str = "not-called"
+        self.received_player_id: int | None | str = "not-called"
 
-    def list_player_stats(self, game_id: int | None, player_name: str | None) -> list[dict]:
+    def list_player_stats(
+        self, game_id: int | None, player_name: str | None, player_id: int | None = None
+    ) -> list[dict]:
         self.call_count += 1
         self.received_game_id = game_id
         self.received_player_name = player_name
+        self.received_player_id = player_id
 
         rows = self.rows
         if game_id is not None:
             rows = [row for row in rows if row["game_id"] == game_id]
+        if player_id is not None:
+            rows = [row for row in rows if row["player_id"] == player_id]
         if player_name is not None:
             needle = player_name.lower()
             rows = [
@@ -172,6 +179,24 @@ def test_list_player_stats_filters_by_player_name_case_insensitive_partial(clien
     assert body["count"] == 2
     assert {row["stat_id"] for row in body["data"]} == {"1", "3"}
     assert reader.received_player_name == "lebron"
+
+
+def test_list_player_stats_filters_by_player_id(client):
+    """player_id is the exact-identity filter the player detail page uses --
+    unlike player_name, it can't accidentally match a different player who
+    happens to share a name."""
+    reader = FakePlayerStatsReader(FAKE_STATS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/player-stats/", params={"player_id": 11}, headers={"X-API-Key": API_KEY}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 2
+    assert {row["stat_id"] for row in body["data"]} == {"1", "3"}
+    assert reader.received_player_id == 11
 
 
 def test_list_player_stats_includes_game_date_and_result_per_row(client):
