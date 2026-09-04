@@ -107,13 +107,16 @@ models:
           balldontlie's "turnover").
       - name: minutes_played
         description: >
-          Minutes played as a decimal, parsed from `player_stats[].MIN`
-          using the same defensive dual-format parser
-          `stg_player_game_stats.sql` uses for balldontlie's `min` (bare
-          minutes-only string, or "MM:SS"). nba_api's real `MIN` format
-          was NOT confirmed with certainty (no live `stats.nba.com` call
-          was possible) -- this is a defensively-parsed shape, not a
-          confirmed one; see model header.
+          Minutes played, rounded to the nearest whole minute (same
+          rounding as the sibling `stg_player_game_stats.minutes_played`,
+          so the unioned mart is consistently whole-number regardless of
+          source), parsed from `player_stats[].MIN` using the same
+          defensive dual-format parser `stg_player_game_stats.sql` uses for
+          balldontlie's `min` (bare minutes-only string, or "MM:SS").
+          Confirmed against real `stats.nba.com` data during the full
+          history backfill (2026-09) -- the dual-format defensive parsing
+          was a reasonable precaution, not a bug workaround; real values
+          parsed cleanly at scale.
       - name: pulled_at
         description: Timestamp of the raw_pulls row this de-duplicated version was sourced from.
 

@@ -78,11 +78,12 @@ models:
         description: Turnovers, sourced from `data[].turnover`.
       - name: minutes_played
         description: >
-          Minutes played as a decimal, parsed from `data[].min`. Handles
-          both real-world formats: a plain minutes-only string (e.g.
-          "30" -> 30, the current documented/confirmed shape) and an
-          "MM:SS" string (e.g. "34:12" -> 34.2, in case older/different
-          data still returns it). Null when the raw value is null, empty,
-          or doesn't match either pattern (e.g. a player who didn't play).
+          Minutes played, rounded to the nearest whole minute, parsed from
+          `data[].min`. Handles both real-world formats: a plain
+          minutes-only string (e.g. "30" -> 30, the current documented/
+          confirmed shape) and an "MM:SS" string (e.g. "34:12" -> 34, in
+          case older/different data still returns it -- the ":12" seconds
+          round down here). Null when the raw value is null, empty, or
+          doesn't match either pattern (e.g. a player who didn't play).
       - name: pulled_at
         description: Timestamp of the raw_pulls row this de-duplicated version was sourced from. Carried through for lineage/debugging, not a business column.

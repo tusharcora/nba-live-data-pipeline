@@ -241,15 +241,22 @@ typed as (
         -- stg_player_game_stats.sql's "min" handling -- see header
         -- decision log (4). Guards against null/empty/anything else so
         -- this never errors the model.
-        case
-            when nullif(trim(player_row ->> 'MIN'), '') is null then null
-            when (player_row ->> 'MIN') ~ '^[0-9]+:[0-9]+$' then
-                split_part(player_row ->> 'MIN', ':', 1)::numeric
-                + split_part(player_row ->> 'MIN', ':', 2)::numeric / 60
-            when (player_row ->> 'MIN') ~ '^[0-9]+$' then
-                (player_row ->> 'MIN')::numeric
-            else null
-        end as minutes_played,
+        -- Rounded to the nearest whole minute for display -- same rounding
+        -- applied to stg_player_game_stats.sql's sibling column, so the
+        -- unioned mart's minutes_played is consistently whole-number
+        -- across both sources.
+        round(
+            case
+                when nullif(trim(player_row ->> 'MIN'), '') is null then null
+                when (player_row ->> 'MIN') ~ '^[0-9]+:[0-9]+$' then
+                    split_part(player_row ->> 'MIN', ':', 1)::numeric
+                    + split_part(player_row ->> 'MIN', ':', 2)::numeric / 60
+                when (player_row ->> 'MIN') ~ '^[0-9]+$' then
+                    (player_row ->> 'MIN')::numeric
+                else null
+            end,
+            0
+        ) as minutes_played,
         pulled_at
 
     from name_split

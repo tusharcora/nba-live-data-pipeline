@@ -95,15 +95,21 @@ typed as (
         -- null/empty/anything else (malformed, or a player who didn't
         -- play) so this never errors the model — it just returns null,
         -- same safety as before.
-        case
-            when nullif(trim(stat_line ->> 'min'), '') is null then null
-            when (stat_line ->> 'min') ~ '^[0-9]+:[0-9]+$' then
-                split_part(stat_line ->> 'min', ':', 1)::numeric
-                + split_part(stat_line ->> 'min', ':', 2)::numeric / 60
-            when (stat_line ->> 'min') ~ '^[0-9]+$' then
-                (stat_line ->> 'min')::numeric
-            else null
-        end as minutes_played,
+        -- Rounded to the nearest whole minute for display -- this project
+        -- doesn't need fractional-minute precision anywhere downstream,
+        -- and a rounded value is easier to scan in a box score table.
+        round(
+            case
+                when nullif(trim(stat_line ->> 'min'), '') is null then null
+                when (stat_line ->> 'min') ~ '^[0-9]+:[0-9]+$' then
+                    split_part(stat_line ->> 'min', ':', 1)::numeric
+                    + split_part(stat_line ->> 'min', ':', 2)::numeric / 60
+                when (stat_line ->> 'min') ~ '^[0-9]+$' then
+                    (stat_line ->> 'min')::numeric
+                else null
+            end,
+            0
+        ) as minutes_played,
         pulled_at
 
     from raw_stat_pulls
