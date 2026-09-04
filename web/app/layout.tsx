@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fira_Sans, Fira_Code, Geist_Mono } from "next/font/google";
+import { Teko } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
@@ -31,25 +31,14 @@ const DENSITY_INIT_SCRIPT = `
 })();
 `;
 
-const firaSans = Fira_Sans({
-  variable: "--font-fira-sans",
+// Every font token this app defines (--font-sans, --font-mono,
+// --font-heading, --font-geist-mono) maps to this single family in
+// globals.css's @theme block -- one font, applied everywhere, rather than
+// the previous three-typeface system (Fira Sans / Fira Code / Geist Mono).
+const teko = Teko({
+  variable: "--font-teko-raw",
   subsets: ["latin"],
   weight: ["300", "400", "500", "600", "700"],
-});
-
-const firaCode = Fira_Code({
-  variable: "--font-fira-code",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-// Team names, game/final scores, and dates use this dedicated mono face
-// (distinct from --font-fira-code, the app's general-purpose --font-mono)
-// everywhere they appear -- Explorer's Games list and player-search
-// results, the game and team detail pages, and BoxScoreTable.
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono-raw",
-  subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
@@ -62,7 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${firaSans.variable} ${firaCode.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${teko.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
