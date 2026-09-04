@@ -82,6 +82,14 @@ type PlayerStatRow = {
   blocks: number;
   turnovers: number;
   minutes_played: string | null;
+  // Joined in from the game this stat line belongs to (see
+  // api/src/api/routers/player_stats.py) -- needed so a player-name search
+  // spanning many games can show which game each row came from.
+  game_date: string;
+  home_team: string;
+  away_team: string;
+  home_score: number | null;
+  away_score: number | null;
 };
 
 type ApiList<T> = { data: T[]; count: number };
@@ -474,13 +482,25 @@ function GamesSkeleton() {
   );
 }
 
-function BoxScoreTable({ rows }: { rows: PlayerStatRow[] }) {
+function BoxScoreTable({
+  rows,
+  showGameContext = false,
+}: {
+  rows: PlayerStatRow[];
+  // The per-game box score card already shows its own date/matchup in the
+  // card header, so repeating it per row there would be redundant -- only
+  // the player-name search (which can span many different games) needs
+  // this. See `playerSearchState`'s call site below.
+  showGameContext?: boolean;
+}) {
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Player</TableHead>
           <TableHead>Team</TableHead>
+          {showGameContext && <TableHead>Date</TableHead>}
+          {showGameContext && <TableHead>Result</TableHead>}
           <TableHead className="text-right">Pts</TableHead>
           <TableHead className="text-right">Reb</TableHead>
           <TableHead className="text-right">Ast</TableHead>
@@ -509,6 +529,17 @@ function BoxScoreTable({ rows }: { rows: PlayerStatRow[] }) {
               </div>
             </TableCell>
             <TableCell className="text-muted-foreground">{row.team}</TableCell>
+            {showGameContext && (
+              <TableCell className="whitespace-nowrap text-muted-foreground">
+                {formatGameDate(row.game_date)}
+              </TableCell>
+            )}
+            {showGameContext && (
+              <TableCell className="whitespace-nowrap text-muted-foreground">
+                {row.away_team} {displayScore(row.away_score)} @ {row.home_team}{" "}
+                {displayScore(row.home_score)}
+              </TableCell>
+            )}
             <TableCell className="text-right font-mono tabular-nums">
               {row.points}
             </TableCell>
@@ -1482,7 +1513,7 @@ export default function ExplorerPage() {
 
             {playerSearchState.status === "loaded" &&
               playerSearchState.result.data.length > 0 && (
-                <BoxScoreTable rows={playerSearchState.result.data} />
+                <BoxScoreTable rows={playerSearchState.result.data} showGameContext />
               )}
           </section>
         )}

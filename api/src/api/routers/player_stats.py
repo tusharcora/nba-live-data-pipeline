@@ -8,11 +8,14 @@ SQLAlchemy Core (`Table(..., autoload_with=engine)`) rather than adding a new
 ORM model, and pushes all DB access behind a small `PlayerStatsReader` DI
 seam so the route can be tested with a fake reader and no live Postgres.
 
-IMPORTANT: `player_game_stats` has zero rows in real Postgres today — a
-separate Week 5 team is still building the ingestion path that populates it.
-That's expected, not a bug this router needs to work around: an empty result
-set is a normal `{"data": [], "count": 0}` 200 response, not an error (see
-`test_list_player_stats_empty_result_is_a_normal_200` in
+Each row also carries its game's `game_date`, `home_team`, `away_team`,
+`home_score`, and `away_score` (joined in from the Gold `games` table) —
+without this, a player-name search spanning many games would have no way
+to tell which game each stat line belongs to.
+
+An empty result set (e.g. a name with no matches, or before the backfill
+covers a given era) is a normal `{"data": [], "count": 0}` 200 response,
+not an error (see `test_list_player_stats_empty_result_is_a_normal_200` in
 `api/tests/test_player_stats.py`).
 """
 
@@ -62,6 +65,13 @@ class SQLAlchemyPlayerStatsReader:
     per query (a handful of players per game, or matches on a name) that a
     `DEFAULT_LIMIT`-style cap isn't needed the way `/games`'s unfiltered
     case needs one.
+
+    Joined against the Gold `games` table (inner join -- every real
+    `player_game_stats` row's `game_id` always has a matching `games` row
+    by construction, from either source's ingestion path) to carry each
+    row's `game_date`/`home_team`/`away_team`/`home_score`/`away_score`
+    alongside the player's own stat line, so a player-name search spanning
+    many games shows which game each line came from.
     """
 
     def __init__(self, engine: Engine | None = None) -> None:
@@ -70,8 +80,20 @@ class SQLAlchemyPlayerStatsReader:
     def list_player_stats(self, game_id: int | None, player_name: str | None) -> list[dict]:
         metadata = MetaData()
         player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
+        games = Table("games", metadata, autoload_with=self._engine)
 
-        stmt = select(player_game_stats).order_by(player_game_stats.c.stat_id.desc())
+        stmt = (
+            select(
+                player_game_stats,
+                games.c.game_date,
+                games.c.home_team,
+                games.c.away_team,
+                games.c.home_score,
+                games.c.away_score,
+            )
+            .join(games, player_game_stats.c.game_id == games.c.game_id)
+            .order_by(player_game_stats.c.stat_id.desc())
+        )
         if game_id is not None:
             stmt = stmt.where(player_game_stats.c.game_id == game_id)
         if player_name is not None:

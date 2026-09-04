@@ -59,6 +59,11 @@ FAKE_STATS = [
         "blocks": 0,
         "turnovers": 3,
         "minutes_played": "36:12",
+        "game_date": "2024-01-03",
+        "home_team": "Los Angeles Lakers",
+        "away_team": "Boston Celtics",
+        "home_score": 112,
+        "away_score": 118,
     },
     {
         "stat_id": 2,
@@ -74,6 +79,11 @@ FAKE_STATS = [
         "blocks": 1,
         "turnovers": 2,
         "minutes_played": "38:45",
+        "game_date": "2024-01-03",
+        "home_team": "Los Angeles Lakers",
+        "away_team": "Boston Celtics",
+        "home_score": 112,
+        "away_score": 118,
     },
     {
         "stat_id": 3,
@@ -89,6 +99,11 @@ FAKE_STATS = [
         "blocks": 1,
         "turnovers": 1,
         "minutes_played": "34:02",
+        "game_date": "2024-01-05",
+        "home_team": "Golden State Warriors",
+        "away_team": "Los Angeles Lakers",
+        "home_score": 101,
+        "away_score": 109,
     },
 ]
 
@@ -157,6 +172,30 @@ def test_list_player_stats_filters_by_player_name_case_insensitive_partial(clien
     assert body["count"] == 2
     assert {row["stat_id"] for row in body["data"]} == {"1", "3"}
     assert reader.received_player_name == "lebron"
+
+
+def test_list_player_stats_includes_game_date_and_result_per_row(client):
+    """A player-name search can span many different games -- each row must
+    carry enough game context (date, matchup, final score) on its own to
+    tell them apart, since the two LeBron rows here belong to two different
+    games against two different opponents."""
+    reader = FakePlayerStatsReader(FAKE_STATS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/player-stats/", params={"player_name": "lebron"}, headers={"X-API-Key": API_KEY}
+    )
+
+    assert resp.status_code == 200
+    rows_by_stat_id = {row["stat_id"]: row for row in resp.json()["data"]}
+    assert rows_by_stat_id["1"]["game_date"] == "2024-01-03"
+    assert rows_by_stat_id["1"]["home_team"] == "Los Angeles Lakers"
+    assert rows_by_stat_id["1"]["away_team"] == "Boston Celtics"
+    assert rows_by_stat_id["1"]["home_score"] == 112
+    assert rows_by_stat_id["1"]["away_score"] == 118
+    assert rows_by_stat_id["3"]["game_date"] == "2024-01-05"
+    assert rows_by_stat_id["3"]["home_team"] == "Golden State Warriors"
+    assert rows_by_stat_id["3"]["away_team"] == "Los Angeles Lakers"
 
 
 def test_list_player_stats_player_name_matches_partial_substring(client):
