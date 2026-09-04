@@ -15,12 +15,13 @@ API_KEY = "test-service-key"
 class FakeGamesReader:
     """Test double for the games-reader DI seam (`GamesReader` protocol).
 
-    Records the `filter_date`/`start_date`/`end_date` it was called with so
-    tests can assert the route passes the parsed query params through
-    correctly, and applies the same date-equality/range filtering a real SQL
-    `WHERE` clause would, so the filter tests exercise real route behavior
-    rather than a pre-filtered fixture. Also counts calls so cache tests can
-    prove a hit skips this reader entirely.
+    Records the `filter_date`/`start_date`/`end_date`/`game_id`/`team_names`
+    it was called with so tests can assert the route passes the parsed
+    query params through correctly, and applies the same
+    date-equality/range/id/team-membership filtering a real SQL `WHERE`
+    clause would, so the filter tests exercise real route behavior rather
+    than a pre-filtered fixture. Also counts calls so cache tests can prove
+    a hit skips this reader entirely.
     """
 
     def __init__(self, rows: list[dict]) -> None:
@@ -28,6 +29,8 @@ class FakeGamesReader:
         self.received_filter_date: date | None | str = "not-called"
         self.received_start_date: date | None | str = "not-called"
         self.received_end_date: date | None | str = "not-called"
+        self.received_game_id: int | None | str = "not-called"
+        self.received_team_names: list[str] | None | str = "not-called"
         self.call_count = 0
 
     def list_games(
@@ -35,24 +38,34 @@ class FakeGamesReader:
         filter_date: date | None,
         start_date: date | None = None,
         end_date: date | None = None,
+        game_id: int | None = None,
+        team_names: list[str] | None = None,
     ) -> list[dict]:
         self.call_count += 1
         self.received_filter_date = filter_date
         self.received_start_date = start_date
         self.received_end_date = end_date
+        self.received_game_id = game_id
+        self.received_team_names = team_names
 
+        rows = self.rows
         if filter_date is not None:
-            return [row for row in self.rows if row["game_date"] == filter_date]
-
-        if start_date is not None or end_date is not None:
-            rows = self.rows
+            rows = [row for row in rows if row["game_date"] == filter_date]
+        elif start_date is not None or end_date is not None:
             if start_date is not None:
                 rows = [row for row in rows if row["game_date"] >= start_date]
             if end_date is not None:
                 rows = [row for row in rows if row["game_date"] <= end_date]
-            return rows
 
-        return self.rows
+        if game_id is not None:
+            rows = [row for row in rows if row["game_id"] == game_id]
+        if team_names:
+            rows = [
+                row
+                for row in rows
+                if row["home_team"] in team_names or row["away_team"] in team_names
+            ]
+        return rows
 
 
 FAKE_ROWS = [
@@ -122,6 +135,45 @@ def test_list_games_filters_by_date_query_param(client):
     assert body["count"] == 1
     assert body["data"][0]["game_id"] == 2
     assert reader.received_filter_date == date(2026, 1, 1)
+
+
+def test_list_games_filters_by_game_id(client):
+    """The game detail page's lookup -- an exact match, independent of any
+    date filter."""
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/", params={"game_id": 2}, headers={"X-API-Key": API_KEY}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["data"][0]["home_team"] == "Warriors"
+    assert reader.received_game_id == 2
+
+
+def test_list_games_filters_by_team_matches_home_or_away(client):
+    """The team detail page's lookup -- matches whichever side (home or
+    away) the team played on, and accepts multiple repeated `team` values
+    for a franchise's historical name variants."""
+    reader = FakeGamesReader(FAKE_ROWS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/games/",
+        params={"team": ["Lakers", "Suns"]},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Row 1 (Lakers home) matches via "Lakers"; row 2 (Suns away) matches
+    # via "Suns" -- both real matches, not both matching the same name.
+    assert body["count"] == 2
+    assert {row["game_id"] for row in body["data"]} == {1, 2}
+    assert reader.received_team_names == ["Lakers", "Suns"]
 
 
 def test_list_games_rejects_malformed_date(client):

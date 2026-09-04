@@ -66,6 +66,8 @@ class _CountingGamesReader:
         filter_date: date | None,
         start_date: date | None = None,
         end_date: date | None = None,
+        game_id: int | None = None,
+        team_names: list[str] | None = None,
     ) -> list[dict]:
         self.calls.append(filter_date)
         return []

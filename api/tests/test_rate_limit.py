@@ -26,7 +26,7 @@ RATE_LIMIT_TEST_API_KEY = "test-rate-limit-key"
 
 
 class _EmptyGamesReader:
-    def list_games(self, filter_date, start_date=None, end_date=None):
+    def list_games(self, filter_date, start_date=None, end_date=None, game_id=None, team_names=None):
         return []
 
 

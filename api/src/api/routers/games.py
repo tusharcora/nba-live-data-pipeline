@@ -16,7 +16,7 @@ from datetime import date as date_type
 from typing import Protocol, runtime_checkable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import MetaData, Table, select
+from sqlalchemy import MetaData, Table, or_, select
 from sqlalchemy.engine import Engine
 
 from api.core.cache import cached_json
@@ -45,6 +45,8 @@ class GamesReader(Protocol):
         filter_date: date_type | None,
         start_date: date_type | None = None,
         end_date: date_type | None = None,
+        game_id: int | None = None,
+        team_names: list[str] | None = None,
     ) -> list[dict]: ...
 
 
@@ -63,6 +65,17 @@ class SQLAlchemyGamesReader:
     them is a 400 before it reaches this reader — see the route docstring),
     so `filter_date` always takes priority here as a defensive fallback
     only.
+
+    `game_id` and `team_names` are independent, composable filters (ANDed
+    with whichever date filter is also active, and with each other) rather
+    than another mutually-exclusive mode -- `game_id` is an exact-identity
+    lookup (the game detail page), `team_names` matches `home_team` OR
+    `away_team` against any of the given values (the team detail page,
+    which passes every historical full-name variant for one franchise --
+    e.g. both "New Jersey Nets" and "Brooklyn Nets" -- since this table
+    has no team-id column to key on directly; see
+    `lib/box-score.tsx`'s `TEAM_NAME_TO_ABBREVIATION` for why a team can
+    have more than one).
     """
 
     DEFAULT_LIMIT = 20
@@ -75,19 +88,32 @@ class SQLAlchemyGamesReader:
         filter_date: date_type | None,
         start_date: date_type | None = None,
         end_date: date_type | None = None,
+        game_id: int | None = None,
+        team_names: list[str] | None = None,
     ) -> list[dict]:
         metadata = MetaData()
         games = Table("games", metadata, autoload_with=self._engine)
 
         stmt = select(games).order_by(games.c.game_date.desc(), games.c.game_id.desc())
+        has_date_filter = False
         if filter_date is not None:
             stmt = stmt.where(games.c.game_date == filter_date)
+            has_date_filter = True
         elif start_date is not None or end_date is not None:
             if start_date is not None:
                 stmt = stmt.where(games.c.game_date >= start_date)
             if end_date is not None:
                 stmt = stmt.where(games.c.game_date <= end_date)
-        else:
+            has_date_filter = True
+
+        if game_id is not None:
+            stmt = stmt.where(games.c.game_id == game_id)
+        if team_names:
+            stmt = stmt.where(
+                or_(games.c.home_team.in_(team_names), games.c.away_team.in_(team_names))
+            )
+
+        if not has_date_filter and game_id is None and not team_names:
             stmt = stmt.limit(self.DEFAULT_LIMIT)
 
         with self._engine.connect() as conn:
@@ -133,6 +159,16 @@ def list_games(
         description="Filter to games on or before this date, YYYY-MM-DD. "
         "Mutually exclusive with `date`.",
     ),
+    game_id: int | None = Query(
+        default=None, description="Filter to an exact game_id (the game detail page)."
+    ),
+    team: list[str] | None = Query(
+        default=None,
+        description="Filter to games where home_team or away_team matches any of the "
+        "given full team names (repeat the param for a team's multiple historical "
+        "names, e.g. ?team=New+Jersey+Nets&team=Brooklyn+Nets). Composable with the "
+        "date filters and game_id.",
+    ),
     reader: GamesReader = Depends(get_games_reader),
 ) -> dict:
     """Reconciled games from Gold (docs/prd.md §06, §11).
@@ -141,8 +177,15 @@ def list_games(
     - `?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` — return every game with
       `game_date` in that inclusive range. Either bound may be omitted for
       an open-ended range (e.g. `?start_date=...` alone means "on or after").
-    - No params — return the most recent 20 games, ordered by `game_date`
-      descending (see `SQLAlchemyGamesReader.DEFAULT_LIMIT`).
+    - `?game_id=<int>` — return the one game with that id (the game detail
+      page's lookup).
+    - `?team=<name>` (repeatable) — return every game where either side
+      matches any given full team name (the team detail page's lookup —
+      pass every historical name variant for one franchise).
+    - No params at all — return the most recent 20 games, ordered by
+      `game_date` descending (see `SQLAlchemyGamesReader.DEFAULT_LIMIT`).
+      Any filter above (date, game_id, or team) disables this default
+      limit, composing with whichever others are also present.
 
     `date` and `start_date`/`end_date` are two distinct, mutually exclusive
     filter modes: combining `date` with either range bound is a 400 rather
@@ -150,7 +193,8 @@ def list_games(
     precedence rule). `start_date > end_date` is also a 400 — treated as a
     caller-side bug (bad date arithmetic) worth surfacing loudly rather than
     quietly returning an empty result that could be mistaken for "no games
-    on those dates".
+    on those dates". `game_id` and `team` carry no such restriction — they
+    compose with the date filters and with each other.
 
     Response shape:
         {"data": [<game row as a dict, Gold `games` columns>, ...], "count": <int>}
@@ -175,16 +219,22 @@ def list_games(
         )
 
     def _compute() -> dict:
-        rows = reader.list_games(filter_date, parsed_start_date, parsed_end_date)
+        rows = reader.list_games(
+            filter_date, parsed_start_date, parsed_end_date, game_id, team
+        )
         return {"data": rows, "count": len(rows)}
 
     # Cache key incorporates every filter param's raw value (not just "some
-    # filter is set") so single-date, range, and unfiltered/"recent"
-    # responses never collide in the cache.
+    # filter is set") so single-date, range, game_id, team, and
+    # unfiltered/"recent" responses never collide in the cache.
     if date is not None:
         cache_key = f"games:{date}"
     elif start_date is not None or end_date is not None:
         cache_key = f"games:range:{start_date or ''}:{end_date or ''}"
+    elif game_id is not None:
+        cache_key = f"games:game_id:{game_id}"
+    elif team:
+        cache_key = f"games:team:{','.join(sorted(team))}"
     else:
         cache_key = "games:recent"
     return cached_json(cache_key, CACHE_TTL_SECONDS, _compute)
