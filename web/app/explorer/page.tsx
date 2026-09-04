@@ -39,6 +39,9 @@ import {
   BoxScoreTable,
   displayScore,
   formatGameDate,
+  scoreColorClass,
+  TeamLogo,
+  teamLogoUrlFromName,
   type PlayerStatRow,
 } from "@/lib/box-score";
 import { cn } from "@/lib/utils";
@@ -730,16 +733,42 @@ function GameComparisonCard({ game }: { game: GameRow }) {
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5 font-mono text-sm text-foreground">
+        <div className="flex flex-col gap-1.5 font-mono text-sm">
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate">{game.away_team}</span>
-            <span className="text-lg font-semibold tabular-nums">
+            <span
+              className={cn(
+                "flex min-w-0 items-center gap-1.5 truncate",
+                scoreColorClass(game.away_score, game.home_score)
+              )}
+            >
+              <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
+              <span className="truncate">{game.away_team}</span>
+            </span>
+            <span
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                scoreColorClass(game.away_score, game.home_score)
+              )}
+            >
               {displayScore(game.away_score)}
             </span>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate">{game.home_team}</span>
-            <span className="text-lg font-semibold tabular-nums">
+            <span
+              className={cn(
+                "flex min-w-0 items-center gap-1.5 truncate",
+                scoreColorClass(game.home_score, game.away_score)
+              )}
+            >
+              <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
+              <span className="truncate">{game.home_team}</span>
+            </span>
+            <span
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                scoreColorClass(game.home_score, game.away_score)
+              )}
+            >
               {displayScore(game.home_score)}
             </span>
           </div>
@@ -888,14 +917,30 @@ function GameCard({
 
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm text-foreground">
-            <span>{game.away_team}</span>
-            <span className="text-lg font-semibold tabular-nums">
+          <div className="flex flex-wrap items-baseline gap-2 font-mono text-sm">
+            <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
+            <span className={scoreColorClass(game.away_score, game.home_score)}>
+              {game.away_team}
+            </span>
+            <span
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                scoreColorClass(game.away_score, game.home_score)
+              )}
+            >
               {displayScore(game.away_score)}
             </span>
             <span className="text-muted-foreground">@</span>
-            <span>{game.home_team}</span>
-            <span className="text-lg font-semibold tabular-nums">
+            <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
+            <span className={scoreColorClass(game.home_score, game.away_score)}>
+              {game.home_team}
+            </span>
+            <span
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                scoreColorClass(game.home_score, game.away_score)
+              )}
+            >
               {displayScore(game.home_score)}
             </span>
           </div>
