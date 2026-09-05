@@ -4,8 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 
 import { cn } from "@/lib/utils";
 import { SEQUENTIAL_SHORTCUTS, useKeyboardShortcuts } from "@/lib/use-keyboard-shortcuts";
-
-import { FOCUS_RING } from "./site-nav";
+import { FOCUS_RING } from "@/lib/focus-ring";
 
 const KBD_CLASS =
   "inline-flex min-w-6 items-center justify-center rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-medium text-foreground";

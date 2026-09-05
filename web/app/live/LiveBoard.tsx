@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isLiveStatus } from "@/lib/live-status";
 
 /**
  * Defensive, loosely-typed shape for a single game state entry pushed by the
@@ -114,7 +115,7 @@ function prettifyStatus(status?: string): string {
 function getStatusPresentation(status?: string): StatusPresentation {
   const normalized = (status ?? "").toUpperCase();
 
-  if (normalized.includes("IN_PROGRESS") || normalized.includes("HALFTIME")) {
+  if (isLiveStatus(status)) {
     return { kind: "live", label: "LIVE" };
   }
   if (normalized.includes("FINAL")) {
@@ -151,11 +152,11 @@ function GameStatusBadge({ status }: { status?: string }) {
     return (
       <Badge
         variant="secondary"
-        className="gap-1.5 border-transparent bg-accent text-accent-foreground"
+        className="gap-1.5 border-transparent bg-primary text-primary-foreground"
       >
         <span aria-hidden="true" className="relative flex size-1.5">
-          <span className="absolute inline-flex size-full rounded-full bg-accent-foreground/70 motion-safe:animate-ping" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-accent-foreground" />
+          <span className="absolute inline-flex size-full rounded-full bg-primary-foreground/70 motion-safe:animate-ping" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
         </span>
         {presentation.label}
       </Badge>

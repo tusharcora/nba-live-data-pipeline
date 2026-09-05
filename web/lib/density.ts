@@ -1,7 +1,16 @@
-"use client";
-
 /**
  * Comfortable/compact information-density preference.
+ *
+ * Deliberately NOT marked "use client": this is a plain utility module
+ * (browser-global access already guarded by typeof checks, same as
+ * lib/local-store.ts), and app/layout.tsx (a Server Component) imports
+ * DENSITY_STORAGE_KEY directly. The reactive `useDensity()` hook -- the
+ * one piece that actually needs a client component -- lives in
+ * `lib/use-density.ts` instead: a file that imports `useState`/`useEffect`
+ * can't be imported into a Server Component's module graph AT ALL (Next.js
+ * enforces this at the whole-file level, not per-export), even if none of
+ * the server code actually calls the hook. Splitting it out is what lets
+ * layout.tsx import the plain constants/functions below directly.
  *
  * This is the module a sibling task's command palette should import to
  * wire up a "Toggle density" command:
@@ -17,8 +26,6 @@
  * cards and tables (see the "Density tokens" section of that file).
  */
 
-import { useEffect, useState } from "react";
-
 import { get, set } from "@/lib/local-store";
 
 export type Density = "comfortable" | "compact";
@@ -26,9 +33,11 @@ export type Density = "comfortable" | "compact";
 export const DENSITY_STORAGE_KEY = "nba-pipeline:density";
 export const DEFAULT_DENSITY: Density = "comfortable";
 
-const DENSITY_CHANGE_EVENT = "nba-pipeline:density-change";
+// Exported so lib/use-density.ts's hook can listen for changes made via
+// setDensity()/toggleDensity() from anywhere else in the app.
+export const DENSITY_CHANGE_EVENT = "nba-pipeline:density-change";
 
-function isDensity(value: unknown): value is Density {
+export function isDensity(value: unknown): value is Density {
   return value === "comfortable" || value === "compact";
 }
 
@@ -75,29 +84,4 @@ export function toggleDensity(): Density {
  */
 export function initDensity(): void {
   applyDensityAttribute(getDensity());
-}
-
-/**
- * React hook for components that need to reactively read (and optionally
- * set) the current density, e.g. a settings toggle switch that should
- * reflect changes made elsewhere (a keyboard shortcut, the command
- * palette). Not required for reading/writing density from a one-off
- * event handler — use `getDensity`/`setDensity`/`toggleDensity` directly
- * for that.
- */
-export function useDensity(): [Density, (next: Density) => void] {
-  const [density, setDensityState] = useState<Density>(() => getDensity());
-
-  useEffect(() => {
-    function handleChange(event: Event) {
-      const detail = (event as CustomEvent<Density>).detail;
-      if (isDensity(detail)) {
-        setDensityState(detail);
-      }
-    }
-    window.addEventListener(DENSITY_CHANGE_EVENT, handleChange);
-    return () => window.removeEventListener(DENSITY_CHANGE_EVENT, handleChange);
-  }, []);
-
-  return [density, setDensity];
 }

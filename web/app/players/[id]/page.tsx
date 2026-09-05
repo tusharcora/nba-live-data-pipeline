@@ -9,8 +9,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  average,
   BoxScoreTable,
+  formatAverage,
   formatGameDate,
+  parseMinutesPlayed,
   playerHeadshotUrl,
   TeamLogo,
   teamLogoUrlFromAbbreviation,
@@ -25,30 +28,6 @@ type FetchState =
   | { status: "loaded"; rows: PlayerStatRow[] };
 
 const FETCH_ERROR = "Couldn't reach the player stats service. Try refreshing the page.";
-
-/** Parses `minutes_played` (a display string, e.g. "34" -- already rounded
- * to a whole minute, see stg_player_game_stats*.sql) back to a number for
- * averaging. Null/unparseable rows are excluded from both the sum and the
- * count, same as every other stat here. */
-function parseMinutes(minutesPlayed: string | null): number | null {
-  if (minutesPlayed === null) return null;
-  const value = Number(minutesPlayed);
-  return Number.isFinite(value) ? value : null;
-}
-
-/** Average of a stat across every row where it's non-null (a DNP/inactive
- * row has null stats -- see stg_player_game_stats_nba.sql's header -- and
- * must not be averaged in as a zero, which would understate real per-game
- * production). Returns null if no row has that stat at all. */
-function average(values: (number | null)[]): number | null {
-  const real = values.filter((v): v is number => v !== null);
-  if (real.length === 0) return null;
-  return real.reduce((sum, v) => sum + v, 0) / real.length;
-}
-
-function formatAverage(value: number | null): string {
-  return value === null ? "–" : value.toFixed(1);
-}
 
 /** One row per team the player has a stat line for, spanning the earliest
  * to latest game found for that team's abbreviation, sorted by when that
@@ -132,7 +111,7 @@ export default function PlayerPage({
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
       <Link
         href="/explorer"
-        className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground hover:underline"
+        className="-mx-2 -my-1 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <ArrowLeft aria-hidden="true" className="size-4" />
         Back to Historical Explorer
@@ -194,7 +173,7 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
     steals: average(rows.map((r) => r.steals)),
     blocks: average(rows.map((r) => r.blocks)),
     turnovers: average(rows.map((r) => r.turnovers)),
-    minutes: average(rows.map((r) => parseMinutes(r.minutes_played))),
+    minutes: average(rows.map((r) => parseMinutesPlayed(r.minutes_played))),
   };
 
   return (
@@ -260,8 +239,10 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
             {teamTenure.map((stint) => (
               <li key={stint.team} className="flex items-center gap-2 text-sm">
                 <TeamLogo src={teamLogoUrlFromAbbreviation(stint.team)} alt="" />
-                <span className="font-medium text-foreground">{stint.team}</span>
-                <span className="text-muted-foreground">
+                <span className="font-geist-mono font-medium text-foreground">
+                  {stint.team}
+                </span>
+                <span className="font-geist-mono text-muted-foreground">
                   {formatGameDate(stint.firstGame)} – {formatGameDate(stint.lastGame)} (
                   {stint.games} game{stint.games === 1 ? "" : "s"})
                 </span>

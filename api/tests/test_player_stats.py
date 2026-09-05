@@ -24,12 +24,12 @@ class FakePlayerStatsReader:
     def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
         self.call_count = 0
-        self.received_game_id: int | None | str = "not-called"
+        self.received_game_id: list[int] | None | str = "not-called"
         self.received_player_name: str | None | str = "not-called"
         self.received_player_id: int | None | str = "not-called"
 
     def list_player_stats(
-        self, game_id: int | None, player_name: str | None, player_id: int | None = None
+        self, game_id: list[int] | None, player_name: str | None, player_id: int | None = None
     ) -> list[dict]:
         self.call_count += 1
         self.received_game_id = game_id
@@ -37,8 +37,8 @@ class FakePlayerStatsReader:
         self.received_player_id = player_id
 
         rows = self.rows
-        if game_id is not None:
-            rows = [row for row in rows if row["game_id"] == game_id]
+        if game_id:
+            rows = [row for row in rows if row["game_id"] in game_id]
         if player_id is not None:
             rows = [row for row in rows if row["player_id"] == player_id]
         if player_name is not None:
@@ -163,7 +163,27 @@ def test_list_player_stats_filters_by_game_id(client):
     body = resp.json()
     assert body["count"] == 2
     assert {row["stat_id"] for row in body["data"]} == {"1", "2"}
-    assert reader.received_game_id == 100
+    assert reader.received_game_id == [100]
+
+
+def test_list_player_stats_filters_by_multiple_game_ids(client):
+    """The team detail page's roster view passes every game_id in a season
+    as repeated `?game_id=` params -- proves that shape returns the union
+    across all of them, not just the last one."""
+    reader = FakePlayerStatsReader(FAKE_STATS)
+    _override_reader(reader)
+
+    resp = client.get(
+        "/player-stats/",
+        params={"game_id": [100, 101]},
+        headers={"X-API-Key": API_KEY},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 3
+    assert {row["stat_id"] for row in body["data"]} == {"1", "2", "3"}
+    assert reader.received_game_id == [100, 101]
 
 
 def test_list_player_stats_filters_by_player_name_case_insensitive_partial(client):

@@ -2,15 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
 import {
   Activity,
   BarChart3,
   Gauge,
-  Moon,
   Radio,
   Search,
-  Sun,
+  Settings as SettingsIcon,
 } from "lucide-react";
 
 import {
@@ -23,7 +21,8 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { toggleDensity, useDensity } from "@/lib/density";
+import { toggleDensity } from "@/lib/density";
+import { useDensity } from "@/lib/use-density";
 
 // Subset of `GameRow` from `app/explorer/page.tsx` — only the fields this
 // palette actually renders/searches on. Per the shared-data-contract
@@ -48,6 +47,7 @@ const NAV_ITEMS = [
   { href: "/live", label: "Live Board", icon: Radio },
   { href: "/quality", label: "Data Quality Scorecard", icon: BarChart3 },
   { href: "/explorer", label: "Historical Explorer", icon: Search },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 
 /** "YYYY-MM-DD" -> "Jan 5, 2026", parsed as a calendar date (no timezone
@@ -69,13 +69,13 @@ function formatGameDate(dateStr: string): string {
  * Global ⌘K / Ctrl+K command palette, mounted once in `app/layout.tsx` so
  * it's reachable from every page. Three sections:
  *
- * - Navigate: the same destinations as `SiteNav`'s `NAV_LINKS`, plus Home.
- * - Actions: theme toggle (reuses the exact `useTheme()` call from
- *   `theme-toggle.tsx` — same `resolvedTheme`/`setTheme` pair, no new
- *   theme-reading mechanism) and a density toggle, wired to Employee D2's
+ * - Navigate: the app's five pages.
+ * - Actions: a density toggle, wired to Employee D2's
  *   ("keyboard-shortcuts-and-density") `toggleDensity()`/`useDensity()`
  *   from `@/lib/density` (this item started as a disabled stub before
- *   D2's PR merged into this branch — see git history).
+ *   D2's PR merged into this branch — see git history). There's no theme
+ *   toggle here -- this app has no light/dark mode, only the four
+ *   `data-background` neutrals (Settings' own Background control).
  * - Games: fuzzy search over real games, fetched from the existing
  *   `/api/games` BFF route (the same route Explorer's data flows through).
  *   Selecting one navigates to `/explorer?game_id=<id>` — a bare
@@ -91,7 +91,6 @@ function formatGameDate(dateStr: string): string {
  */
 export function CommandPalette() {
   const router = useRouter();
-  const { resolvedTheme, setTheme } = useTheme();
   const [density] = useDensity();
   const [open, setOpen] = useState(false);
   const [gamesState, setGamesState] = useState<GamesFetchState>({
@@ -138,8 +137,6 @@ export function CommandPalette() {
     action();
   }
 
-  const isDark = resolvedTheme === "dark";
-
   return (
     <CommandDialog
       open={open}
@@ -167,15 +164,6 @@ export function CommandPalette() {
         <CommandSeparator />
 
         <CommandGroup heading="Actions">
-          <CommandItem
-            value="toggle theme light dark appearance"
-            onSelect={() =>
-              runAndClose(() => setTheme(isDark ? "light" : "dark"))
-            }
-          >
-            {isDark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-            <span>{isDark ? "Switch to light theme" : "Switch to dark theme"}</span>
-          </CommandItem>
           {/*
             Wired to Employee D2's ("keyboard-shortcuts-and-density")
             `toggleDensity()`/`useDensity()` from `@/lib/density`, merged

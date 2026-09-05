@@ -146,10 +146,31 @@ def backfill_nba_stats_flow(
             f"end_season ({end_season}) must be >= start_season ({start_season})"
         )
 
+    # LeagueGameFinder returns one row per team per game, and
+    # get_games_for_season pairs them up by GAME_ID -- but a real, verified
+    # gap exists in stats.nba.com's own data: a handful of games per season
+    # (5 in 2024-25, mostly the Dec 14, 2024 NBA Cup semifinals played at a
+    # neutral Las Vegas site) come back with only one team's row, never
+    # both. Skipping those here (logged, not silently) keeps this flow's
+    # contract -- "every written game has both teams and both scores" --
+    # honest, rather than writing a half-populated raw_pulls row or letting
+    # the KeyError below crash the whole backfill run on an unrelated date.
     games_by_date: dict[date, list[dict]] = {}
     for season in range(start_season, end_season + 1):
         season_str = f"{season}-{str(season + 1)[-2:]}"
         for game in client.get_games_for_season(season_str):
+            required_fields = ("home_team", "away_team", "home_score", "away_score")
+            missing_fields = [field for field in required_fields if field not in game]
+            if missing_fields:
+                logger.warning(
+                    "backfill_nba_stats_flow: skipping NBA.com game %r on %s -- "
+                    "LeagueGameFinder returned only one team's row (missing %s), "
+                    "not both",
+                    game.get("nba_game_id"),
+                    game.get("game_date"),
+                    ", ".join(missing_fields),
+                )
+                continue
             game_date = date.fromisoformat(game["game_date"])
             games_by_date.setdefault(game_date, []).append(game)
 

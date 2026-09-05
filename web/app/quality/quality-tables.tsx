@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FOCUS_RING } from "@/app/components/site-nav";
+import { FOCUS_RING } from "@/lib/focus-ring";
 import { cn } from "@/lib/utils";
 
 import {
