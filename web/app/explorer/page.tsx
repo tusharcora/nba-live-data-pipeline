@@ -1382,6 +1382,53 @@ export default function ExplorerPage() {
           onDelete={deleteSavedSearch}
         />
 
+        {playerSearchState && (
+          <section aria-label="Player search results" className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium text-foreground">
+              Player stats for &ldquo;{lastSearchedName}&rdquo;
+            </h2>
+
+            {playerSearchState.status === "loading" && (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label="Searching player stats"
+                className="flex flex-col gap-2"
+              >
+                <span className="sr-only">Searching player stats…</span>
+                <Skeleton className="h-10 w-full" aria-hidden="true" />
+                <Skeleton className="h-10 w-full" aria-hidden="true" />
+              </div>
+            )}
+
+            {playerSearchState.status === "error" && (
+              <Alert variant="destructive">
+                <TriangleAlert aria-hidden="true" />
+                <AlertTitle>Couldn&apos;t load player stats</AlertTitle>
+                <AlertDescription>{playerSearchState.message}</AlertDescription>
+              </Alert>
+            )}
+
+            {playerSearchState.status === "loaded" &&
+              playerSearchState.result.data.length === 0 && (
+                <EmptyState
+                  icon={<UserRound aria-hidden="true" className="size-6 text-muted-foreground" />}
+                  title={`No player box scores found for "${lastSearchedName}" yet`}
+                  message="Player-level stats are still being backfilled by the ingestion pipeline — this is expected until that lands, not an error."
+                />
+              )}
+
+            {playerSearchState.status === "loaded" &&
+              playerSearchState.result.data.length > 0 && (
+                <PaginatedPlayerResults
+                  rows={playerSearchState.result.data}
+                  page={playerResultsPage}
+                  onPageChange={setPlayerResultsPage}
+                />
+              )}
+          </section>
+        )}
+
         <section aria-label="Games" className="flex flex-col gap-3">
           <h2 className="text-lg font-medium text-foreground">Games</h2>
 
@@ -1447,53 +1494,6 @@ export default function ExplorerPage() {
 
         {gamesState.status === "loaded" && (
           <GameComparisonSection key={compareResetKey} games={visibleGames} />
-        )}
-
-        {playerSearchState && (
-          <section aria-label="Player search results" className="flex flex-col gap-3">
-            <h2 className="text-lg font-medium text-foreground">
-              Player stats for &ldquo;{lastSearchedName}&rdquo;
-            </h2>
-
-            {playerSearchState.status === "loading" && (
-              <div
-                role="status"
-                aria-live="polite"
-                aria-label="Searching player stats"
-                className="flex flex-col gap-2"
-              >
-                <span className="sr-only">Searching player stats…</span>
-                <Skeleton className="h-10 w-full" aria-hidden="true" />
-                <Skeleton className="h-10 w-full" aria-hidden="true" />
-              </div>
-            )}
-
-            {playerSearchState.status === "error" && (
-              <Alert variant="destructive">
-                <TriangleAlert aria-hidden="true" />
-                <AlertTitle>Couldn&apos;t load player stats</AlertTitle>
-                <AlertDescription>{playerSearchState.message}</AlertDescription>
-              </Alert>
-            )}
-
-            {playerSearchState.status === "loaded" &&
-              playerSearchState.result.data.length === 0 && (
-                <EmptyState
-                  icon={<UserRound aria-hidden="true" className="size-6 text-muted-foreground" />}
-                  title={`No player box scores found for "${lastSearchedName}" yet`}
-                  message="Player-level stats are still being backfilled by the ingestion pipeline — this is expected until that lands, not an error."
-                />
-              )}
-
-            {playerSearchState.status === "loaded" &&
-              playerSearchState.result.data.length > 0 && (
-                <PaginatedPlayerResults
-                  rows={playerSearchState.result.data}
-                  page={playerResultsPage}
-                  onPageChange={setPlayerResultsPage}
-                />
-              )}
-          </section>
         )}
       </main>
     </div>
