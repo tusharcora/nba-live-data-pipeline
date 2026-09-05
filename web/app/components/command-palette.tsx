@@ -23,7 +23,8 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { toggleDensity, useDensity } from "@/lib/density";
+import { toggleDensity } from "@/lib/density";
+import { useDensity } from "@/lib/use-density";
 
 // Subset of `GameRow` from `app/explorer/page.tsx` — only the fields this
 // palette actually renders/searches on. Per the shared-data-contract

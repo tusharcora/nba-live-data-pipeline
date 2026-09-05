@@ -1,6 +1,10 @@
-"use client";
-
 /**
+ * Deliberately NOT marked "use client" -- see lib/density.ts's header for
+ * why (app/layout.tsx, a Server Component, imports constants from this
+ * file directly; the reactive hook lives in `lib/use-text-size.ts`
+ * instead, since a file importing `useState`/`useEffect` can't be
+ * imported into a Server Component's module graph at all).
+ *
  * App-wide text-size preference, mirroring `lib/density.ts`'s exact
  * shape (storage key, DOM-attribute application, change event, hook) --
  * see that file's header for the rationale behind each piece.
@@ -19,8 +23,6 @@
  * original, smaller sizing.
  */
 
-import { useEffect, useState } from "react";
-
 import { get, set } from "@/lib/local-store";
 
 export type TextSize = "normal" | "large" | "larger";
@@ -28,9 +30,11 @@ export type TextSize = "normal" | "large" | "larger";
 export const TEXT_SIZE_STORAGE_KEY = "nba-pipeline:text-size";
 export const DEFAULT_TEXT_SIZE: TextSize = "large";
 
-const TEXT_SIZE_CHANGE_EVENT = "nba-pipeline:text-size-change";
+// Exported so lib/use-text-size.ts's hook can listen for changes made via
+// setTextSize() from anywhere else in the app.
+export const TEXT_SIZE_CHANGE_EVENT = "nba-pipeline:text-size-change";
 
-function isTextSize(value: unknown): value is TextSize {
+export function isTextSize(value: unknown): value is TextSize {
   return value === "normal" || value === "large" || value === "larger";
 }
 
@@ -66,24 +70,4 @@ export function setTextSize(size: TextSize): void {
  */
 export function initTextSize(): void {
   applyTextSizeAttribute(getTextSize());
-}
-
-/** React hook for the settings page's text-size control -- reactively
- * reflects changes made elsewhere (another tab, a future keyboard
- * shortcut), same as `useDensity()`. */
-export function useTextSize(): [TextSize, (next: TextSize) => void] {
-  const [size, setSizeState] = useState<TextSize>(() => getTextSize());
-
-  useEffect(() => {
-    function handleChange(event: Event) {
-      const detail = (event as CustomEvent<TextSize>).detail;
-      if (isTextSize(detail)) {
-        setSizeState(detail);
-      }
-    }
-    window.addEventListener(TEXT_SIZE_CHANGE_EVENT, handleChange);
-    return () => window.removeEventListener(TEXT_SIZE_CHANGE_EVENT, handleChange);
-  }, []);
-
-  return [size, setTextSize];
 }

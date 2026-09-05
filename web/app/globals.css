@@ -7,10 +7,10 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-teko-raw);
-  --font-mono: var(--font-teko-raw);
-  --font-heading: var(--font-teko-raw);
-  --font-geist-mono: var(--font-teko-raw);
+  --font-sans: var(--font-active-raw);
+  --font-mono: var(--font-active-raw);
+  --font-heading: var(--font-active-raw);
+  --font-geist-mono: var(--font-active-raw);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -266,4 +266,48 @@
 
 :root[data-text-size="larger"] {
   --text-scale: 1.25;
+}
+
+/*
+ * Font-family preference, driven by `web/lib/font-choice.ts`. Toggling it
+ * sets `data-font="teko" | "oswald" | "barlow-condensed" | "rajdhani" |
+ * "russo-one" | "ibm-plex-mono" | "space-mono"` on `<html>` (see
+ * `web/app/layout.tsx`'s inline init script) -- every candidate font is
+ * loaded there as its own next/font/google instance/CSS variable
+ * (`--font-<id>-raw`), so all seven @font-face declarations are always
+ * present and switching is instant (no network request).
+ *
+ * `--font-active-raw` is the single indirection point: `--font-sans`/
+ * `--font-mono`/`--font-heading`/`--font-geist-mono` in the @theme block
+ * above all read from it, so redefining it here is enough to retarget
+ * every one of those tokens (and therefore every font-sans/font-mono/
+ * font-geist-mono utility app-wide) without touching the @theme block
+ * itself per font.
+ */
+:root {
+  --font-active-raw: var(--font-teko-raw);
+}
+
+:root[data-font="oswald"] {
+  --font-active-raw: var(--font-oswald-raw);
+}
+
+:root[data-font="barlow-condensed"] {
+  --font-active-raw: var(--font-barlow-condensed-raw);
+}
+
+:root[data-font="rajdhani"] {
+  --font-active-raw: var(--font-rajdhani-raw);
+}
+
+:root[data-font="russo-one"] {
+  --font-active-raw: var(--font-russo-one-raw);
+}
+
+:root[data-font="ibm-plex-mono"] {
+  --font-active-raw: var(--font-ibm-plex-mono-raw);
+}
+
+:root[data-font="space-mono"] {
+  --font-active-raw: var(--font-space-mono-raw);
 }

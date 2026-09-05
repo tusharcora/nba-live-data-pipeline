@@ -1,25 +1,39 @@
 import type { Metadata } from "next";
-import { Teko } from "next/font/google";
+import {
+  Barlow_Condensed,
+  IBM_Plex_Mono,
+  Oswald,
+  Rajdhani,
+  Russo_One,
+  Space_Mono,
+  Teko,
+} from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 import { DENSITY_STORAGE_KEY } from "@/lib/density";
+import { DEFAULT_FONT_CHOICE, FONT_CHOICE_OPTIONS, FONT_CHOICE_STORAGE_KEY } from "@/lib/font-choice";
 import { DEFAULT_TEXT_SIZE, TEXT_SIZE_STORAGE_KEY } from "@/lib/text-size";
 
 import { CommandPalette } from "./components/command-palette";
 import { KeyboardShortcuts } from "./components/keyboard-shortcuts";
 import { SiteNav } from "./components/site-nav";
 
-// Applies a returning visitor's saved density and text-size preferences to
-// <html> before first paint, the same "blocking inline script" technique
-// next-themes itself uses for the `.dark` class just below — otherwise the
-// page would briefly flash comfortable spacing / default text size before
-// the corresponding client component effects run. Duplicates the storage
-// keys and defaults as string literals on purpose: this runs outside the
-// React tree, before any module evaluates, so it can't import from
-// "@/lib/density" or "@/lib/text-size" for the comparisons themselves —
-// the constants are imported above only so the literals below can be
-// templated from them and never drift out of sync.
+// Applies a returning visitor's saved density, text-size, and font
+// preferences to <html> before first paint, the same "blocking inline
+// script" technique next-themes itself uses for the `.dark` class just
+// below — otherwise the page would briefly flash the wrong spacing/text
+// size/font before the corresponding client component effects run.
+// Duplicates the storage keys and defaults as string literals on purpose:
+// this runs outside the React tree, before any module evaluates, so it
+// can't import from "@/lib/density", "@/lib/text-size", or
+// "@/lib/font-choice" for the comparisons themselves — the constants are
+// imported above only so the literals below can be templated from them
+// and never drift out of sync.
+const VALID_FONT_CHOICES_JSON = JSON.stringify(
+  FONT_CHOICE_OPTIONS.map((option) => option.value)
+);
+
 const PREFERENCES_INIT_SCRIPT = `
 (function () {
   try {
@@ -40,17 +54,64 @@ const PREFERENCES_INIT_SCRIPT = `
   } catch (e) {
     document.documentElement.setAttribute("data-text-size", ${JSON.stringify(DEFAULT_TEXT_SIZE)});
   }
+  try {
+    var rawFont = window.localStorage.getItem(${JSON.stringify(FONT_CHOICE_STORAGE_KEY)});
+    var font = rawFont ? JSON.parse(rawFont) : ${JSON.stringify(DEFAULT_FONT_CHOICE)};
+    if (${VALID_FONT_CHOICES_JSON}.indexOf(font) === -1) {
+      font = ${JSON.stringify(DEFAULT_FONT_CHOICE)};
+    }
+    document.documentElement.setAttribute("data-font", font);
+  } catch (e) {
+    document.documentElement.setAttribute("data-font", ${JSON.stringify(DEFAULT_FONT_CHOICE)});
+  }
 })();
 `;
 
-// Every font token this app defines (--font-sans, --font-mono,
-// --font-heading, --font-geist-mono) maps to this single family in
-// globals.css's @theme block -- one font, applied everywhere, rather than
-// the previous three-typeface system (Fira Sans / Fira Code / Geist Mono).
+// Every candidate font for the settings page's font picker is loaded here
+// (each its own next/font/google instance/CSS variable) so every
+// @font-face is always available; globals.css's `[data-font="..."]`
+// blocks then point --font-sans/--font-mono/--font-heading/
+// --font-geist-mono at whichever one is active (see lib/font-choice.ts).
 const teko = Teko({
   variable: "--font-teko-raw",
   subsets: ["latin"],
   weight: ["300", "400", "500", "600", "700"],
+});
+
+const oswald = Oswald({
+  variable: "--font-oswald-raw",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const barlowCondensed = Barlow_Condensed({
+  variable: "--font-barlow-condensed-raw",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+const rajdhani = Rajdhani({
+  variable: "--font-rajdhani-raw",
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const russoOne = Russo_One({
+  variable: "--font-russo-one-raw",
+  subsets: ["latin"],
+  weight: ["400"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-ibm-plex-mono-raw",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+const spaceMono = Space_Mono({
+  variable: "--font-space-mono-raw",
+  subsets: ["latin"],
+  weight: ["400", "700"],
 });
 
 export const metadata: Metadata = {
@@ -63,7 +124,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${teko.variable} h-full antialiased`}
+      className={`${teko.variable} ${oswald.variable} ${barlowCondensed.variable} ${rajdhani.variable} ${russoOne.variable} ${ibmPlexMono.variable} ${spaceMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">

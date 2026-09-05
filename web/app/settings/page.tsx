@@ -6,8 +6,12 @@ import { Laptop, Moon, Sun, Star, Bookmark } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useDensity, type Density } from "@/lib/density";
-import { useTextSize, type TextSize } from "@/lib/text-size";
+import { type Density } from "@/lib/density";
+import { FONT_CHOICE_OPTIONS } from "@/lib/font-choice";
+import { type TextSize } from "@/lib/text-size";
+import { useDensity } from "@/lib/use-density";
+import { useFontChoice } from "@/lib/use-font-choice";
+import { useTextSize } from "@/lib/use-text-size";
 import * as localStore from "@/lib/local-store";
 import { FAVORITE_TEAMS_KEY, SAVED_SEARCHES_KEY } from "@/app/explorer/page";
 
@@ -81,6 +85,7 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const [textSize, setTextSize] = useTextSize();
   const [density, setDensity] = useDensity();
+  const [fontChoice, setFontChoice] = useFontChoice();
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
@@ -96,7 +101,7 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
           <CardDescription>
-            Theme, text size, and layout density across the whole app.
+            Theme, font, text size, and layout density across the whole app.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -111,6 +116,28 @@ export default function SettingsPage() {
             ) : (
               <div className="h-7 w-64 animate-pulse rounded-lg bg-muted" aria-hidden="true" />
             )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-foreground">Font</span>
+            {hasMounted ? (
+              <select
+                value={fontChoice}
+                onChange={(e) => setFontChoice(e.target.value as typeof fontChoice)}
+                className="h-8 w-fit rounded-lg border border-border bg-background px-2.5 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {FONT_CHOICE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="h-8 w-40 animate-pulse rounded-lg bg-muted" aria-hidden="true" />
+            )}
+            <p className="text-xs text-muted-foreground">
+              Every heading, table, and label app-wide switches to this typeface immediately.
+            </p>
           </div>
 
           <div className="flex flex-col gap-2">
