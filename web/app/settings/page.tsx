@@ -6,9 +6,11 @@ import { Laptop, Moon, Sun, Star, Bookmark } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { BACKGROUND_CHOICE_OPTIONS } from "@/lib/background-choice";
 import { type Density } from "@/lib/density";
 import { FONT_CHOICE_OPTIONS } from "@/lib/font-choice";
 import { type TextSize } from "@/lib/text-size";
+import { useBackgroundChoice } from "@/lib/use-background-choice";
 import { useDensity } from "@/lib/use-density";
 import { useFontChoice } from "@/lib/use-font-choice";
 import { useTextSize } from "@/lib/use-text-size";
@@ -86,6 +88,7 @@ export default function SettingsPage() {
   const [textSize, setTextSize] = useTextSize();
   const [density, setDensity] = useDensity();
   const [fontChoice, setFontChoice] = useFontChoice();
+  const [backgroundChoice, setBackgroundChoice] = useBackgroundChoice();
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
@@ -101,7 +104,7 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
           <CardDescription>
-            Theme, font, text size, and layout density across the whole app.
+            Theme, font, background, text size, and layout density across the whole app.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -137,6 +140,23 @@ export default function SettingsPage() {
             )}
             <p className="text-xs text-muted-foreground">
               Every heading, table, and label app-wide switches to this typeface immediately.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-foreground">Background</span>
+            {hasMounted ? (
+              <SegmentedControl
+                options={BACKGROUND_CHOICE_OPTIONS}
+                value={backgroundChoice}
+                onChange={setBackgroundChoice}
+              />
+            ) : (
+              <div className="h-7 w-72 animate-pulse rounded-lg bg-muted" aria-hidden="true" />
+            )}
+            <p className="text-xs text-muted-foreground">
+              Every card, table, and border re-tints to this neutral. Only affects dark mode --
+              light mode is unaffected.
             </p>
           </div>
 

@@ -12,6 +12,11 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 import { DENSITY_STORAGE_KEY } from "@/lib/density";
+import {
+  BACKGROUND_CHOICE_OPTIONS,
+  BACKGROUND_CHOICE_STORAGE_KEY,
+  DEFAULT_BACKGROUND_CHOICE,
+} from "@/lib/background-choice";
 import { DEFAULT_FONT_CHOICE, FONT_CHOICE_OPTIONS, FONT_CHOICE_STORAGE_KEY } from "@/lib/font-choice";
 import { DEFAULT_TEXT_SIZE, TEXT_SIZE_STORAGE_KEY } from "@/lib/text-size";
 
@@ -19,19 +24,22 @@ import { CommandPalette } from "./components/command-palette";
 import { KeyboardShortcuts } from "./components/keyboard-shortcuts";
 import { SiteNav } from "./components/site-nav";
 
-// Applies a returning visitor's saved density, text-size, and font
-// preferences to <html> before first paint, the same "blocking inline
-// script" technique next-themes itself uses for the `.dark` class just
-// below — otherwise the page would briefly flash the wrong spacing/text
-// size/font before the corresponding client component effects run.
-// Duplicates the storage keys and defaults as string literals on purpose:
-// this runs outside the React tree, before any module evaluates, so it
-// can't import from "@/lib/density", "@/lib/text-size", or
-// "@/lib/font-choice" for the comparisons themselves — the constants are
-// imported above only so the literals below can be templated from them
-// and never drift out of sync.
+// Applies a returning visitor's saved density, text-size, font, and
+// background preferences to <html> before first paint, the same "blocking
+// inline script" technique next-themes itself uses for the `.dark` class
+// just below — otherwise the page would briefly flash the wrong spacing/
+// text size/font/background before the corresponding client component
+// effects run. Duplicates the storage keys and defaults as string literals
+// on purpose: this runs outside the React tree, before any module
+// evaluates, so it can't import from "@/lib/density", "@/lib/text-size",
+// "@/lib/font-choice", or "@/lib/background-choice" for the comparisons
+// themselves — the constants are imported above only so the literals below
+// can be templated from them and never drift out of sync.
 const VALID_FONT_CHOICES_JSON = JSON.stringify(
   FONT_CHOICE_OPTIONS.map((option) => option.value)
+);
+const VALID_BACKGROUND_CHOICES_JSON = JSON.stringify(
+  BACKGROUND_CHOICE_OPTIONS.map((option) => option.value)
 );
 
 const PREFERENCES_INIT_SCRIPT = `
@@ -63,6 +71,16 @@ const PREFERENCES_INIT_SCRIPT = `
     document.documentElement.setAttribute("data-font", font);
   } catch (e) {
     document.documentElement.setAttribute("data-font", ${JSON.stringify(DEFAULT_FONT_CHOICE)});
+  }
+  try {
+    var rawBackground = window.localStorage.getItem(${JSON.stringify(BACKGROUND_CHOICE_STORAGE_KEY)});
+    var background = rawBackground ? JSON.parse(rawBackground) : ${JSON.stringify(DEFAULT_BACKGROUND_CHOICE)};
+    if (${VALID_BACKGROUND_CHOICES_JSON}.indexOf(background) === -1) {
+      background = ${JSON.stringify(DEFAULT_BACKGROUND_CHOICE)};
+    }
+    document.documentElement.setAttribute("data-background", background);
+  } catch (e) {
+    document.documentElement.setAttribute("data-background", ${JSON.stringify(DEFAULT_BACKGROUND_CHOICE)});
   }
 })();
 `;
