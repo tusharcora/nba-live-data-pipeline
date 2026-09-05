@@ -68,11 +68,14 @@ def upgrade() -> None:
     # serve. Never raw_pulls, never write privileges of any kind.
     op.execute(f"GRANT SELECT ON {', '.join(_READER_TABLES)} TO api_reader")
 
-    # Once dbt's Gold marts (games, player_game_stats) are created by the `nba`
-    # superuser role, this makes them automatically readable by api_reader with
-    # no further migration needed.
+    # Once dbt's Gold marts (games, player_game_stats) are created by whichever
+    # admin role runs `dbt run` (the same one running this migration — `nba`
+    # locally, `postgres` on Supabase), this makes them automatically readable
+    # by api_reader with no further migration needed. Omitting "FOR ROLE" makes
+    # this default to the current session user instead of hardcoding one, so it
+    # stays correct across environments.
     op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE nba IN SCHEMA public "
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         "GRANT SELECT ON TABLES TO api_reader"
     )
 
@@ -80,7 +83,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revoke grants and drop both roles."""
     op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE nba IN SCHEMA public "
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         "REVOKE SELECT ON TABLES FROM api_reader"
     )
     op.execute(f"REVOKE SELECT ON {', '.join(_READER_TABLES)} FROM api_reader")

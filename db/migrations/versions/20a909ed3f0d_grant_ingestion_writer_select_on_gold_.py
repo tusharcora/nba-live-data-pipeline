@@ -33,10 +33,21 @@ def upgrade() -> None:
     flow to ever read dbt-owned output rather than only writing Bronze.
     Discovered live: `permission denied for table games` when running the
     new flow for real against a live Postgres.
+
+    The explicit GRANT is guarded with to_regclass() because on a brand-new
+    environment (e.g. Supabase) this migration can run before `dbt run` has
+    ever created these tables -- ALTER DEFAULT PRIVILEGES below still covers
+    them once dbt does create them.
     """
-    op.execute(f"GRANT SELECT ON {', '.join(_EXISTING_GOLD_TABLES)} TO ingestion_writer")
+    for table in _EXISTING_GOLD_TABLES:
+        op.execute(
+            f"DO $$ BEGIN IF to_regclass('public.{table}') IS NOT NULL THEN "
+            f"GRANT SELECT ON {table} TO ingestion_writer; END IF; END $$"
+        )
+    # "FOR ROLE" omitted so this defaults to the current session user (`nba`
+    # locally, `postgres` on Supabase) instead of hardcoding one.
     op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE nba IN SCHEMA public "
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         "GRANT SELECT ON TABLES TO ingestion_writer"
     )
 
@@ -44,7 +55,11 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revoke ingestion_writer's read access to Gold tables."""
     op.execute(
-        "ALTER DEFAULT PRIVILEGES FOR ROLE nba IN SCHEMA public "
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         "REVOKE SELECT ON TABLES FROM ingestion_writer"
     )
-    op.execute(f"REVOKE SELECT ON {', '.join(_EXISTING_GOLD_TABLES)} FROM ingestion_writer")
+    for table in _EXISTING_GOLD_TABLES:
+        op.execute(
+            f"DO $$ BEGIN IF to_regclass('public.{table}') IS NOT NULL THEN "
+            f"REVOKE SELECT ON {table} FROM ingestion_writer; END IF; END $$"
+        )
