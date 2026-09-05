@@ -130,6 +130,68 @@ def test_backfill_nba_stats_flow_writes_game_and_boxscore_and_advances_checkpoin
     assert checkpoint_store.get_last_pulled_date(CHECKPOINT_FLOW_NAME) == date(1996, 11, 1)
 
 
+def test_backfill_nba_stats_flow_skips_games_missing_a_team_row():
+    """Real, verified gap in stats.nba.com's own data: LeagueGameFinder
+    returns one row per team per game, but a handful of real games per
+    season (5 in 2024-25, mostly the Dec 14, 2024 NBA Cup semifinals played
+    at a neutral Las Vegas site) come back with only one team's row, never
+    both -- get_games_for_season can't pair up a home_team/home_score for
+    those. The flow must skip such a game (not crash the whole backfill,
+    not write a half-populated raw_pulls row), while still processing every
+    other, complete game normally."""
+    sink = FakeSink()
+    checkpoint_store = FakeCheckpointStore()
+    client = FakeNBAGameSource(
+        games_by_season={
+            "2024-25": [
+                {
+                    "game_id": 100_022_400_147,
+                    "nba_game_id": "0022400147",
+                    "game_date": "2024-11-02",
+                    "season": 2024,
+                    "postseason": False,
+                    "status": "Final",
+                    "away_team": "Miami Heat",
+                    "away_score": 118,
+                    # home_team/home_score genuinely absent -- not a typo.
+                },
+                {
+                    "game_id": 100_022_400_148,
+                    "nba_game_id": "0022400148",
+                    "game_date": "2024-11-02",
+                    "season": 2024,
+                    "postseason": False,
+                    "status": "Final",
+                    "home_team": "Boston Celtics",
+                    "home_score": 107,
+                    "away_team": "Chicago Bulls",
+                    "away_score": 98,
+                },
+            ]
+        },
+        boxscores_by_game_id={"0022400148": []},
+    )
+
+    result = backfill_nba_stats_flow(
+        start_season=2024,
+        end_season=2024,
+        sink=sink,
+        checkpoint_store=checkpoint_store,
+        client=client,
+    )
+
+    assert result == {
+        "seasons_processed": 1,
+        "dates_processed": 1,
+        "games_written": 1,
+        "raw_pulls_written": 2,
+    }
+    assert client.requested_boxscore_ids == ["0022400148"]
+    game_pull, _ = sink.written
+    assert game_pull.payload["game_id"] == 100_022_400_148
+    assert checkpoint_store.get_last_pulled_date(CHECKPOINT_FLOW_NAME) == date(2024, 11, 2)
+
+
 def test_backfill_nba_stats_flow_does_not_advance_checkpoint_on_mid_date_failure():
     """A box-score fetch that raises mid-date (simulating a 403/CAPTCHA
     block) must propagate, naming the failing game, and must NOT advance
