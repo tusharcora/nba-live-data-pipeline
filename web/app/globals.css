@@ -382,3 +382,16 @@
 :root[data-font="space-mono"] {
   --font-active-raw: var(--font-space-mono-raw);
 }
+
+/* Homepage recent-games ticker (app/components/recent-games-board.tsx) --
+   a plain, named keyframe rather than an arbitrary inline animation value,
+   since the scroll distance (-50%, exactly half of a list duplicated once
+   for a seamless loop) needs to live somewhere referenceable. */
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
