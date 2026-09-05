@@ -22,7 +22,7 @@
  * renders pages on the server first, where `window`/`localStorage` don't
  * exist, and the value read here on the client after mount will usually
  * differ from whatever a component rendered during SSR) — see
- * `app/components/theme-toggle.tsx`'s `useHasMounted` for the pattern
+ * `app/components/sections/settings-section.tsx`'s `useHasMounted` for the pattern
  * this repo uses to avoid a hydration mismatch when a component's output
  * depends on localStorage-backed state.
  */

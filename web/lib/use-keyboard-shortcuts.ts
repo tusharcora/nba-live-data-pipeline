@@ -31,6 +31,7 @@ export const SEQUENTIAL_SHORTCUTS: SequentialShortcut[] = [
   { key: "l", href: "/live", label: "Live Board" },
   { key: "q", href: "/quality", label: "Data Quality Scorecard" },
   { key: "e", href: "/explorer", label: "Historical Explorer" },
+  { key: "s", href: "/settings", label: "Settings" },
   { key: "h", href: "/", label: "Home" },
 ];
 

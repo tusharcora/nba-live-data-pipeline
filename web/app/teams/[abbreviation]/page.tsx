@@ -210,7 +210,7 @@ function TeamDetail({
           className="size-16 shrink-0 object-contain"
         />
         <div className="flex flex-col gap-1">
-          <h1 className="font-geist-mono text-2xl font-semibold tracking-tight text-foreground">
+          <h1 className="font-bebas-neue-raw text-2xl font-semibold tracking-tight text-foreground">
             {teamName}
           </h1>
           {availableSeasons.length > 0 ? (
@@ -219,7 +219,7 @@ function TeamDetail({
               <select
                 value={selectedSeason ?? ""}
                 onChange={(e) => setManualSeason(Number(e.target.value))}
-                className="h-8 rounded-lg border border-border bg-background px-2 font-geist-mono text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="h-8 rounded-lg border border-border bg-background px-2 font-bebas-neue-raw text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 {availableSeasons.map((season) => (
                   <option key={season} value={season}>

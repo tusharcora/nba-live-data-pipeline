@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-active-raw);
+  --font-sans: var(--font-barlow-body-raw);
   --font-mono: var(--font-active-raw);
   --font-heading: var(--font-active-raw);
   --font-geist-mono: var(--font-active-raw);
@@ -49,43 +49,14 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* There is no light theme -- `.dark` (below) is unconditionally applied
+   to <html> in app/layout.tsx, and the four `data-background` options
+   (lib/background-choice.ts) are the only theme choice this app offers.
+   `:root` carries only the one token every `.dark[data-background="..."]`
+   variant leaves alone: `--radius` isn't a color and was never part of
+   the light/dark distinction. */
 :root {
-  /* Light-mode counterpart derived from MASTER.md's dark-native palette:
-     same navy/green/slate hue relationships, inverted light/dark balance,
-     primary + destructive deepened one step so they still clear 4.5:1 on
-     a white/near-white surface (see PR body for the computed ratios). */
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --card-foreground: #0f172a;
-  --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --primary: #15803d;
-  --primary-foreground: #ffffff;
-  --secondary: #e2e8f0;
-  --secondary-foreground: #1e293b;
-  --muted: #e8ecf1;
-  --muted-foreground: #475569;
-  --accent: #e2e8f0;
-  --accent-foreground: #0f172a;
-  --destructive: #dc2626;
-  --border: #e2e8f0;
-  --input: #e2e8f0;
-  --ring: #15803d;
-  --chart-1: #15803d;
-  --chart-2: #0369a1;
-  --chart-3: #b45309;
-  --chart-4: #dc2626;
-  --chart-5: #475569;
   --radius: 0.625rem;
-  --sidebar: var(--card);
-  --sidebar-foreground: var(--card-foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
 }
 
 .dark {
@@ -116,8 +87,8 @@
   --card-foreground: #f5f5f4;
   --popover: #161616;
   --popover-foreground: #f5f5f4;
-  --primary: #22c55e;
-  --primary-foreground: #0f172a;
+  --primary: #f59e0b;
+  --primary-foreground: #1a1006;
   --secondary: #2e2e2e;
   --secondary-foreground: #ffffff;
   --muted: #232323;
@@ -209,21 +180,7 @@
     @apply bg-background text-foreground;
   }
   html {
-    /*
-     * `SiteNav` is `sticky top-0` (see app/components/site-nav.tsx), so a
-     * browser's default scroll-into-view for a keyboard-focused element
-     * further down the page can otherwise land it right under the pinned
-     * header — WCAG 2.2 SC 2.4.11 "Focus Not Obscured (Minimum)". 4rem
-     * comfortably clears the nav's single-row height (~57px: py-3 padding
-     * + one row of nav-link/icon content + border). On very narrow
-     * viewports the nav can wrap to two rows (see its `flex-wrap`), which
-     * this static value does not fully cover — SC 2.4.11 only requires the
-     * focused element to be *at least partially* visible, which this still
-     * satisfies; full coverage of the wrapped case would need a
-     * JS-measured height and wasn't pursued here to keep this a CSS-only,
-     * low-risk change.
-     */
-    @apply font-sans scroll-pt-16;
+    @apply font-sans;
   }
 }
 
@@ -348,14 +305,26 @@
  * (`--font-<id>-raw`), so all seven @font-face declarations are always
  * present and switching is instant (no network request).
  *
- * `--font-active-raw` is the single indirection point: `--font-sans`/
- * `--font-mono`/`--font-heading`/`--font-geist-mono` in the @theme block
- * above all read from it, so redefining it here is enough to retarget
- * every one of those tokens (and therefore every font-sans/font-mono/
- * font-geist-mono utility app-wide) without touching the @theme block
- * itself per font.
+ * `--font-active-raw` is the single indirection point: `--font-mono`/
+ * `--font-heading`/`--font-geist-mono` in the @theme block above all read
+ * from it, so redefining it here is enough to retarget every one of those
+ * tokens (and therefore every font-mono/font-heading/font-geist-mono
+ * utility app-wide) without touching the @theme block itself per font.
+ * `--font-sans` (body copy) deliberately does NOT read from this -- it's
+ * pinned to the fixed Barlow body face declared in `app/layout.tsx`,
+ * matching the "Four Dark Neutrals" reference's own display/body split
+ * rather than running paragraph text in whichever condensed face is
+ * picked for headings.
+ *
+ * Default is Barlow Condensed (`lib/font-choice.ts`'s
+ * `DEFAULT_FONT_CHOICE`), matching that same reference mockup's headline
+ * face.
  */
 :root {
+  --font-active-raw: var(--font-barlow-condensed-raw);
+}
+
+:root[data-font="teko"] {
   --font-active-raw: var(--font-teko-raw);
 }
 

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import {
+  Barlow,
   Barlow_Condensed,
+  Bebas_Neue,
+  Geist,
   IBM_Plex_Mono,
   Oswald,
   Rajdhani,
@@ -8,7 +11,6 @@ import {
   Space_Mono,
   Teko,
 } from "next/font/google";
-import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 import { DENSITY_STORAGE_KEY } from "@/lib/density";
@@ -22,14 +24,12 @@ import { DEFAULT_TEXT_SIZE, TEXT_SIZE_STORAGE_KEY } from "@/lib/text-size";
 
 import { CommandPalette } from "./components/command-palette";
 import { KeyboardShortcuts } from "./components/keyboard-shortcuts";
-import { SiteNav } from "./components/site-nav";
 
 // Applies a returning visitor's saved density, text-size, font, and
-// background preferences to <html> before first paint, the same "blocking
-// inline script" technique next-themes itself uses for the `.dark` class
-// just below — otherwise the page would briefly flash the wrong spacing/
-// text size/font/background before the corresponding client component
-// effects run. Duplicates the storage keys and defaults as string literals
+// background preferences to <html> before first paint -- a blocking
+// inline script, so it runs before the corresponding client component
+// effects and there's no flash of the wrong spacing/text size/font/
+// background. Duplicates the storage keys and defaults as string literals
 // on purpose: this runs outside the React tree, before any module
 // evaluates, so it can't import from "@/lib/density", "@/lib/text-size",
 // "@/lib/font-choice", or "@/lib/background-choice" for the comparisons
@@ -85,11 +85,41 @@ const PREFERENCES_INIT_SCRIPT = `
 })();
 `;
 
-// Every candidate font for the settings page's font picker is loaded here
-// (each its own next/font/google instance/CSS variable) so every
-// @font-face is always available; globals.css's `[data-font="..."]`
-// blocks then point --font-sans/--font-mono/--font-heading/
-// --font-geist-mono at whichever one is active (see lib/font-choice.ts).
+// Body copy runs on a fixed, always-legible face -- Barlow, paired with
+// whichever condensed display face the font-choice picker has active for
+// headings/mono (globals.css's `[data-font="..."]` blocks point
+// --font-heading/--font-mono/--font-geist-mono at that choice; --font-sans
+// stays pinned to this one). Mirrors the "Four Dark Neutrals" reference
+// mockup's own display/body split (Barlow Condensed headlines, Barlow
+// body) rather than running paragraph text in the same condensed face as
+// section titles.
+const barlow = Barlow({
+  variable: "--font-barlow-body-raw",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
+
+// Fixed brand wordmark face (SiteHeader's "Box"/"score.gg") -- doesn't
+// follow the font-choice picker, the same way the wordmark's colors are
+// fixed regardless of theme.
+const bebasNeue = Bebas_Neue({
+  variable: "--font-bebas-neue-raw",
+  subsets: ["latin"],
+  weight: ["400"],
+});
+
+// Fixed face for the brand tagline/subtitle text next to the wordmark.
+const geist = Geist({
+  variable: "--font-geist-raw",
+  subsets: ["latin"],
+  weight: ["300"],
+});
+
+// Every candidate display/mono font for the settings page's font picker is
+// loaded here (each its own next/font/google instance/CSS variable) so
+// every @font-face is always available; globals.css's `[data-font="..."]`
+// blocks then point --font-heading/--font-mono/--font-geist-mono at
+// whichever one is active (see lib/font-choice.ts).
 const teko = Teko({
   variable: "--font-teko-raw",
   subsets: ["latin"],
@@ -133,7 +163,7 @@ const spaceMono = Space_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Boxscore.gg",
+  title: "Boxscore",
   description:
     "An NBA data pipeline showcasing ingestion, source reconciliation, and drift monitoring.",
 };
@@ -142,19 +172,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${teko.variable} ${oswald.variable} ${barlowCondensed.variable} ${rajdhani.variable} ${russoOne.variable} ${ibmPlexMono.variable} ${spaceMono.variable} h-full antialiased`}
+      // "dark" is unconditional, not a default -- this app has no light
+      // theme to opt out of. The four `data-background` options
+      // (lib/background-choice.ts, applied below by the init script) are
+      // the only theme choice it offers; see the comment above
+      // globals.css's `.dark` block.
+      className={`dark ${barlow.variable} ${bebasNeue.variable} ${geist.variable} ${teko.variable} ${oswald.variable} ${barlowCondensed.variable} ${rajdhani.variable} ${russoOne.variable} ${ibmPlexMono.variable} ${spaceMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        {/* Inline (no `src`), so it runs before paint — same rationale as
-            next-themes' own script for the `.dark` class. */}
+        {/* Inline (no `src`), so it runs before paint and there's no
+            flash of the wrong density/text-size/font/background. */}
         <script dangerouslySetInnerHTML={{ __html: PREFERENCES_INIT_SCRIPT }} />
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <SiteNav />
-          <CommandPalette />
-          {children}
-          <KeyboardShortcuts />
-        </ThemeProvider>
+        <CommandPalette />
+        {children}
+        <KeyboardShortcuts />
       </body>
     </html>
   );

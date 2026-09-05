@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,11 @@ import {
   formatGameDate,
   type GameRow,
   scoreColorClass,
+  TEAM_NAME_TO_ABBREVIATION,
   TeamLogo,
   teamLogoUrlFromName,
 } from "@/lib/box-score";
-
-import { FOCUS_RING } from "./site-nav";
+import { FOCUS_RING } from "@/lib/focus-ring";
 
 type ApiList<T> = { data: T[]; count: number };
 
@@ -28,15 +28,54 @@ type FetchState =
 
 const FETCH_ERROR = "Couldn't reach the games service.";
 
-/** One `away @ home score` fragment per game, for the scrolling ticker.
- * Duplicated once by the caller so the marquee loops seamlessly. */
-function tickerLabel(game: GameRow): string {
-  return `${game.away_team} ${displayScore(game.away_score)} @ ${game.home_team} ${displayScore(game.home_score)}`;
+/** Falls back to the full name for any team missing from the map rather
+ * than rendering "undefined" -- matches the fallback `box-score.tsx`
+ * itself already uses wherever it reads this same map. */
+function abbr(teamName: string): string {
+  return TEAM_NAME_TO_ABBREVIATION[teamName] ?? teamName;
+}
+
+/** "HH:MM:SS UTC" render of `GameRow.source_pulled_at` -- the real
+ * timestamp `raw_pulls` recorded when this row was ingested, not a
+ * fabricated one. */
+function formatPulledAt(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return `${parsed.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+  })} UTC`;
+}
+
+/** "4s ago" / "2d ago" / "3mo ago" -- real elapsed time since
+ * `source_pulled_at`, evaluated at render time. For these backfilled
+ * historical games this is genuinely how long ago the pipeline last
+ * pulled the row (typically days), not a fake "just happened" value --
+ * the same real-vs-fabricated-data stance the rest of this board takes. */
+function formatFreshness(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
 }
 
 /**
  * Homepage "board" -- a real-data adaptation of an explored sportsbook-
- * style mockup (ticker + game list + a "feed ticket" detail rail).
+ * style mockup (game list + a "feed ticket" detail rail). The mockup's
+ * ticker is now `SiteHeader`'s, shared across every page rather than
+ * owned by this board specifically.
  *
  * One deliberate departure from that mockup, stated plainly rather than
  * faked: its "LIVE" pills and pulsing dots assumed a live-game feed with
@@ -99,28 +138,14 @@ export function RecentGamesBoard() {
   }
 
   const selected = state.games.find((g) => g.game_id === selectedId) ?? state.games[0];
-  const tickerGames = [...state.games, ...state.games];
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Ticker */}
-      <div
-        className="group/ticker relative overflow-hidden rounded-lg border border-border bg-card"
-        aria-hidden="true"
-      >
-        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r from-card to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-card to-transparent" />
-        <div className="flex w-max animate-[ticker-scroll_38s_linear_infinite] gap-10 px-4 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground group-hover/ticker:[animation-play-state:paused] motion-reduce:animate-none">
-          {tickerGames.map((game, i) => (
-            <span key={`${game.game_id}-${i}`} className="inline-flex items-center gap-2">
-              <span className="text-foreground">{tickerLabel(game)}</span>
-              <span className="text-amber-500 dark:text-amber-400">FINAL</span>
-            </span>
-          ))}
-        </div>
-      </div>
+      <h2 className="font-heading text-lg font-bold tracking-wide text-foreground uppercase">
+        Recent games
+      </h2>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_320px]">
         {/* Board */}
         <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
           {state.games.slice(0, 8).map((game) => {
@@ -132,45 +157,54 @@ export function RecentGamesBoard() {
                 onClick={() => setSelectedId(game.game_id)}
                 aria-pressed={isSelected}
                 className={cn(
-                  "flex items-center justify-between gap-4 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/60",
+                  "grid grid-cols-[64px_1fr] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/60 sm:grid-cols-[88px_1fr_88px]",
                   FOCUS_RING,
-                  isSelected && "border-l-2 border-l-amber-500 bg-muted/60 dark:border-l-amber-400"
+                  isSelected && "border-l-2 border-l-amber-600 bg-muted/60 dark:border-l-amber-500"
                 )}
               >
-                <span className="w-28 shrink-0 font-mono text-xs text-muted-foreground">
+                <span className="flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
                   {formatGameDate(game.game_date)}
                   {game.postseason ? (
-                    <span className="ml-1 text-amber-600 dark:text-amber-400">·PO</span>
+                    <span className="text-amber-600 dark:text-amber-500">PO</span>
                   ) : null}
                 </span>
-                <span className="flex flex-1 flex-wrap items-center justify-center gap-2 font-mono text-sm">
+
+                {/* Matchup -- away team stacked directly above home team,
+                    each its own full-width row with the score pushed to
+                    the far right, matching the reference mockup's
+                    `.team-line` layout instead of one inline "A @ B" row. */}
+                <span className="flex flex-col gap-1.5">
                   <span
                     className={cn(
-                      "inline-flex items-center gap-1.5",
+                      "flex items-center gap-2",
                       scoreColorClass(game.away_score, game.home_score)
                     )}
                   >
                     <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
-                    {game.away_team}
-                    <span className="font-semibold tabular-nums">
+                    <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
+                      {game.away_team}
+                    </span>
+                    <span className="font-mono text-xl leading-none font-bold tabular-nums">
                       {displayScore(game.away_score)}
                     </span>
                   </span>
-                  <span className="text-muted-foreground">@</span>
                   <span
                     className={cn(
-                      "inline-flex items-center gap-1.5",
+                      "flex items-center gap-2",
                       scoreColorClass(game.home_score, game.away_score)
                     )}
                   >
                     <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
-                    {game.home_team}
-                    <span className="font-semibold tabular-nums">
+                    <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
+                      {game.home_team}
+                    </span>
+                    <span className="font-mono text-xl leading-none font-bold tabular-nums">
                       {displayScore(game.home_score)}
                     </span>
                   </span>
                 </span>
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+
+                <span className="hidden shrink-0 justify-self-end text-xs text-muted-foreground sm:inline">
                   View ticket
                 </span>
               </button>
@@ -179,30 +213,34 @@ export function RecentGamesBoard() {
         </div>
 
         {/* Feed ticket */}
-        <div className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-card">
-          <div
-            aria-hidden="true"
-            className="absolute top-10 -left-2.5 size-5 rounded-full bg-background"
-          />
-          <div
-            aria-hidden="true"
-            className="absolute top-10 -right-2.5 size-5 rounded-full bg-background"
-          />
-          <div className="flex items-start justify-between gap-2 border-b border-dashed border-border px-4 py-3">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+          {/* Header is its own `relative` block so the notches below sit
+              exactly on its bottom (dashed) border regardless of how tall
+              the title/subtitle/badge make it, rather than an estimated
+              fixed pixel offset from the card's own top edge. */}
+          <div className="relative flex items-start justify-between gap-2 border-b border-dashed border-border px-4 py-3">
             <div>
-              <h3 className="font-mono text-sm font-semibold tracking-wide text-foreground uppercase">
-                {selected.away_team} @ {selected.home_team}
+              <h3 className="font-mono text-base font-semibold tracking-wide text-foreground uppercase">
+                {abbr(selected.away_team)} · {abbr(selected.home_team)}
               </h3>
-              <p className="mt-0.5 font-mono text-[10px] text-muted-foreground uppercase">
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground uppercase">
                 Feed ticket · Game #{selected.game_id}
               </p>
             </div>
-            <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-amber-600 uppercase dark:text-amber-400">
+            <span className="shrink-0 rounded-md bg-amber-600/15 px-2 py-0.5 font-mono text-xs font-semibold tracking-wide text-amber-600 uppercase dark:text-amber-500">
               Final
             </span>
+            <div
+              aria-hidden="true"
+              className="absolute -bottom-2.5 -left-2.5 size-5 rounded-full bg-background"
+            />
+            <div
+              aria-hidden="true"
+              className="absolute -right-2.5 -bottom-2.5 size-5 rounded-full bg-background"
+            />
           </div>
 
-          <dl className="flex flex-col gap-3 px-4 py-3 font-mono text-xs">
+          <dl className="flex flex-col gap-3 px-4 py-3 font-mono text-sm">
             <div className="flex items-center justify-between gap-2">
               <dt className="tracking-wide text-muted-foreground uppercase">Date</dt>
               <dd className="text-foreground">
@@ -210,11 +248,19 @@ export function RecentGamesBoard() {
                 {selected.postseason ? " · Postseason" : ""}
               </dd>
             </div>
+            {/* No real live period/clock exists for a completed historical
+                game -- this shows the game's actual real status (always
+                "Final" on this board) rather than fabricating an
+                in-progress quarter/clock value. */}
+            <div className="flex items-center justify-between gap-2">
+              <dt className="tracking-wide text-muted-foreground uppercase">Period / Clock</dt>
+              <dd className="text-foreground">{selected.status}</dd>
+            </div>
             <div className="flex items-center justify-between gap-2">
               <dt className="tracking-wide text-muted-foreground uppercase">Score</dt>
-              <dd className="text-amber-600 dark:text-amber-400">
-                {selected.away_team} {displayScore(selected.away_score)} — {selected.home_team}{" "}
-                {displayScore(selected.home_score)}
+              <dd className="text-amber-600 dark:text-amber-500">
+                {abbr(selected.away_team)} {displayScore(selected.away_score)} —{" "}
+                {abbr(selected.home_team)} {displayScore(selected.home_score)}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
@@ -227,19 +273,45 @@ export function RecentGamesBoard() {
               <dt className="tracking-wide text-muted-foreground uppercase">Source</dt>
               <dd className="text-foreground">balldontlie · nba_stats</dd>
             </div>
+            {/* Real ingestion timestamps from raw_pulls (`source_pulled_at`)
+                -- for these backfilled historical games "Freshness" is
+                genuinely however long ago the pipeline pulled the row
+                (usually days), not a live "just happened" value. */}
+            <div className="flex items-center justify-between gap-2">
+              <dt className="tracking-wide text-muted-foreground uppercase">Last Pulled</dt>
+              <dd className="text-foreground">{formatPulledAt(selected.source_pulled_at)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="tracking-wide text-muted-foreground uppercase">Freshness</dt>
+              <dd className="text-foreground">{formatFreshness(selected.source_pulled_at)}</dd>
+            </div>
           </dl>
 
-          <div className="border-t border-dashed border-border px-4 py-3">
+          {/* Footer -- its own `relative` block too, same reasoning as the
+              header, plus taller padding (py-5 vs the header's py-3) so
+              its total height matches the header's despite having only
+              one line of content instead of a title/subtitle/badge. */}
+          <div className="relative flex items-center border-t border-dashed border-border px-4 py-5">
             <Button
               render={<Link href={`/games/${selected.game_id}`} />}
               nativeButton={false}
               size="sm"
-              variant="secondary"
-              className={cn("w-full cursor-pointer", FOCUS_RING)}
+              variant="ghost"
+              className={cn(
+                "w-full cursor-pointer border border-border bg-transparent hover:bg-muted/60",
+                FOCUS_RING
+              )}
             >
-              View full box score
-              <ArrowRight aria-hidden="true" data-icon="inline-end" className="size-3.5" />
+              Box score
             </Button>
+            <div
+              aria-hidden="true"
+              className="absolute -top-2.5 -left-2.5 size-5 rounded-full bg-background"
+            />
+            <div
+              aria-hidden="true"
+              className="absolute -top-2.5 -right-2.5 size-5 rounded-full bg-background"
+            />
           </div>
         </div>
       </div>

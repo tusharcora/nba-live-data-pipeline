@@ -234,9 +234,10 @@ export function displayScore(score: number | null): string {
   return score === null || score === undefined ? "–" : String(score);
 }
 
-/** Bold green for the winning side, bold muted red for the losing side.
- * Neutral (no color) if either score is missing or they're tied -- never
- * guesses a winner from incomplete data. */
+/** Bold amber/gold for the winning side -- the same accent used
+ * everywhere else on the site -- and plain default text for the losing
+ * side (no red). Neutral/muted if either score is missing or they're tied
+ * -- never guesses a winner from incomplete data. */
 export function scoreColorClass(
   thisScore: number | null,
   otherScore: number | null
@@ -244,7 +245,9 @@ export function scoreColorClass(
   if (thisScore === null || otherScore === null || thisScore === otherScore) {
     return "text-muted-foreground";
   }
-  return thisScore > otherScore ? "font-bold text-emerald-500" : "font-bold text-red-500/70";
+  return thisScore > otherScore
+    ? "font-bold text-amber-600 dark:text-amber-500"
+    : "text-foreground";
 }
 
 /** `minutes_played` is a display string (e.g. "34", already rounded to a

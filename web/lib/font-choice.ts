@@ -17,10 +17,13 @@
  * variable) and applied to `<html>` as `.variable` classes, so their
  * `@font-face` declarations are always present. The active choice is
  * applied separately as a `data-font` attribute on `<html>`, which
- * `web/app/globals.css` reads to point `--font-sans`/`--font-mono`/
- * `--font-heading`/`--font-geist-mono` at the selected font's raw
- * variable -- the same "one set of tokens, everything reads from them"
- * approach the Teko/Geist Mono swaps and the text-size preference use.
+ * `web/app/globals.css` reads to point `--font-mono`/`--font-heading`/
+ * `--font-geist-mono` at the selected font's raw variable -- the same "one
+ * set of tokens, everything reads from them" approach the text-size
+ * preference uses. Body copy (`--font-sans`) is deliberately excluded from
+ * this and pinned to a fixed Barlow face instead (see `app/layout.tsx`),
+ * matching the "Four Dark Neutrals" reference mockup's own separate
+ * display/body faces.
  */
 
 import { get, set } from "@/lib/local-store";
@@ -35,12 +38,12 @@ export type FontChoice =
   | "space-mono";
 
 export const FONT_CHOICE_STORAGE_KEY = "nba-pipeline:font";
-export const DEFAULT_FONT_CHOICE: FontChoice = "teko";
+export const DEFAULT_FONT_CHOICE: FontChoice = "barlow-condensed";
 
 export const FONT_CHOICE_OPTIONS: { value: FontChoice; label: string }[] = [
-  { value: "teko", label: "Teko (current)" },
+  { value: "teko", label: "Teko" },
   { value: "oswald", label: "Oswald" },
-  { value: "barlow-condensed", label: "Barlow Condensed" },
+  { value: "barlow-condensed", label: "Barlow Condensed (default)" },
   { value: "rajdhani", label: "Rajdhani" },
   { value: "russo-one", label: "Russo One" },
   { value: "ibm-plex-mono", label: "IBM Plex Mono" },
