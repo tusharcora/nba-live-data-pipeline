@@ -1,17 +1,21 @@
 // The agentic tool-use loop for the NL stats search BFF route
-// (app/api/search/route.ts). Pure orchestration, DI'd on both the Anthropic
-// call and the tool dispatch so it can be unit-tested with no real network,
-// LLM, or FastAPI call (this repo's offline-verification convention —
-// CLAUDE.md's Testing section).
+// (app/api/search/route.ts). Provider-agnostic: takes an `LlmClient`
+// (lib/llm/types.ts) via dependency injection rather than importing any
+// one provider's SDK directly, so this file never needs to change again
+// when a third provider is added -- only lib/llm/*-provider.ts and
+// lib/llm/get-llm-client.ts do. Also DI'd on the tool-dispatch side, so the
+// whole loop is unit-testable with no real network, LLM, or FastAPI call
+// (this repo's offline-verification convention — CLAUDE.md's Testing
+// section).
 //
-// Design choice — non-streaming Anthropic calls inside the loop: every
-// `createMessage` call here is non-streaming (`messages.create`, not
-// `messages.stream`). A tool-deciding turn's own text (if any) is never
-// shown to the user, so there is nothing worth streaming until the loop
-// already has its final answer in hand. The route handler still delivers a
-// genuinely incremental HTTP response to the browser — it chunks the
-// already-complete final text into multiple SSE `data:` frames rather than
-// sending one buffered blob. See app/api/search/route.ts.
+// Design choice — non-streaming provider calls inside the loop: every
+// `LlmClient.send()` call here is non-streaming. A tool-deciding turn's own
+// text (if any) is never shown to the user, so there is nothing worth
+// streaming until the loop already has its final answer in hand. The route
+// handler still delivers a genuinely incremental HTTP response to the
+// browser — it chunks the already-complete final text into multiple SSE
+// `data:` frames rather than sending one buffered blob. See
+// app/api/search/route.ts.
 //
 // CAP-4/CAP-5 enforcement lives here, not in the route: every answer must
 // carry a citation (table + date range), and a tool's no-data/ambiguous
@@ -20,12 +24,8 @@
 // a final turn without a single successful tool call, the model's own text
 // is discarded outright in favor of FALLBACK_RESULT.
 
-import type Anthropic from "@anthropic-ai/sdk";
+import type { ConversationMessage, LlmClient, ToolCallResult } from "@/lib/llm/types";
 import { TOOL_DEFINITIONS, callTool as defaultCallTool, type ToolResultEnvelope } from "@/lib/search-tools";
-
-export type CreateMessage = (
-  params: Anthropic.MessageCreateParamsNonStreaming,
-) => Promise<Anthropic.Message>;
 
 export type CallTool = (
   name: string,
@@ -44,8 +44,6 @@ export interface SearchResult {
   candidates: string[] | null;
 }
 
-export const SEARCH_MODEL = "claude-haiku-4-5";
-const MAX_TOKENS = 1024;
 const MAX_ITERATIONS = 6;
 
 const SYSTEM_PROMPT = `You are a natural-language stats lookup assistant for an NBA data pipeline.
@@ -66,13 +64,6 @@ export const FALLBACK_RESULT: SearchResult = {
   noData: true,
   candidates: null,
 };
-
-function extractText(message: Anthropic.Message): string {
-  return message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("");
-}
 
 function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | null): SearchResult {
   if (!lastToolResult) {
@@ -123,47 +114,36 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
 
 export async function runSearchLoop(params: {
   question: string;
-  createMessage: CreateMessage;
+  llmClient: LlmClient;
   callTool?: CallTool;
 }): Promise<SearchResult> {
   const dispatchTool = params.callTool ?? defaultCallTool;
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: params.question }];
+  const history: ConversationMessage[] = [{ role: "user", content: params.question }];
   let lastToolResult: ToolResultEnvelope | null = null;
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-    const response = await params.createMessage({
-      model: SEARCH_MODEL,
-      max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
+    const response = await params.llmClient.send({
+      systemPrompt: SYSTEM_PROMPT,
       tools: TOOL_DEFINITIONS,
-      messages,
+      history,
     });
 
-    const toolUseBlocks = response.content.filter(
-      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
-    );
-
-    if (toolUseBlocks.length === 0 || response.stop_reason !== "tool_use") {
-      return finalize(extractText(response), lastToolResult);
+    if (response.toolCalls.length === 0) {
+      return finalize(response.text, lastToolResult);
     }
 
-    messages.push({ role: "assistant", content: response.content });
+    history.push({ role: "assistant", text: response.text, toolCalls: response.toolCalls });
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const block of toolUseBlocks) {
-      const result = await dispatchTool(block.name, (block.input ?? {}) as Record<string, unknown>);
+    const results: ToolCallResult[] = [];
+    for (const call of response.toolCalls) {
+      const result = await dispatchTool(call.name, call.input);
       if (result.status === "ok" || result.status === "no_match" || result.status === "ambiguous") {
         lastToolResult = result;
       }
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: JSON.stringify(result),
-        is_error: result.status === "error",
-      });
+      results.push({ id: call.id, name: call.name, output: result, isError: result.status === "error" });
     }
 
-    messages.push({ role: "user", content: toolResults });
+    history.push({ role: "tool_results", results });
   }
 
   // Loop cap exceeded without an end_turn — same honest fallback as never

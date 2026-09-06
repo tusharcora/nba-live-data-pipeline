@@ -5,44 +5,35 @@
 // is `{status, data, candidates, message}` (no top-level `table`/`date_range`),
 // which used to make finalize()'s CAP-4 grounding check fall through to
 // FALLBACK_RESULT on every single successful lookup. Only `fetchFromApi`
-// and the Anthropic call are mocked here — the real `callTool` (search-tools.ts)
-// runs unmodified, so this exercises the actual normalization/derivation
-// logic end to end.
+// is mocked here — the real `callTool` (search-tools.ts) runs unmodified,
+// exercising the actual normalization/derivation logic end to end. The LLM
+// side uses a fake LlmClient (llm/types.ts) rather than any real provider
+// SDK shape — this test is about the FastAPI contract, not the LLM
+// provider, which lib/llm/anthropic-provider.test.ts and
+// lib/llm/gemini-provider.test.ts cover separately.
 import { describe, expect, it, vi } from "vitest";
-import type Anthropic from "@anthropic-ai/sdk";
+import type { LlmClient, LlmResponse } from "@/lib/llm/types";
 
 const fetchFromApiMock = vi.fn();
 vi.mock("@/lib/fastapi-client", () => ({
   fetchFromApi: (...args: unknown[]) => fetchFromApiMock(...args),
 }));
 
-const { runSearchLoop, SEARCH_MODEL, FALLBACK_RESULT } = await import("@/lib/search-loop");
+const { runSearchLoop, FALLBACK_RESULT } = await import("@/lib/search-loop");
 const { callTool } = await import("@/lib/search-tools");
 
-function textMessage(text: string): Anthropic.Message {
-  return {
-    id: "msg_1",
-    type: "message",
-    role: "assistant",
-    model: SEARCH_MODEL,
-    content: [{ type: "text", text, citations: null }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
-  } as unknown as Anthropic.Message;
+function fakeLlmClient(...responses: LlmResponse[]): LlmClient {
+  const send = vi.fn();
+  for (const response of responses) send.mockResolvedValueOnce(response);
+  return { send };
 }
 
-function toolUseMessage(name: string, input: Record<string, unknown>): Anthropic.Message {
-  return {
-    id: "msg_tool",
-    type: "message",
-    role: "assistant",
-    model: SEARCH_MODEL,
-    content: [{ type: "tool_use", id: "tool_1", name, input }],
-    stop_reason: "tool_use",
-    stop_sequence: null,
-    usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
-  } as unknown as Anthropic.Message;
+function toolCallResponse(name: string, input: Record<string, unknown>): LlmResponse {
+  return { text: "", toolCalls: [{ id: "call_1", name, input }] };
+}
+
+function finalResponse(text: string): LlmResponse {
+  return { text, toolCalls: [] };
 }
 
 describe("runSearchLoop against Dev1's real FastAPI envelope (PR #58)", () => {
@@ -57,14 +48,14 @@ describe("runSearchLoop against Dev1's real FastAPI envelope (PR #58)", () => {
       message: null,
     });
 
-    const createMessage = vi
-      .fn()
-      .mockResolvedValueOnce(toolUseMessage("get_player_stats", { player_name: "LeBron James" }))
-      .mockResolvedValueOnce(textMessage("LeBron James scored 28 points on 2024-01-03."));
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_player_stats", { player_name: "LeBron James" }),
+      finalResponse("LeBron James scored 28 points on 2024-01-03."),
+    );
 
     const result = await runSearchLoop({
       question: "How many points did LeBron score on 2024-01-03?",
-      createMessage,
+      llmClient,
       callTool,
     });
 
@@ -89,21 +80,17 @@ describe("runSearchLoop against Dev1's real FastAPI envelope (PR #58)", () => {
       message: null,
     });
 
-    const createMessage = vi
-      .fn()
-      .mockResolvedValueOnce(
-        toolUseMessage("get_leaders", {
-          stat: "assists",
-          date_range: { start: "2024-01-01", end: "2024-01-31" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        textMessage("LeBron James leads with 15 assists across 3 games (2024-01-03 to 2024-01-07)."),
-      );
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_leaders", {
+        stat: "assists",
+        date_range: { start: "2024-01-01", end: "2024-01-31" },
+      }),
+      finalResponse("LeBron James leads with 15 assists across 3 games (2024-01-03 to 2024-01-07)."),
+    );
 
     const result = await runSearchLoop({
       question: "Who leads in assists in January?",
-      createMessage,
+      llmClient,
       callTool,
     });
 
@@ -122,20 +109,18 @@ describe("runSearchLoop against Dev1's real FastAPI envelope (PR #58)", () => {
       message: "No game found between Los Angeles Lakers and Boston Celtics on 2099-01-01.",
     });
 
-    const createMessage = vi
-      .fn()
-      .mockResolvedValueOnce(
-        toolUseMessage("get_game_result", {
-          team_a: "Los Angeles Lakers",
-          team_b: "Boston Celtics",
-          date: "2099-01-01",
-        }),
-      )
-      .mockResolvedValueOnce(textMessage("There's no data for that matchup on that date."));
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_game_result", {
+        team_a: "Los Angeles Lakers",
+        team_b: "Boston Celtics",
+        date: "2099-01-01",
+      }),
+      finalResponse("There's no data for that matchup on that date."),
+    );
 
     const result = await runSearchLoop({
       question: "Lakers vs Celtics on 2099-01-01?",
-      createMessage,
+      llmClient,
       callTool,
     });
 
@@ -151,12 +136,12 @@ describe("runSearchLoop against Dev1's real FastAPI envelope (PR #58)", () => {
       message: "Multiple players match 'Jordan' -- please clarify which one.",
     });
 
-    const createMessage = vi
-      .fn()
-      .mockResolvedValueOnce(toolUseMessage("get_player_stats", { player_name: "Jordan" }))
-      .mockResolvedValueOnce(textMessage("Did you mean Michael Jordan or Jordan Poole?"));
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_player_stats", { player_name: "Jordan" }),
+      finalResponse("Did you mean Michael Jordan or Jordan Poole?"),
+    );
 
-    const result = await runSearchLoop({ question: "Jordan's stats?", createMessage, callTool });
+    const result = await runSearchLoop({ question: "Jordan's stats?", llmClient, callTool });
 
     expect(result.noData).toBe(false);
     expect(result.citation).toBeNull();

@@ -246,9 +246,9 @@ describe("callTool", () => {
     expect(Object.keys(byName).sort()).toEqual(
       ["get_game_result", "get_leaders", "get_player_stats", "get_team_games"].sort(),
     );
-    expect(byName.get_player_stats.input_schema.required).toEqual(["player_name"]);
-    expect(byName.get_team_games.input_schema.required).toEqual(["team"]);
-    expect(byName.get_leaders.input_schema.required).toEqual(["stat", "date_range"]);
-    expect(byName.get_game_result.input_schema.required).toEqual(["team_a", "team_b", "date"]);
+    expect(byName.get_player_stats.inputSchema.required).toEqual(["player_name"]);
+    expect(byName.get_team_games.inputSchema.required).toEqual(["team"]);
+    expect(byName.get_leaders.inputSchema.required).toEqual(["stat", "date_range"]);
+    expect(byName.get_game_result.inputSchema.required).toEqual(["team_a", "team_b", "date"]);
   });
 });

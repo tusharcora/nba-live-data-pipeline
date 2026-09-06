@@ -1,21 +1,23 @@
 // POST /api/search — Statmuse-style natural-language stats search BFF route
 // (SPEC-nl-stats-search, Story 2). Runs the agentic tool-use loop
-// (lib/search-loop.ts) against Claude Haiku 4.5, then streams the answer to
-// the browser as SSE.
+// (lib/search-loop.ts) against whichever LLM provider is configured
+// (lib/llm/get-llm-client.ts — Gemini by default, Anthropic as an
+// alternative), then streams the answer to the browser as SSE.
 //
 // Follows app/api/live/route.ts's Vercel-safe SSE precedent: Node runtime,
 // the documented "immediate Response + background stream" shape (PRD
 // §04/§13), and the same anti-buffering header set. Unlike /live, this
 // route builds its own stream from scratch rather than piping an already-
 // flowing upstream SSE body — see lib/search-loop.ts's Design Notes for why
-// the loop itself uses non-streaming Anthropic calls.
+// the loop itself uses non-streaming provider calls.
 //
-// The Anthropic API key never reaches the browser — only
-// lib/anthropic-client.ts reads it, and only this server-side route (and
-// its tests) ever imports that module.
+// No provider's API key ever reaches the browser — only
+// lib/llm/get-llm-client.ts (and the provider modules it calls into) reads
+// them, and only this server-side route (and its tests) ever imports that
+// module.
 export const runtime = "nodejs";
 
-import { getAnthropicClient } from "@/lib/anthropic-client";
+import { getLlmClient } from "@/lib/llm/get-llm-client";
 import { runSearchLoop, type SearchResult } from "@/lib/search-loop";
 
 const encoder = new TextEncoder();
@@ -87,17 +89,14 @@ export async function POST(request: Request): Promise<Response> {
 
       let result: SearchResult;
       try {
-        const client = getAnthropicClient();
-        result = await runSearchLoop({
-          question,
-          createMessage: (params) => client.messages.create(params),
-        });
+        const llmClient = getLlmClient();
+        result = await runSearchLoop({ question, llmClient });
       } catch (error) {
-        // Covers both an Anthropic client construction failure (e.g. no
-        // ANTHROPIC_API_KEY configured) and a failure inside the loop
-        // itself (network, auth, rate limit, ...) — same honest "couldn't
-        // complete this" contract as a tool failure, never a guess dressed
-        // up as an answer.
+        // Covers both a provider client construction failure (e.g. no API
+        // key configured for the selected SEARCH_LLM_PROVIDER) and a
+        // failure inside the loop itself (network, auth, rate limit, ...)
+        // — same honest "couldn't complete this" contract as a tool
+        // failure, never a guess dressed up as an answer.
         console.error("[api/search] runSearchLoop failed:", error);
         safeEnqueue(sseDone({ citation: null, noData: true, candidates: null }));
         controller.close();

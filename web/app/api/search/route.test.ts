@@ -6,14 +6,15 @@
 // per-story vitest configs into one (see vitest.config.ts).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Both the Anthropic client and the search loop are mocked — this test
+// Both the LLM client factory and the search loop are mocked — this test
 // verifies only the route's SSE framing/final-event contract, matching
 // this repo's "no real LLM calls in CI" convention (CLAUDE.md). The
 // tool-dispatch loop itself is covered by lib/search-loop.test.ts and
-// lib/search-tools.test.ts.
-const getAnthropicClientMock = vi.fn(() => ({ messages: { create: vi.fn() } }));
-vi.mock("@/lib/anthropic-client", () => ({
-  getAnthropicClient: () => getAnthropicClientMock(),
+// lib/search-tools.test.ts; the provider adapters are covered by
+// lib/llm/anthropic-provider.test.ts and lib/llm/gemini-provider.test.ts.
+const getLlmClientMock = vi.fn(() => ({ send: vi.fn() }));
+vi.mock("@/lib/llm/get-llm-client", () => ({
+  getLlmClient: () => getLlmClientMock(),
 }));
 
 const runSearchLoopMock = vi.fn();
@@ -154,7 +155,7 @@ describe("POST /api/search", () => {
   });
 
   it("emits an honest done event (never a thrown error to the client) if the search loop itself fails", async () => {
-    runSearchLoopMock.mockRejectedValueOnce(new Error("Anthropic API unreachable"));
+    runSearchLoopMock.mockRejectedValueOnce(new Error("LLM API unreachable"));
 
     const response = await POST(postRequest({ question: "anything" }));
     const body = await readBody(response);
@@ -164,9 +165,9 @@ describe("POST /api/search", () => {
     expect(doneJson).toEqual({ citation: null, noData: true, candidates: null });
   });
 
-  it("emits an honest done event if constructing the Anthropic client itself throws", async () => {
-    getAnthropicClientMock.mockImplementationOnce(() => {
-      throw new Error("ANTHROPIC_API_KEY not configured");
+  it("emits an honest done event if constructing the LLM client itself throws", async () => {
+    getLlmClientMock.mockImplementationOnce(() => {
+      throw new Error("GEMINI_API_KEY not configured");
     });
 
     const response = await POST(postRequest({ question: "anything" }));

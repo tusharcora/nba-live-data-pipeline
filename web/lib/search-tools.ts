@@ -35,8 +35,8 @@
 // with `status: "ok"` — the model must be able to tell "found nothing" apart
 // from "found an empty-but-valid result" without guessing.
 
-import type Anthropic from "@anthropic-ai/sdk";
 import { fetchFromApi } from "@/lib/fastapi-client";
+import type { ToolDefinition } from "@/lib/llm/types";
 
 export interface ToolResultEnvelope {
   status: "ok" | "no_match" | "ambiguous" | "error";
@@ -288,19 +288,19 @@ const dateRangeSchema = {
   required: ["start", "end"],
 };
 
-// Plain JSON-schema tool definitions (no Zod / beta tool runner dependency;
-// see this story's spec Design Notes for why a manual loop was chosen).
-// Annotated as Anthropic.Tool[] (the custom-tool variant) rather than left
-// to inference — every entry here is a custom tool, never an
-// Anthropic-defined one, so the narrower annotation is correct (see
-// typescript/claude-api/tool-use.md's "Don't type-annotate as Tool[]"
-// caveat, which is about arrays mixing custom and built-in tool types).
-export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+// Plain JSON-schema tool definitions (no Zod dependency). Provider-agnostic
+// on purpose -- typed as ToolDefinition[] (llm/types.ts) rather than any
+// one provider's own tool-schema type, since this array is shared between
+// whichever LlmClient the search loop is using (llm/get-llm-client.ts).
+// Each provider adapter translates `inputSchema` into its own shape:
+// Anthropic's `input_schema`, Gemini's `parametersJsonSchema` (both happen
+// to accept a plain JSON Schema object directly).
+export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "get_player_stats",
     description:
       "Look up one player's per-game stat line(s) on a specific date or over a date range. Fuzzy-matches the player name. Returns status \"no_match\" if no player matches, or \"ambiguous\" with a candidate list if more than one close match exists.",
-    input_schema: {
+    inputSchema: {
       type: "object",
       properties: {
         player_name: { type: "string", description: "The player's full or partial name." },
@@ -314,7 +314,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "get_team_games",
     description:
       "Look up one team's game rows (opponent, score, date) on a specific date or over a date range. Returns status \"no_match\" if no team matches, or \"ambiguous\" with a candidate list if more than one close match exists.",
-    input_schema: {
+    inputSchema: {
       type: "object",
       properties: {
         team: { type: "string", description: "The team's name or abbreviation." },
@@ -328,7 +328,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "get_leaders",
     description:
       "Get a ranked leaderboard of players or teams by a given stat over a date range. The date range and game count computed over are always included in the result — never state a leader without them.",
-    input_schema: {
+    inputSchema: {
       type: "object",
       properties: {
         stat: {
@@ -345,7 +345,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "get_game_result",
     description:
       "Look up the final score (and box score, where available) of the specific game between two named teams on a given date. Returns status \"no_match\" if no such game exists — never guess a score.",
-    input_schema: {
+    inputSchema: {
       type: "object",
       properties: {
         team_a: { type: "string", description: "The first team's name or abbreviation." },
