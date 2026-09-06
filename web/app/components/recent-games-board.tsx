@@ -48,10 +48,10 @@ export function RecentGamesBoard() {
         const updates = new Map(parsed.data.map((g) => [g.game_id, g]));
         setState((prev) => {
           if (prev.status !== "loaded") return prev;
-          return {
-            status: "loaded",
-            games: prev.games.map((g) => updates.get(g.game_id) ?? g),
-          };
+          const existingIds = new Set(prev.games.map((g) => g.game_id));
+          const updated = prev.games.map((g) => updates.get(g.game_id) ?? g);
+          const inserted = parsed.data.filter((g) => !existingIds.has(g.game_id));
+          return { status: "loaded", games: [...inserted, ...updated] };
         });
       } catch {
         // Malformed tick -- keep showing the last good state.
