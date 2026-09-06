@@ -1,9 +1,13 @@
 from db.models import LiveGameState, QualityMetric, RawPull
 from ingestion.flows.live_game_flow import (
     extract_balldontlie_live_states,
+    extract_balldontlie_team_names,
     extract_nba_stats_live_states,
     extract_public_feed_live_states,
+    extract_public_feed_team_names,
     live_game_flow,
+    match_game_ids_by_team_overlap,
+    remap_game_ids,
 )
 
 # --- Pure extraction function tests (no DB/network) -------------------------
@@ -241,6 +245,86 @@ def test_extract_nba_stats_live_states_postponed_regardless_of_game_status_code(
 
 def test_extract_nba_stats_live_states_empty_games():
     assert extract_nba_stats_live_states({"scoreboard": {"games": []}}) == []
+
+
+# --- Team-name extraction and game_id matching tests -------------------------
+
+
+def test_extract_balldontlie_team_names():
+    page = {
+        "data": [
+            {
+                "id": 15908,
+                "home_team": {"full_name": "Miami Heat"},
+                "visitor_team": {"full_name": "Boston Celtics"},
+            }
+        ]
+    }
+
+    assert extract_balldontlie_team_names(page) == {
+        15908: {"Miami Heat", "Boston Celtics"}
+    }
+
+
+def test_extract_balldontlie_team_names_missing_team_data_is_skipped():
+    assert extract_balldontlie_team_names({"data": [{"id": 1}]}) == {1: set()}
+
+
+def test_extract_public_feed_team_names():
+    scoreboard = {
+        "events": [
+            {
+                "id": "401584793",
+                "competitions": [
+                    {
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Miami Heat"}},
+                            {"homeAway": "away", "team": {"displayName": "Boston Celtics"}},
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    assert extract_public_feed_team_names(scoreboard) == {
+        401584793: {"Miami Heat", "Boston Celtics"}
+    }
+
+
+def test_match_game_ids_by_team_overlap_matches_on_shared_team_name():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}, 22500124: {"LA Lakers", "Denver Nuggets"}}
+    other = {15908: {"Miami Heat", "Boston Celtics"}}
+
+    assert match_game_ids_by_team_overlap(canonical, other) == {15908: 22500123}
+
+
+def test_match_game_ids_by_team_overlap_no_overlap_is_unmatched():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}}
+    other = {99: {"Some Other Team", "Another Team"}}
+
+    assert match_game_ids_by_team_overlap(canonical, other) == {}
+
+
+def test_match_game_ids_by_team_overlap_each_canonical_claimed_at_most_once():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}}
+    other = {1: {"Miami Heat"}, 2: {"Miami Heat"}}
+
+    matches = match_game_ids_by_team_overlap(canonical, other)
+    assert len(matches) == 1
+    assert set(matches.values()) == {22500123}
+
+
+def test_remap_game_ids_rewrites_matched_ids_leaves_unmatched_alone():
+    states = [
+        LiveGameState(game_id=15908, source="balldontlie", status="in_progress"),
+        LiveGameState(game_id=999, source="balldontlie", status="in_progress"),
+    ]
+
+    remap_game_ids(states, {15908: 22500123})
+
+    assert states[0].game_id == 22500123
+    assert states[1].game_id == 999
 
 
 # --- Flow orchestration tests (fakes only, no DB/network) --------------------

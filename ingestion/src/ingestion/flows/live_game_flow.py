@@ -211,6 +211,93 @@ def extract_nba_stats_live_states(payload: dict) -> list[LiveGameState]:
     return states
 
 
+def extract_balldontlie_team_names(payload: dict) -> dict[int, set[str]]:
+    """`{game_id: {home_full_name, away_full_name}}` from a balldontlie
+    `/games` page — used only for cross-source game matching
+    (`match_game_ids_by_team_overlap`), not persisted. ASSUMED shape per
+    `dbt/models/staging/stg_games.sql`'s documented `home_team.full_name`/
+    `visitor_team.full_name` fields, not yet verified against real data.
+    A game missing team data contributes an empty set, never crashes.
+    """
+    result: dict[int, set[str]] = {}
+    for game in payload.get("data", []):
+        names = set()
+        home_name = game.get("home_team", {}).get("full_name")
+        away_name = game.get("visitor_team", {}).get("full_name")
+        if home_name:
+            names.add(home_name)
+        if away_name:
+            names.add(away_name)
+        result[game["id"]] = names
+    return result
+
+
+def extract_public_feed_team_names(payload: dict) -> dict[int, set[str]]:
+    """`{game_id: {home_displayName, away_displayName}}` from a
+    `PublicFeedClient.get_scoreboard()` response — same competition-parsing
+    shape as `extract_public_feed_live_states`, used only for cross-source
+    game matching, not persisted.
+    """
+    result: dict[int, set[str]] = {}
+    for event in payload.get("events", []):
+        competitions = event.get("competitions") or [{}]
+        competitors = competitions[0].get("competitors", [])
+        names = {
+            c["team"]["displayName"]
+            for c in competitors
+            if c.get("team", {}).get("displayName")
+        }
+        result[int(event["id"])] = names
+    return result
+
+
+def match_game_ids_by_team_overlap(
+    canonical_teams: dict[int, set[str]], other_teams: dict[int, set[str]]
+) -> dict[int, int]:
+    """Match each `other`-source game_id to the canonical (nba_stats)
+    game_id whose team-name set it overlaps, so cross-source rows for the
+    same real game can be written under one shared `game_id`.
+
+    Team-name-set overlap, not exact full-game match, so a naming variant
+    on one team (e.g. "LA Clippers" vs "Los Angeles Clippers") still
+    matches as long as the other team's name is spelled identically by
+    both sources — same heuristic and caveats as
+    `quality.reconciliation.match_games_by_team_overlap`, reimplemented
+    here (rather than reused) because that function returns matched field
+    *values*, not the secondary game's own id, which is exactly what
+    remapping needs. A canonical game is claimed by at most one `other`
+    game.
+    """
+    matches: dict[int, int] = {}
+    claimed_canonical: set[int] = set()
+
+    for other_id, other_names in other_teams.items():
+        for canonical_id, canonical_names in canonical_teams.items():
+            if canonical_id in claimed_canonical:
+                continue
+            if other_names & canonical_names:
+                matches[other_id] = canonical_id
+                claimed_canonical.add(canonical_id)
+                break
+
+    return matches
+
+
+def remap_game_ids(
+    states: list[LiveGameState], id_map: dict[int, int]
+) -> list[LiveGameState]:
+    """Rewrite each state's `game_id` to its matched canonical id, in
+    place. A state whose `game_id` has no entry in `id_map` (this source
+    reported a game nba_stats didn't cover this poll) keeps its own
+    native id — orphaned but harmless: it simply won't be picked up by
+    any board row's merge, rather than being dropped or written under a
+    wrong game.
+    """
+    for state in states:
+        state.game_id = id_map.get(state.game_id, state.game_id)
+    return states
+
+
 @flow(name="live-game-flow")
 def live_game_flow(
     date: str,
