@@ -36,6 +36,17 @@ export interface ToolCallRequest {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  /** Opaque, provider-specific data that must be replayed verbatim when
+   * this exact call is reconstructed on a later turn -- deliberately
+   * untyped and provider-agnostic at this layer. search-loop.ts never
+   * reads or sets this; it just carries it through `history` unchanged.
+   * Only Gemini currently uses this (its `thought_signature`, required on
+   * any replayed function-call part or the API rejects the request with a
+   * 400 -- see llm/gemini-provider.ts's header comment). Anthropic's
+   * adapter never sets or reads it. A future provider with a similar
+   * replay-this-verbatim requirement can reuse the same field; one that
+   * doesn't need it just ignores it. */
+  providerData?: unknown;
 }
 
 /** One tool call's result, ready to relay back to the model. */

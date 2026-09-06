@@ -20,10 +20,29 @@ function textResponse(text: string): GenerateContentResponse {
   return { text, functionCalls: undefined } as unknown as GenerateContentResponse;
 }
 
+// Builds a raw `candidates[0].content.parts` response, not the
+// `functionCalls` convenience getter -- extractToolCalls deliberately
+// reads parts directly so it can correlate each functionCall with its
+// sibling `thoughtSignature` on the same Part (see gemini-provider.ts's
+// header comment on thought signatures). `thoughtSignature` is optional
+// per call since Gemini doesn't always attach one to every call.
 function functionCallResponse(
-  calls: { name: string; args: Record<string, unknown> }[],
+  calls: { name: string; args: Record<string, unknown>; thoughtSignature?: string }[],
 ): GenerateContentResponse {
-  return { text: undefined, functionCalls: calls } as unknown as GenerateContentResponse;
+  return {
+    text: undefined,
+    candidates: [
+      {
+        content: {
+          role: "model",
+          parts: calls.map((call) => ({
+            functionCall: { name: call.name, args: call.args },
+            ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
+          })),
+        },
+      },
+    ],
+  } as unknown as GenerateContentResponse;
 }
 
 const TOOLS: ToolDefinition[] = [
@@ -132,14 +151,84 @@ describe("geminiLlmClient", () => {
     ]);
   });
 
-  it("returns an empty, honest turn (never throws) when the response's text/functionCalls getters throw, e.g. a safety block", async () => {
+  it("captures a functionCall's thought_signature on extraction and replays it verbatim on the next turn's reconstructed Part", async () => {
+    // Regression test for a real bug found against the live API (not
+    // catchable by a mock alone -- see this module's header comment):
+    // Gemini's real API attaches an opaque thought_signature to the Part
+    // carrying a functionCall, and rejects a later request with a 400 if
+    // that exact signature isn't replayed on the same Part when the turn
+    // is echoed back. This test at least verifies the round-trip through
+    // this adapter end to end (capture on turn 1's response -> carried in
+    // ToolCallRequest.providerData -> replayed on turn 2's request) against
+    // a mocked SDK call, per this repo's offline-testing convention; see
+    // the PR description for the live-API verification this couldn't
+    // cover.
+    const generateContent = vi
+      .fn()
+      .mockResolvedValueOnce(
+        functionCallResponse([
+          {
+            name: "get_player_stats",
+            args: { player_name: "LeBron James" },
+            thoughtSignature: "opaque-sig-abc123",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(textResponse("LeBron James scored 28 points on 2024-01-03."));
+    const client = geminiLlmClient(generateContent);
+
+    const first = await client.send({
+      systemPrompt: "",
+      tools: TOOLS,
+      history: [{ role: "user", content: "How many points did LeBron score on 2024-01-03?" }],
+    });
+
+    // Captured into the shared, provider-agnostic ToolCallRequest.providerData.
+    expect(first.toolCalls).toEqual([
+      {
+        id: "get_player_stats-0",
+        name: "get_player_stats",
+        input: { player_name: "LeBron James" },
+        providerData: "opaque-sig-abc123",
+      },
+    ]);
+
+    // Simulate exactly what search-loop.ts does with the loop's result:
+    // push the assistant turn (carrying providerData unchanged) and a
+    // tool_results turn, then call send() again for the next turn.
+    const history: ConversationMessage[] = [
+      { role: "user", content: "How many points did LeBron score on 2024-01-03?" },
+      { role: "assistant", text: first.text, toolCalls: first.toolCalls },
+      {
+        role: "tool_results",
+        results: [{ id: "get_player_stats-0", name: "get_player_stats", output: { points: 28 }, isError: false }],
+      },
+    ];
+    await client.send({ systemPrompt: "", tools: TOOLS, history });
+
+    const secondRequestContents = generateContent.mock.calls[1][0].contents;
+    const replayedModelTurn = secondRequestContents[1];
+    expect(replayedModelTurn).toEqual({
+      role: "model",
+      parts: [
+        {
+          functionCall: { name: "get_player_stats", args: { player_name: "LeBron James" } },
+          thoughtSignature: "opaque-sig-abc123",
+        },
+      ],
+    });
+  });
+
+  it("returns an empty, honest turn (never throws) when response.text throws, e.g. a safety block with no candidates", async () => {
+    // `candidates` itself is a plain (possibly undefined) field, so
+    // extractToolCalls's optional-chaining read never throws -- only the
+    // `.text` getter does, when it tries to auto-unwrap `candidates[0]`
+    // with no candidates present at all.
     const blockedResponse = {
       get text(): string {
         throw new Error("Cannot read properties of undefined (no candidates)");
       },
-      get functionCalls(): never {
-        throw new Error("Cannot read properties of undefined (no candidates)");
-      },
+      candidates: undefined,
     } as unknown as GenerateContentResponse;
     const generateContent = vi.fn().mockResolvedValueOnce(blockedResponse);
     const client = geminiLlmClient(generateContent);

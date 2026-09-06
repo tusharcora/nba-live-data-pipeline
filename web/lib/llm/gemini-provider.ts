@@ -54,6 +54,25 @@
 //     inside `FunctionResponse.response` -- the SDK's own documented
 //     convention ("Use 'output' key to specify function output and
 //     'error' key to specify error details"), not a free-form payload.
+//   - `thought_signature` (required on replay): Gemini's real API attaches
+//     an opaque `Part.thoughtSignature` string to the *same Part* that
+//     carries a `functionCall`, and requires that exact signature to be
+//     replayed on that same Part when the turn is echoed back in a later
+//     request's `contents` -- omitting it fails with a 400
+//     ("Function call is missing a thought_signature in functionCall
+//     parts... required for tools to work correctly"). This is
+//     undocumented in any way a mocked SDK call could surface (confirmed
+//     against a real API call, not just the docs -- see this repo's PR
+//     history for the exact error and a live end-to-end verification).
+//     `Part.thoughtSignature` is not exposed by the `response.functionCalls`
+//     convenience getter (which only returns `FunctionCall[]`), so
+//     `extractToolCalls` below reads `response.candidates[0].content.parts`
+//     directly to capture each function-call part's sibling
+//     `thoughtSignature` alongside it. It's stored in the shared
+//     `ToolCallRequest.providerData` (an intentionally opaque, Gemini-only
+//     field -- see llm/types.ts) and replayed onto the reconstructed Part
+//     in `toGeminiContents`'s assistant case. Anthropic has no equivalent
+//     concept and never sets or reads this field.
 
 import { FunctionCallingConfigMode, GoogleGenAI } from "@google/genai";
 import type {
@@ -96,7 +115,16 @@ function toGeminiContents(history: ConversationMessage[]): Content[] {
         const parts: Part[] = [];
         if (message.text) parts.push({ text: message.text });
         for (const call of message.toolCalls) {
-          parts.push({ functionCall: { name: call.name, args: call.input } });
+          const part: Part = { functionCall: { name: call.name, args: call.input } };
+          // Replay the thought_signature Gemini attached to this exact
+          // function-call part when it was first returned, if any -- see
+          // this module's header comment. Required for the API to accept
+          // this turn being echoed back; omitting it is a 400, not a
+          // silent degradation.
+          if (typeof call.providerData === "string") {
+            part.thoughtSignature = call.providerData;
+          }
+          parts.push(part);
         }
         return { role: "model", parts };
       }
@@ -125,29 +153,49 @@ function toGeminiContents(history: ConversationMessage[]): Content[] {
 }
 
 function extractToolCalls(response: GenerateContentResponse): ToolCallRequest[] {
-  const calls = response.functionCalls ?? [];
-  return calls.map((call, index) => ({
-    // Synthesized -- see this module's header comment on why `call.id`
-    // can't be relied on for a plain generateContent call.
-    id: `${call.name ?? "unknown"}-${index}`,
-    name: call.name ?? "",
-    input: (call.args ?? {}) as Record<string, unknown>,
-  }));
+  // Deliberately not `response.functionCalls` (the convenience getter):
+  // it only returns `FunctionCall[]`, discarding each Part's sibling
+  // `thoughtSignature` field -- which must be captured here and replayed
+  // verbatim later (see this module's header comment). Reading
+  // `candidates[0].content.parts` directly keeps `functionCall` and
+  // `thoughtSignature` correlated, since the API attaches the signature to
+  // the exact same Part that carries the function call, not to a separate
+  // part or to FunctionCall itself.
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const calls: ToolCallRequest[] = [];
+  let index = 0;
+  for (const part of parts) {
+    if (!part.functionCall) continue;
+    const call = part.functionCall;
+    calls.push({
+      // Synthesized -- see this module's header comment on why `call.id`
+      // can't be relied on for a plain generateContent call.
+      id: `${call.name ?? "unknown"}-${index}`,
+      name: call.name ?? "",
+      input: (call.args ?? {}) as Record<string, unknown>,
+      ...(part.thoughtSignature ? { providerData: part.thoughtSignature } : {}),
+    });
+    index++;
+  }
+  return calls;
 }
 
-// `response.text` and `response.functionCalls` are getters that read
-// `candidates[0]` under the hood -- both throw (rather than returning
-// undefined) when there are no candidates at all, which happens for a
-// safety-blocked prompt or response (no candidates generated at all, as
-// opposed to a normal empty/text-only turn, which these getters handle
-// fine). Guard both reads together so a safety block produces the same
-// honest "couldn't complete this" result as any other provider failure,
-// never an uncaught throw out of the search loop.
+// `response.text` is a getter that reads `candidates[0]` under the hood --
+// it throws (rather than returning undefined) when there are no candidates
+// at all, which happens for a safety-blocked prompt or response (no
+// candidates generated at all, as opposed to a normal empty/text-only
+// turn, which the getter handles fine). `extractToolCalls` above uses
+// optional chaining on `candidates`/`content`/`parts` instead of the
+// throwing `response.functionCalls` getter (see its own comment), so it
+// can't throw here -- this guard exists for `response.text` specifically.
+// Either way, a safety block produces the same honest "couldn't complete
+// this" result as any other provider failure, never an uncaught throw out
+// of the search loop.
 function readGeminiOutput(response: GenerateContentResponse): LlmResponse {
   try {
     return { text: response.text ?? "", toolCalls: extractToolCalls(response) };
   } catch (error) {
-    console.error("[gemini-provider] failed to read response text/functionCalls (likely a safety block):", error);
+    console.error("[gemini-provider] failed to read response.text (likely a safety block):", error);
     return { text: "", toolCalls: [] };
   }
 }
