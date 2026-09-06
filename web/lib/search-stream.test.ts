@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SEARCH_ERROR_MESSAGE, readSearchStream, type SearchStreamEvent } from "./search-stream";
 import { responseFromChunks } from "./test-support/sse-stream";
+import type { SearchResultData } from "@/lib/search-result-types";
 
 async function collect(response: Response): Promise<SearchStreamEvent[]> {
   const events: SearchStreamEvent[] = [];
@@ -37,6 +38,7 @@ describe("readSearchStream", () => {
           citation: { table: "games", dateRange: "2025-10-01..2026-01-05" },
           noData: false,
           candidates: null,
+          resultData: null,
         },
       },
     ]);
@@ -72,7 +74,7 @@ describe("readSearchStream", () => {
       { kind: "chunk", text: "real chunk" },
       {
         kind: "done",
-        payload: { citation: null, noData: false, candidates: null },
+        payload: { citation: null, noData: false, candidates: null, resultData: null },
       },
     ]);
   });
@@ -87,7 +89,7 @@ describe("readSearchStream", () => {
     expect(events).toEqual([
       {
         kind: "done",
-        payload: { citation: null, noData: true, candidates: null },
+        payload: { citation: null, noData: true, candidates: null, resultData: null },
       },
     ]);
   });
@@ -106,6 +108,7 @@ describe("readSearchStream", () => {
           citation: null,
           noData: false,
           candidates: ["LeBron James", "LeBron James Jr."],
+          resultData: null,
         },
       },
     ]);
@@ -121,7 +124,7 @@ describe("readSearchStream", () => {
     expect(events).toEqual([
       {
         kind: "done",
-        payload: { citation: null, noData: false, candidates: ["LeBron James"] },
+        payload: { citation: null, noData: false, candidates: ["LeBron James"], resultData: null },
       },
     ]);
   });
@@ -140,9 +143,58 @@ describe("readSearchStream", () => {
           citation: { table: "player_game_stats", dateRange: "2025-10-01..2026-01-05", gameCount: 12 },
           noData: false,
           candidates: null,
+          resultData: null,
         },
       },
     ]);
+  });
+
+  it("parses resultData from a done payload when present", async () => {
+    const resultData: SearchResultData = {
+      type: "leaders",
+      payload: { stat: "points", gameCount: 26, leaders: [{ player_id: 1, player_name: "A", value: 10 }] },
+    };
+    const response = responseFromChunks([
+      `event: done\ndata: ${JSON.stringify({ citation: null, noData: false, candidates: null, resultData })}\n\n`,
+    ]);
+
+    const events = await collect(response);
+
+    expect(events[events.length - 1]).toEqual({
+      kind: "done",
+      payload: { citation: null, noData: false, candidates: null, resultData },
+    });
+  });
+
+  it("drops a malformed resultData (wrong type discriminant) rather than failing the whole done parse", async () => {
+    const response = responseFromChunks([
+      `event: done\ndata: ${JSON.stringify({
+        citation: null,
+        noData: false,
+        candidates: null,
+        resultData: { type: "not_a_real_type", payload: {} },
+      })}\n\n`,
+    ]);
+
+    const events = await collect(response);
+
+    expect(events[events.length - 1]).toEqual({
+      kind: "done",
+      payload: { citation: null, noData: false, candidates: null, resultData: null },
+    });
+  });
+
+  it("defaults resultData to null when absent (backward-compatible with an older payload)", async () => {
+    const response = responseFromChunks([
+      `event: done\ndata: ${JSON.stringify({ citation: null, noData: true, candidates: null })}\n\n`,
+    ]);
+
+    const events = await collect(response);
+
+    expect(events[events.length - 1]).toEqual({
+      kind: "done",
+      payload: { citation: null, noData: true, candidates: null, resultData: null },
+    });
   });
 
   it("reports a distinct error event, not a done event, for an event: error frame", async () => {
@@ -207,7 +259,7 @@ describe("readSearchStream", () => {
       { kind: "chunk", text: "real chunk" },
       {
         kind: "done",
-        payload: { citation: null, noData: false, candidates: null },
+        payload: { citation: null, noData: false, candidates: null, resultData: null },
       },
     ]);
   });
@@ -228,7 +280,7 @@ describe("readSearchStream", () => {
     expect(events).toEqual([
       {
         kind: "done",
-        payload: { citation: null, noData: false, candidates: null },
+        payload: { citation: null, noData: false, candidates: null, resultData: null },
       },
     ]);
   });

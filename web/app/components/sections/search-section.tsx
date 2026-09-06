@@ -26,7 +26,10 @@ import {
   readSearchStream,
   type SearchCitation,
 } from "@/lib/search-stream";
+import type { SearchResultData } from "@/lib/search-result-types";
 import { cn } from "@/lib/utils";
+
+import { SearchResultDataView } from "./search-result-tables";
 
 const STREAM_ENDED_EARLY_MESSAGE =
   "The answer stream ended unexpectedly before finishing. Please try again.";
@@ -55,7 +58,7 @@ function connectionErrorMessage(status?: number): string {
 type SearchState =
   | { status: "idle" }
   | { status: "streaming"; text: string }
-  | { status: "answer"; text: string; citation: SearchCitation | null }
+  | { status: "answer"; text: string; citation: SearchCitation | null; resultData: SearchResultData | null }
   | { status: "no-data" }
   | { status: "ambiguous"; candidates: string[] }
   | { status: "error"; message: string };
@@ -164,6 +167,7 @@ export function SearchSection() {
                   status: "answer",
                   text: prev.status === "streaming" ? prev.text : "",
                   citation: payload.citation,
+                  resultData: payload.resultData,
                 }));
               }
               break;
@@ -325,6 +329,7 @@ function SearchResult({
                 The assistant finished without returning any answer text.
               </p>
             )}
+            <SearchResultDataView resultData={state.resultData} />
             {state.citation ? (
               <div className="flex items-start gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
                 <Quote aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />

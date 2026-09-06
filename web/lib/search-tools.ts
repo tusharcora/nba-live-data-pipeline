@@ -37,11 +37,14 @@
 
 import { fetchFromApi } from "@/lib/fastapi-client";
 import type { ToolDefinition } from "@/lib/llm/types";
+import type { SearchResultData, LeaderRow } from "@/lib/search-result-types";
+import type { GameRow, PlayerStatRow } from "@/lib/team-names";
 
 export interface ToolResultEnvelope {
   status: "ok" | "no_match" | "ambiguous" | "error";
   table: string | null;
   date_range: string | null;
+  resultData: SearchResultData | null;
   data: unknown;
   candidates: string[] | null;
   message: string | null;
@@ -51,6 +54,7 @@ const ERROR_ENVELOPE: ToolResultEnvelope = {
   status: "error",
   table: null,
   date_range: null,
+  resultData: null,
   data: null,
   candidates: null,
   message: null,
@@ -218,6 +222,102 @@ function deriveDateRange(name: ToolName, data: unknown): string | null {
   return formatDateRange(dates[0], dates[dates.length - 1]);
 }
 
+// Reshapes get_team_games's team-centric row (query_tools.py's
+// _team_game_view -- team/opponent/team_score/opponent_score/is_home) back
+// into GameRow's home/away shape, so it can reuse the same rendering as
+// get_game_result's `game` and the games/[id] page's own GameRow. There is
+// no `source_pulled_at` on the team-games view -- it's set to "" rather
+// than omitted (GameRow requires it) since nothing that renders a GameRow
+// (BoxScoreTable, the new GameMatchupCard in Task 6) ever reads it.
+function teamGameViewToGameRow(row: Record<string, unknown>): GameRow {
+  const isHome = row.is_home === true;
+  const team = String(row.team ?? "");
+  const opponent = String(row.opponent ?? "");
+  const teamScore = typeof row.team_score === "number" ? row.team_score : null;
+  const opponentScore = typeof row.opponent_score === "number" ? row.opponent_score : null;
+  return {
+    game_id: Number(row.game_id),
+    game_date: String(row.game_date ?? ""),
+    season: Number(row.season),
+    status: String(row.status ?? ""),
+    postseason: row.postseason === true,
+    home_team: isHome ? team : opponent,
+    away_team: isHome ? opponent : team,
+    home_score: isHome ? teamScore : opponentScore,
+    away_score: isHome ? opponentScore : teamScore,
+    source_pulled_at: "",
+  };
+}
+
+// Derives the structured, per-tool-typed result data an "ok" response
+// carries, for the NL search page to render alongside its prose answer.
+// Mirrors deriveDateRange()'s per-tool branching -- each tool's real shape
+// (api/tests/test_query_tools.py's fixtures) is handled explicitly.
+function deriveResultData(name: ToolName, data: unknown): SearchResultData | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as Record<string, unknown>;
+
+  switch (name) {
+    case "get_player_stats": {
+      const games = payload.games;
+      if (!Array.isArray(games)) return null;
+      return {
+        type: "player_stats",
+        payload: {
+          playerName: String(payload.player_name ?? ""),
+          games: games as PlayerStatRow[],
+        },
+      };
+    }
+    case "get_team_games": {
+      const rawGames = payload.games;
+      if (!Array.isArray(rawGames)) return null;
+      return {
+        type: "team_games",
+        payload: {
+          team: String(payload.team ?? ""),
+          games: rawGames.map((row) => teamGameViewToGameRow(row as Record<string, unknown>)),
+        },
+      };
+    }
+    case "get_leaders": {
+      const leaders = payload.leaders;
+      const gameCount = payload.game_count;
+      if (!Array.isArray(leaders) || typeof gameCount !== "number") return null;
+      return {
+        type: "leaders",
+        payload: {
+          stat: String(payload.stat ?? ""),
+          gameCount,
+          leaders: leaders as LeaderRow[],
+        },
+      };
+    }
+    case "get_game_result": {
+      const game = payload.game;
+      const boxScore = payload.box_score;
+      if (!game || typeof game !== "object" || !Array.isArray(boxScore)) return null;
+      const gameRow = game as GameRow;
+      // query_tools.py's get_box_score() selects plain player_game_stats
+      // with no join to games -- enrich each row with the game-context
+      // fields BoxScoreTable expects, using the values already present on
+      // `game` in this same response (no second lookup needed).
+      const enrichedBoxScore = (boxScore as Record<string, unknown>[]).map((row) => ({
+        ...row,
+        game_date: gameRow.game_date,
+        home_team: gameRow.home_team,
+        away_team: gameRow.away_team,
+        home_score: gameRow.home_score,
+        away_score: gameRow.away_score,
+      })) as PlayerStatRow[];
+      return {
+        type: "game_result",
+        payload: { game: gameRow, boxScore: enrichedBoxScore },
+      };
+    }
+  }
+}
+
 // The real `candidates` shape is `[{name: string}, ...]` (see
 // api/tests/test_query_tools.py's `test_get_player_stats_ambiguous_name_returns_candidates`),
 // not plain strings — extract `.name` so the rest of the BFF (and the
@@ -252,6 +352,7 @@ function normalizeEnvelope(name: ToolName, raw: unknown): ToolResultEnvelope {
     // for a genuinely grounded "ok" result.
     table: isOk ? TOOL_TABLE_MAP[name] : null,
     date_range: isOk ? deriveDateRange(name, data) : null,
+    resultData: isOk ? deriveResultData(name, data) : null,
     data,
     candidates: extractCandidateNames(candidate.candidates),
     message: typeof candidate.message === "string" ? candidate.message : null,

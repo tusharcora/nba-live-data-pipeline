@@ -26,6 +26,7 @@
 
 import type { ConversationMessage, LlmClient, ToolCallResult } from "@/lib/llm/types";
 import { TOOL_DEFINITIONS, callTool as defaultCallTool, type ToolResultEnvelope } from "@/lib/search-tools";
+import type { SearchResultData } from "@/lib/search-result-types";
 
 export type CallTool = (
   name: string,
@@ -42,6 +43,7 @@ export interface SearchResult {
   citation: Citation | null;
   noData: boolean;
   candidates: string[] | null;
+  resultData: SearchResultData | null;
 }
 
 const MAX_ITERATIONS = 6;
@@ -63,6 +65,7 @@ export const FALLBACK_RESULT: SearchResult = {
   citation: null,
   noData: true,
   candidates: null,
+  resultData: null,
 };
 
 function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | null): SearchResult {
@@ -80,7 +83,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
   const answerText = rawAnswerText.trim() || "Here's what I found:";
 
   if (lastToolResult.status === "no_match") {
-    return { answerText, citation: null, noData: true, candidates: null };
+    return { answerText, citation: null, noData: true, candidates: null, resultData: null };
   }
 
   if (lastToolResult.status === "ambiguous") {
@@ -95,6 +98,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
       citation: null,
       noData: false,
       candidates: lastToolResult.candidates,
+      resultData: null,
     };
   }
 
@@ -109,6 +113,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
     citation: { table: lastToolResult.table, dateRange: lastToolResult.date_range },
     noData: false,
     candidates: null,
+    resultData: lastToolResult.resultData,
   };
 }
 
@@ -140,7 +145,14 @@ export async function runSearchLoop(params: {
       if (result.status === "ok" || result.status === "no_match" || result.status === "ambiguous") {
         lastToolResult = result;
       }
-      results.push({ id: call.id, name: call.name, output: result, isError: result.status === "error" });
+      // resultData exists only for the client's tables (finalize() below
+      // threads it through to SearchResult.resultData via lastToolResult).
+      // The model already sees the same rows in `data`, and for
+      // get_team_games in a second, differently-shaped copy that would
+      // invite confused or contradictory prose -- never send it to the LLM.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { resultData: _clientOnlyResultData, ...modelFacingResult } = result;
+      results.push({ id: call.id, name: call.name, output: modelFacingResult, isError: result.status === "error" });
     }
 
     history.push({ role: "tool_results", results });

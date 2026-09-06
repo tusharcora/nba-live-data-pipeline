@@ -173,6 +173,7 @@ describe("callTool", () => {
       status: "error",
       table: null,
       date_range: null,
+      resultData: null,
       data: null,
       candidates: null,
       message: null,
@@ -250,5 +251,173 @@ describe("callTool", () => {
     expect(byName.get_team_games.inputSchema.required).toEqual(["team"]);
     expect(byName.get_leaders.inputSchema.required).toEqual(["stat", "date_range"]);
     expect(byName.get_game_result.inputSchema.required).toEqual(["team_a", "team_b", "date"]);
+  });
+});
+
+describe("callTool -- resultData", () => {
+  beforeEach(() => {
+    fetchFromApiMock.mockReset();
+  });
+
+  it("derives player_stats resultData verbatim from data.games", async () => {
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        player_name: "Luka Dončić",
+        games: [
+          { stat_id: "1", game_id: 1, player_id: 1629029, player_first_name: "Luka", player_last_name: "Dončić", team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4, minutes_played: "31", game_date: "2024-01-03", home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers", home_score: 126, away_score: 97 },
+        ],
+      },
+      candidates: null,
+      message: null,
+    });
+
+    const result = await callTool("get_player_stats", { player_name: "Luka Doncic" });
+
+    expect(result.resultData).toEqual({
+      type: "player_stats",
+      payload: {
+        playerName: "Luka Dončić",
+        games: [
+          { stat_id: "1", game_id: 1, player_id: 1629029, player_first_name: "Luka", player_last_name: "Dončić", team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4, minutes_played: "31", game_date: "2024-01-03", home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers", home_score: 126, away_score: 97 },
+        ],
+      },
+    });
+  });
+
+  it("reshapes get_team_games's team-centric rows into GameRow shape", async () => {
+    // Real shape from api/src/api/routers/query_tools.py's _team_game_view().
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        team: "Boston Celtics",
+        games: [
+          {
+            game_id: 1, game_date: "2024-01-03", team: "Boston Celtics", opponent: "New York Knicks",
+            team_score: 110, opponent_score: 104, is_home: true, status: "Final", postseason: false, season: 2023,
+          },
+          {
+            game_id: 2, game_date: "2024-01-07", team: "Boston Celtics", opponent: "Miami Heat",
+            team_score: 98, opponent_score: 101, is_home: false, status: "Final", postseason: false, season: 2023,
+          },
+        ],
+      },
+      candidates: null,
+      message: null,
+    });
+
+    const result = await callTool("get_team_games", { team: "Boston Celtics" });
+
+    expect(result.resultData).toEqual({
+      type: "team_games",
+      payload: {
+        team: "Boston Celtics",
+        games: [
+          {
+            game_id: 1, game_date: "2024-01-03", season: 2023, status: "Final", postseason: false,
+            home_team: "Boston Celtics", away_team: "New York Knicks", home_score: 110, away_score: 104,
+            source_pulled_at: "",
+          },
+          {
+            game_id: 2, game_date: "2024-01-07", season: 2023, status: "Final", postseason: false,
+            home_team: "Miami Heat", away_team: "Boston Celtics", home_score: 101, away_score: 98,
+            source_pulled_at: "",
+          },
+        ],
+      },
+    });
+  });
+
+  it("derives leaders resultData with player_id/player_name/value rows", async () => {
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        stat: "points",
+        date_range: { start_date: "2024-01-01", end_date: "2024-01-03" },
+        game_count: 26,
+        leaders: [
+          { player_id: 203944, player_name: "Julius Randle", value: 74 },
+          { player_id: 1630162, player_name: "Anthony Edwards", value: 70 },
+        ],
+      },
+      candidates: null,
+      message: null,
+    });
+
+    const result = await callTool("get_leaders", {
+      stat: "points",
+      date_range: { start: "2024-01-01", end: "2024-01-03" },
+    });
+
+    expect(result.resultData).toEqual({
+      type: "leaders",
+      payload: {
+        stat: "points",
+        gameCount: 26,
+        leaders: [
+          { player_id: 203944, player_name: "Julius Randle", value: 74 },
+          { player_id: 1630162, player_name: "Anthony Edwards", value: 70 },
+        ],
+      },
+    });
+  });
+
+  it("enriches get_game_result's box_score rows with the game's own date/team/score fields", async () => {
+    // Real shape: query_tools.py's get_box_score() selects plain
+    // player_game_stats with NO join to games -- box_score rows have no
+    // game_date/home_team/away_team/home_score/away_score of their own.
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        game: {
+          game_id: 1, game_date: "2024-01-03", season: 2023, status: "Final", postseason: false,
+          home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers", home_score: 126, away_score: 97,
+          source_pulled_at: "2026-01-01T00:00:00Z",
+        },
+        box_score: [
+          { stat_id: "1", game_id: 1, player_id: 1629029, player_first_name: "Luka", player_last_name: "Dončić", team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4, minutes_played: "31" },
+        ],
+      },
+      candidates: null,
+      message: null,
+    });
+
+    const result = await callTool("get_game_result", {
+      team_a: "Dallas Mavericks",
+      team_b: "Portland Trail Blazers",
+      date: "2024-01-03",
+    });
+
+    expect(result.resultData).toEqual({
+      type: "game_result",
+      payload: {
+        game: {
+          game_id: 1, game_date: "2024-01-03", season: 2023, status: "Final", postseason: false,
+          home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers", home_score: 126, away_score: 97,
+          source_pulled_at: "2026-01-01T00:00:00Z",
+        },
+        boxScore: [
+          {
+            stat_id: "1", game_id: 1, player_id: 1629029, player_first_name: "Luka", player_last_name: "Dončić",
+            team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4, minutes_played: "31",
+            game_date: "2024-01-03", home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers",
+            home_score: 126, away_score: 97,
+          },
+        ],
+      },
+    });
+  });
+
+  it("is null for a no_match result, same as citation", async () => {
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "no_match",
+      data: null,
+      candidates: null,
+      message: "No player found matching 'Zzz'.",
+    });
+
+    const result = await callTool("get_player_stats", { player_name: "Zzz" });
+
+    expect(result.resultData).toBeNull();
   });
 });
