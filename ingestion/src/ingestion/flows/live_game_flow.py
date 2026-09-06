@@ -403,6 +403,23 @@ def live_game_flow(
        `SourceConflict` rows via `conflict_sink`.
     4. Writes exactly one freshness `QualityMetric`, unchanged from before.
 
+    `date` should be "today" (ET) for cross-source matching to be
+    meaningful: nba_stats's live scoreboard (`nba_live.py`) has no date
+    parameter and is always "today" (ET) by construction, but
+    `balldontlie_client`/`public_feed_client` are still called with
+    whatever `date` this flow is invoked with. Team-name-overlap matching
+    (`match_game_ids_by_team_overlap`) only matches on a shared team
+    name, not a shared date — so if `date` were some other day, a
+    same-team game from that day could silently get remapped onto an
+    unrelated game in today's nba_stats slate (the same team plays every
+    few days, and a 10-15-game nba_stats slate covers 20-30 teams, so a
+    same-team collision is likely, not a corner case). Rather than risk
+    that, this flow compares nba_stats's own `scoreboard.gameDate` against
+    `date` before matching: on a mismatch it safely degrades to no
+    cross-source matching/reconciliation at all for this poll (every
+    source's states keep their native ids, unmatched but harmless) rather
+    than risk cross-wiring an unrelated game.
+
     All sinks and source clients are injected; production code gets real
     implementations by default, tests pass in-memory fakes.
     """
@@ -438,11 +455,8 @@ def live_game_flow(
     )
     raw_pulls_written += 1
     nba_stats_states = extract_nba_stats_live_states(nba_stats_payload)
-    nba_stats_team_names = {
-        state.game_id: {state.home_team, state.away_team}
-        for state in nba_stats_states
-        if state.home_team and state.away_team
-    }
+    nba_stats_game_date = nba_stats_payload.get("scoreboard", {}).get("gameDate")
+    date_matches_nba_stats = nba_stats_game_date == date
 
     balldontlie_states: list[LiveGameState] = []
     balldontlie_team_names: dict[int, set[str]] = {}
@@ -460,21 +474,30 @@ def live_game_flow(
     public_feed_states = extract_public_feed_live_states(public_feed_payload)
     public_feed_team_names = extract_public_feed_team_names(public_feed_payload)
 
-    remap_game_ids(
-        balldontlie_states,
-        match_game_ids_by_team_overlap(nba_stats_team_names, balldontlie_team_names),
-    )
-    remap_game_ids(
-        public_feed_states,
-        match_game_ids_by_team_overlap(nba_stats_team_names, public_feed_team_names),
-    )
+    if date_matches_nba_stats:
+        nba_stats_team_names = {
+            state.game_id: {state.home_team, state.away_team}
+            for state in nba_stats_states
+            if state.home_team and state.away_team
+        }
+        remap_game_ids(
+            balldontlie_states,
+            match_game_ids_by_team_overlap(nba_stats_team_names, balldontlie_team_names),
+        )
+        remap_game_ids(
+            public_feed_states,
+            match_game_ids_by_team_overlap(nba_stats_team_names, public_feed_team_names),
+        )
 
     for state in (*nba_stats_states, *balldontlie_states, *public_feed_states):
         live_game_state_sink.write(state)
         live_game_states_written += 1
 
-    for conflict in reconcile_live_states(nba_stats_states, balldontlie_states, public_feed_states):
-        conflict_sink.write(conflict)
+    if date_matches_nba_stats:
+        for conflict in reconcile_live_states(
+            nba_stats_states, balldontlie_states, public_feed_states
+        ):
+            conflict_sink.write(conflict)
 
     poll_lag_seconds = (datetime.now(timezone.utc) - poll_started_at).total_seconds()
     quality_metric_sink.write(

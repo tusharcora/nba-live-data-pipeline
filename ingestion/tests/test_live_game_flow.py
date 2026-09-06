@@ -492,51 +492,61 @@ def test_live_game_flow_writes_nba_stats_rows_when_present():
     assert len(live_game_state_sink.written) == 4  # every game in _nba_stats_scoreboard()
 
 
+def _matching_balldontlie_client() -> FakeBallDontLieClient:
+    return FakeBallDontLieClient(
+        [
+            {
+                "data": [
+                    {
+                        "id": 15908,
+                        "status": "3rd Qtr",
+                        "home_team_score": 89,
+                        "visitor_team_score": 88,
+                        "home_team": {"full_name": "Miami Heat"},
+                        "visitor_team": {"full_name": "Boston Celtics"},
+                    }
+                ],
+                "meta": {"next_cursor": None},
+            }
+        ]
+    )
+
+
+def _matching_nba_stats_client(game_date: str) -> FakeNbaLiveScoreboardClient:
+    return FakeNbaLiveScoreboardClient(
+        {
+            "scoreboard": {
+                "gameDate": game_date,
+                "games": [
+                    {
+                        "gameId": "0022500123",
+                        "gameStatus": 2,
+                        "gameStatusText": "Qtr 3 4:12",
+                        "gameTimeUTC": "2026-09-06T23:30:00Z",
+                        "period": 3,
+                        "gameClock": "PT04M12.00S",
+                        "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
+                        "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
+                    }
+                ],
+            }
+        }
+    )
+
+
 def test_live_game_flow_matches_and_writes_conflicts_across_sources():
     conflict_sink = FakeRowSink()
+    live_game_state_sink = FakeRowSink()
 
     live_game_flow(
         date="2026-09-01",
         raw_pull_sink=FakeRawPullSink(),
-        live_game_state_sink=FakeRowSink(),
+        live_game_state_sink=live_game_state_sink,
         quality_metric_sink=FakeRowSink(),
         conflict_sink=conflict_sink,
-        balldontlie_client=FakeBallDontLieClient(
-            [
-                {
-                    "data": [
-                        {
-                            "id": 15908,
-                            "status": "3rd Qtr",
-                            "home_team_score": 89,
-                            "visitor_team_score": 88,
-                            "home_team": {"full_name": "Miami Heat"},
-                            "visitor_team": {"full_name": "Boston Celtics"},
-                        }
-                    ],
-                    "meta": {"next_cursor": None},
-                }
-            ]
-        ),
+        balldontlie_client=_matching_balldontlie_client(),
         public_feed_client=FakeScoreboardSource({"events": []}),
-        nba_stats_client=FakeNbaLiveScoreboardClient(
-            {
-                "scoreboard": {
-                    "games": [
-                        {
-                            "gameId": "0022500123",
-                            "gameStatus": 2,
-                            "gameStatusText": "Qtr 3 4:12",
-                            "gameTimeUTC": "2026-09-06T23:30:00Z",
-                            "period": 3,
-                            "gameClock": "PT04M12.00S",
-                            "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
-                            "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
-                        }
-                    ]
-                }
-            }
-        ),
+        nba_stats_client=_matching_nba_stats_client(game_date="2026-09-01"),
     )
 
     assert len(conflict_sink.written) == 1
@@ -545,6 +555,52 @@ def test_live_game_flow_matches_and_writes_conflicts_across_sources():
     assert conflict.field_name == "home_score"
     assert conflict.primary_source == "nba_stats"
     assert conflict.secondary_source == "balldontlie"
+
+    # Regression guard: `remap_game_ids` mutates state objects in place, so a
+    # fake sink's stored references would still look "correct" even if the
+    # write loop ran BEFORE remapping (the mutation would just happen to the
+    # already-stored object afterward). Asserting on the actually-written
+    # game_id, not just on reconciliation output, is what actually pins the
+    # ordering: remap-then-write, not write-then-remap.
+    balldontlie_row = next(
+        row for row in live_game_state_sink.written if row.source == "balldontlie"
+    )
+    assert balldontlie_row.game_id == 22500123  # remapped onto nba_stats's canonical id
+    assert balldontlie_row.game_id != 15908  # not balldontlie's own native id
+
+
+def test_live_game_flow_skips_matching_when_date_does_not_match_nba_stats_game_date():
+    """nba_stats's live scoreboard is always "today" (ET) by construction --
+    it has no `date` parameter. If this flow is invoked with some other
+    `date` (e.g. a backfill-style historical poll), team-name-overlap
+    matching must NOT run: a same-team game from a different real date
+    could otherwise be silently remapped onto an unrelated game in today's
+    nba_stats slate. balldontlie's Miami Heat/Boston Celtics game here
+    WOULD match nba_stats's Miami Heat/Boston Celtics game if matching ran
+    -- proving the skip is deliberate, not incidental to a lack of overlap.
+    """
+    conflict_sink = FakeRowSink()
+    live_game_state_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=live_game_state_sink,
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=conflict_sink,
+        balldontlie_client=_matching_balldontlie_client(),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        # nba_stats's own gameDate ("2026-09-06") does not match the `date`
+        # this flow was invoked with ("2026-09-01").
+        nba_stats_client=_matching_nba_stats_client(game_date="2026-09-06"),
+    )
+
+    balldontlie_row = next(
+        row for row in live_game_state_sink.written if row.source == "balldontlie"
+    )
+    assert balldontlie_row.game_id == 15908  # kept its own native id, not remapped
+
+    assert conflict_sink.written == []  # no cross-date reconciliation either
 
 
 def test_live_game_flow_writes_poll_lag_metric_exactly_once():
