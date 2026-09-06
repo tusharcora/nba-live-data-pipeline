@@ -89,6 +89,14 @@ canonical source for "what games exist today and what's their status";
 for score agreement, consistent with the existing primary/secondary
 source framing in `docs/prd.md` §07.
 
+Naming note: the source is called `nba_stats` here but is implemented
+by wrapping `nba_api`'s **live** scoreboard endpoint — a different part
+of that library from the **historical** `nba_api` endpoints backing the
+unrelated backfill flow. `nba_stats.py`'s module docstring states this
+distinction explicitly, since "nba_stats" reads as if it should map to
+stats.nba.com's stats endpoints rather than the live scoreboard, and a
+future reader shouldn't have to infer the difference from context.
+
 `live_game_flow` gains a third pull per run:
 `RawPull(source="nba_stats", endpoint="scoreboard", payload=...)`,
 extracting one `LiveGameState` row per game the same way the other two
@@ -126,19 +134,51 @@ contract) nor `/live` (live-only, no historical rows) is the right shape
 for "the homepage's unified board." A new router serves the merged read
 model:
 
+**"Today" is defined server-side as the current calendar day in
+`America/New_York`** (NBA scheduling is ET-native), not UTC and not the
+server's local timezone. A game tipping off at 10pm ET (7am UTC the
+following day) must group under the ET day it's scheduled in, not
+whichever UTC/server day the wall-clock happens to land on — every
+"today" grouping query in `/board` uses this single definition, defined
+once as a shared helper rather than re-derived per call site.
+
 - **`GET /board`** — cached JSON (short TTL, matching `/games`'s
   15s pattern), used for first paint. Computed by:
-  1. Grouping today's `live_game_state` rows by `game_id`, taking the
-     latest row per source, and merging fields — team names and
-     `scheduled_start` from the `nba_stats` row when present, scores
-     from whichever source has the most recent `pulled_at`. Row
-     `status` is `scheduled` / `live` / `final` derived primarily from
-     `nba_stats`'s status code, falling back to the other sources'
-     status strings via the existing `isLiveStatus`-style matching if
-     `nba_stats` didn't report this game.
+  1. Grouping today's (ET) `live_game_state` rows by `game_id` and
+     merging fields per game:
+     - **Team names / `scheduled_start`**: the most recent *non-null*
+       value among today's `nba_stats` rows for this `game_id` — not
+       simply the latest `nba_stats` row overall. `nba_stats` covers
+       the full day's slate up front, and these fields don't change
+       once known, so once a game's teams/tip-off time have been seen
+       even once today, a later missed `nba_stats` poll (rate limit,
+       transient error, schema drift) can't blank them out. This reuses
+       storage already being written — no new cache or lookup table.
+     - **Score / period / clock**: `nba_stats`'s latest row for this
+       `game_id` when one exists today, full stop — not "whichever
+       source is freshest." Polling `balldontlie`, `public_feed`, and
+       `nba_stats` on different offsets means the "freshest" source
+       flips tick-to-tick even with no real disagreement between them,
+       which would make the displayed score flicker between sources for
+       no reason. Making `nba_stats` canonical for display (as it
+       already is for status) removes that flicker; `balldontlie` and
+       `public_feed` are read only for reconciliation (`source_conflicts`
+       detection) and the staleness check (§6.1), never for the
+       displayed number. If `nba_stats` has no row at all for a
+       `game_id` today (a genuine coverage gap, not just a stale poll),
+       fall back to the freshest of the other two so the row still
+       renders.
+     - **`status`**: derived from `nba_stats`'s status code when
+       present. Preserves the same four buckets `LiveBoard`'s retiring
+       `getStatusPresentation` already used — `scheduled` / `live` /
+       `final` / **`postponed`** (covering postponed, cancelled,
+       suspended, and delayed) — rather than collapsing everything into
+       three. A postponed/cancelled game renders its badge only, with
+       no score, countdown, or commentary, so it's never shown as if a
+       tip-off is still coming.
   2. Falling back to the Gold `games` table for any game not present in
-     today's `live_game_state` set (i.e., the historical tail) — this
-     is why older finals don't depend on dbt having run recently.
+     today's (ET) `live_game_state` set (i.e., the historical tail) —
+     this is why older finals don't depend on dbt having run recently.
   3. Returning one list, ordered: live, then final, then scheduled
      within "today," then historical finals by date descending —
      matching the reference mockup's row grouping.
@@ -149,9 +189,19 @@ model:
   `GET /live` and its BFF proxy (`app/api/live/route.ts` becomes
   `app/api/board/route.ts` / `app/api/board/stream/route.ts`).
 
+  Query cost: the merge-and-commentary computation (§6) runs **once per
+  poll tick in a shared background loop**, the same architecture `/live`
+  already uses — it is not re-run per connected client, so a full
+  ~10-15-game slate with many simultaneous viewers doesn't multiply
+  DB load by viewer count. `source_conflicts` needs an index on
+  `(game_id, detected_at)` to back `recent_conflicts_for_game` (§5.2)
+  at that per-tick, per-live-game cadence within the PRD's p95 <300ms
+  budget.
+
 Each row in both responses carries a `commentary` field (§6):
 `{ text: string, kind: "conflict" | "stale" | "run" | "leader" } | null`
-— `null` for `scheduled`/`final` rows, always populated for `live` rows.
+— `null` for `scheduled`/`final`/`postponed` rows, always populated for
+`live` rows.
 
 ### 5.2 Per-game conflict lookup
 
@@ -174,14 +224,26 @@ against constructed rows.
 ### 6.1 Priority (exactly one line per row; highest wins)
 
 1. **Source conflict** — a `source_conflicts` row for this `game_id`
-   detected within `CONFLICT_DISPLAY_WINDOW_SECONDS` (default 300) →
-   `"Source conflict · <field_name>"`, `kind: "conflict"`.
-2. **Feed stale** — the freshest source's `pulled_at` for this game is
-   current, but another source hasn't reported in more than
-   `STALE_THRESHOLD_SECONDS` (default 45) → `"Feed stale · <source>
-   delayed"`, `kind: "stale"`. This replaces `LiveBoard`'s old 60s
-   *connection*-level staleness check with a more honest *per-source,
-   per-game* one.
+   detected within `CONFLICT_DISPLAY_WINDOW_SECONDS` (default 300,
+   acting as an expiry ceiling so a very old unresolved conflict doesn't
+   haunt the row indefinitely), **and** the two sources' latest values
+   for that same field are still actually different as of the current
+   poll. Re-checking current values rather than keying purely off
+   detection time matters because conflicts are the highest-priority
+   signal precisely for being rare and important — a conflict that
+   self-corrected on the next poll shouldn't keep outranking and hiding
+   a live scoring run for another 5 minutes just because it was once
+   detected. → `"Source conflict · <field_name>"`, `kind: "conflict"`.
+2. **Feed stale** — any source's `pulled_at` for this game is more than
+   `STALE_THRESHOLD_SECONDS` (default 45) old while at least one other
+   source is current → `"Feed stale · <lagging source> delayed"`,
+   `kind: "stale"`. The important case is `nba_stats` itself lagging
+   (it's the canonical display source per §5.1.1, so a stale `nba_stats`
+   row means the visible score/clock may already be outdated) —
+   `balldontlie`/`public_feed` lagging is a lower-stakes reconciliation
+   note but uses the same message shape. This replaces `LiveBoard`'s
+   old 60s *connection*-level staleness check with a more honest
+   *per-source, per-game* one.
 3. **Scoring run** — see §6.2 → `"<TEAM> on a <N>-0 run"`,
    `kind: "run"`.
 4. **Leader margin** (fallback) — `"<TEAM> leads by <N>"`, or `"Tied"`
@@ -194,8 +256,10 @@ granularity, not play-by-play, so a "run" is inferred, not observed —
 documented here as an approximation, matching this codebase's existing
 "ASSUMED shape" comment convention rather than presenting it as exact.
 
-Algorithm: take the freshest source's rows for this `game_id`,
-newest-first; walk backwards accumulating each team's score delta
+Algorithm: take `nba_stats`'s rows for this `game_id` — the same source
+canonical for score display (§5.1.1), so the run text never contradicts
+the visible score — newest-first; walk backwards accumulating each
+team's score delta
 between consecutive snapshots. The streak breaks at the first snapshot
 where the *other* team's score also increased. Sum the still-scoring
 team's points over the unbroken streak. If the total is
@@ -245,6 +309,11 @@ re-derived a third time.
   client-side from `scheduled_start` (UTC → local, e.g. "7:30 PM ET");
   em-dash score; no commentary; "View Feed" present; freshness shows
   "—".
+- **Postponed** (covering postponed/cancelled/suspended/delayed) —
+  reuses `LiveBoard`'s existing "destructive" badge variant for this
+  bucket; no score, no countdown, no commentary — just the status
+  label, so a disrupted game is never shown as if a tip-off is still
+  coming.
 
 ### 7.3 New route: `/live/[gameId]`
 
@@ -280,17 +349,24 @@ no longer has an all-games view of its own.
   documented as the one client in this codebase not mocked at the
   `httpx` layer (§4.1).
 - **API**: `compute_commentary` gets direct unit tests per priority
-  branch (conflict present, stale source, run above/below threshold,
-  plain leader, tied) using constructed `LiveGameState`/conflict rows —
-  no live DB. `/board`'s merge logic (today's live-set + Gold fallback)
-  tested against a fake `GamesReader`/`LiveStateReader` pair, matching
-  the existing DI test pattern in `games.py`/`live.py`.
+  branch (conflict present *and still disagreeing*, conflict present
+  but self-corrected on latest poll — must not outrank a live run,
+  stale source, run above/below threshold, plain leader, tied) using
+  constructed `LiveGameState`/conflict rows — no live DB. `/board`'s
+  merge logic (today's live-set + Gold fallback) tested against a fake
+  `GamesReader`/`LiveStateReader` pair, matching the existing DI test
+  pattern in `games.py`/`live.py`, with explicit cases for: a
+  `nba_stats` row missing mid-slate while team names were already seen
+  earlier today (must not blank out), a game whose only `nba_stats`
+  presence is a `postponed` status code, and a game tipping off at
+  10pm ET (7am UTC next day) grouping under the correct ET calendar
+  day rather than splitting across two "todays."
 - **DB migration**: the new `live_game_state` columns verified offline
   via `alembic upgrade head --sql` / `alembic downgrade base --sql`.
 - **Frontend**: `web/` has no unit test runner today (`package.json`
   only wires `tsc`/`eslint`), so verification follows the existing
   convention — `npx tsc --noEmit`, `npm run lint`, and a manual pass in
-  the dev server checking all three row states, the pulsing-live
+  the dev server checking all four row states, the pulsing-live
   treatment, SSE reconnect behavior, and the new `/live/[gameId]`
   route, per this repo's standing rule to exercise UI changes in a
   real browser before calling them done.
@@ -325,3 +401,12 @@ working until step 5, so there's no forced big-bang cutover.
   pairs compared) — worth a quick sanity check post-rollout that this
   doesn't flood the quality scorecard with noise from `nba_stats`
   disagreeing with the others in ways that aren't meaningful.
+- The coalesce-across-today's-`nba_stats`-rows fix for team
+  names/`scheduled_start` (§5.1.1) assumes `nba_stats` reports each of
+  today's games at least once during the day — if it misses a game
+  entirely (not just a single poll), that game still has no team names
+  until the historical Gold fallback picks it up the next day. This is
+  a narrower failure mode than the original "single missed poll blanks
+  the row" gap, but not a zero-risk one; worth confirming during
+  implementation whether `nba_stats`'s day-start pull reliably covers
+  every game on the slate or needs a retry.
