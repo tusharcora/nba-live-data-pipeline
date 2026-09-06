@@ -1,0 +1,68 @@
+- id: "1"
+  title: FastAPI query-tool endpoints
+  description: >-
+    Implement the four read-only query tools in query-tools.md
+    (get_player_stats, get_team_games, get_leaders, get_game_result) as new
+    FastAPI endpoints per CAP-1/CAP-2/CAP-3/CAP-5 and the Constraints section
+    of SPEC.md.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Reuse the existing api_reader-scoped connection and the slowapi
+    rate-limit decorator pattern already used by /games, /live, /quality.
+    Each tool must return an explicit no-match/ambiguous-candidates signal
+    (never an empty list) per CAP-5. Test against fake rows only, no live
+    DB, matching this repo's existing pytest+DI convention (see
+    CLAUDE.md's Testing section).
+
+- id: "2"
+  title: Next.js BFF orchestration route
+  description: >-
+    Implement the /api/search BFF route running the agentic tool-use loop
+    against Claude Haiku 4.5 per architecture-diagrams.md, satisfying
+    CAP-1/CAP-3/CAP-4/CAP-5.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Build against Story 1's published contract in query-tools.md even if
+    Story 1 hasn't landed yet; resolve any drift at integration (Story 4).
+    Hold the Anthropic API key server-side only, same pattern as
+    lib/fastapi-client.ts's API_SERVICE_KEY. Stream the final answer. Every
+    answer must carry a source citation (table + date range) per CAP-4, and
+    must relay a tool's "no data"/ambiguous-candidate signal honestly,
+    never overriding it with a guess (CAP-5). Mock the Anthropic SDK call
+    in tests; no real LLM calls in CI.
+
+- id: "3"
+  title: Search page UI
+  description: >-
+    Build the new search page (its own section, not merged into Explorer)
+    with a question input and a streamed-answer display, satisfying
+    CAP-4/CAP-5 on the UI side.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Build against Story 2's response/citation contract even if Story 2
+    hasn't landed yet; resolve any shape drift at integration (Story 4).
+    Include explicit UI states for "no data" and "ambiguous - pick one"
+    responses (CAP-5), each answer showing its citation (CAP-4). Follow
+    web/design-system/live-box-score-pipeline/MASTER.md and this project's
+    standing convention of using the ui-ux-pro-max skill for UI-facing
+    work.
+
+- id: "4"
+  title: Integration verification and review
+  description: >-
+    Holistic cross-story verification once Stories 1-3 land: confirm
+    Story 2's tool calls match Story 1's real endpoint signatures and
+    Story 3's parsing matches Story 2's real response shape, then verify
+    the full Success signal in SPEC.md end to end.
+  spec_checkpoint: false
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Run the full test suite, then do a real browser walkthrough of the
+    search page: one question with data, one with none, one ambiguous
+    name. This project has repeatedly found integration-boundary bugs
+    invisible to any single story's own tests - do a fresh read of the
+    combined diff, not just a rerun of each story's own checks. Pause for
+    human sign-off before merging to main (done_checkpoint).
