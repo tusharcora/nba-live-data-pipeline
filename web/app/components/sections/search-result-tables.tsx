@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,7 @@ import {
   BoxScoreTable,
   displayScore,
   formatGameDate,
+  playerHeadshotUrl,
   scoreColorClass,
   TeamLink,
   TeamLogo,
@@ -122,9 +124,17 @@ function LeadersTable({ stat, gameCount, leaders }: LeadersResultData) {
               <TableCell className="font-medium text-foreground">
                 <Link
                   href={`/players/${row.player_id}`}
-                  className="-mx-1 -my-0.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted hover:underline"
+                  className="-mx-1 -my-0.5 flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-muted hover:underline"
                 >
-                  {row.player_name}
+                  <Image
+                    src={playerHeadshotUrl(row.player_id)}
+                    alt=""
+                    width={28}
+                    height={28}
+                    unoptimized
+                    className="size-7 shrink-0 rounded-full object-cover bg-muted"
+                  />
+                  <span>{row.player_name}</span>
                 </Link>
               </TableCell>
               <TableCell className="text-right font-mono tabular-nums">{row.value}</TableCell>

@@ -100,9 +100,16 @@ describe("SearchResultDataView", () => {
         ],
       },
     };
-    render(<SearchResultDataView resultData={resultData} />);
+    const { container } = render(<SearchResultDataView resultData={resultData} />);
     expect(screen.getByText("Julius Randle")).toBeInTheDocument();
     expect(screen.getByText("74")).toBeInTheDocument();
     expect(screen.getByText(/26 games/)).toBeInTheDocument();
+    // Each leader row shows a headshot, same as BoxScoreTable's player rows.
+    // The images are decorative (alt=""), so they don't have an accessible
+    // "img" role -- query the DOM directly instead of screen.getByRole.
+    const images = container.querySelectorAll("img");
+    expect(images).toHaveLength(2);
+    expect(images[0].getAttribute("src")).toContain("203944");
+    expect(images[1].getAttribute("src")).toContain("1630162");
   });
 });
