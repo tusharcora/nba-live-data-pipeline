@@ -99,6 +99,56 @@ describe("geminiLlmClient", () => {
     ]);
   });
 
+  it("extracts multiple functionCalls from a single raw response, all correctly and in order (regression: extraction, not history round-tripping)", async () => {
+    // Unlike the "preserves call order" test further down (which only
+    // exercises translating an already-built ConversationMessage history
+    // into Gemini's request shape), this feeds a raw multi-functionCall SDK
+    // response through the real extractToolCalls path via `send()` --
+    // catches a regression that drops or corrupts calls during extraction
+    // itself, which a history-only test cannot.
+    const generateContent = vi.fn().mockResolvedValueOnce(
+      functionCallResponse([
+        { name: "get_player_stats", args: { player_name: "LeBron James" } },
+        { name: "get_player_stats", args: { player_name: "Kevin Durant" } },
+        { name: "get_game_result", args: { team_a: "Lakers", team_b: "Celtics", date: "2024-01-03" } },
+      ]),
+    );
+    const client = geminiLlmClient(generateContent);
+
+    const response = await client.send({
+      systemPrompt: "",
+      tools: TOOLS,
+      history: [{ role: "user", content: "Compare LeBron and Durant, and the Lakers-Celtics result" }],
+    });
+
+    expect(response.toolCalls).toEqual([
+      { id: "get_player_stats-0", name: "get_player_stats", input: { player_name: "LeBron James" } },
+      { id: "get_player_stats-1", name: "get_player_stats", input: { player_name: "Kevin Durant" } },
+      {
+        id: "get_game_result-2",
+        name: "get_game_result",
+        input: { team_a: "Lakers", team_b: "Celtics", date: "2024-01-03" },
+      },
+    ]);
+  });
+
+  it("returns an empty, honest turn (never throws) when the response's text/functionCalls getters throw, e.g. a safety block", async () => {
+    const blockedResponse = {
+      get text(): string {
+        throw new Error("Cannot read properties of undefined (no candidates)");
+      },
+      get functionCalls(): never {
+        throw new Error("Cannot read properties of undefined (no candidates)");
+      },
+    } as unknown as GenerateContentResponse;
+    const generateContent = vi.fn().mockResolvedValueOnce(blockedResponse);
+    const client = geminiLlmClient(generateContent);
+
+    const response = await client.send({ systemPrompt: "", tools: [], history: [{ role: "user", content: "q" }] });
+
+    expect(response).toEqual({ text: "", toolCalls: [] });
+  });
+
   it("returns final text with no tool calls when functionCalls is absent (the model answered directly)", async () => {
     const generateContent = vi.fn().mockResolvedValueOnce(textResponse("The answer is 30 points."));
     const client = geminiLlmClient(generateContent);

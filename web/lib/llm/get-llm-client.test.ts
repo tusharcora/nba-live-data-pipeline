@@ -55,6 +55,11 @@ describe("getLlmClient", () => {
     expect(createAnthropicClientMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a whitespace-only GEMINI_API_KEY the same as a missing one", () => {
+    expect(() => getLlmClient({ GEMINI_API_KEY: "   " })).toThrow(/GEMINI_API_KEY is not set/);
+    expect(createGeminiClientMock).not.toHaveBeenCalled();
+  });
+
   it("uses anthropic when explicitly selected, constructed with ANTHROPIC_API_KEY", () => {
     const client = getLlmClient({ SEARCH_LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "a-key" });
     expect(createAnthropicClientMock).toHaveBeenCalledWith("a-key");
@@ -65,6 +70,13 @@ describe("getLlmClient", () => {
   it("throws a clear config error -- not a silent fallback to gemini -- when anthropic is selected but has no ANTHROPIC_API_KEY", () => {
     expect(() => getLlmClient({ SEARCH_LLM_PROVIDER: "anthropic" })).toThrow(/ANTHROPIC_API_KEY is not set/);
     expect(createGeminiClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a whitespace-only ANTHROPIC_API_KEY the same as a missing one", () => {
+    expect(() =>
+      getLlmClient({ SEARCH_LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "\t\n " }),
+    ).toThrow(/ANTHROPIC_API_KEY is not set/);
+    expect(createAnthropicClientMock).not.toHaveBeenCalled();
   });
 
   it("propagates an unknown-provider error rather than defaulting", () => {

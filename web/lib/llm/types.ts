@@ -77,6 +77,13 @@ export interface LlmResponse {
   toolCalls: ToolCallRequest[];
 }
 
+/** Shared per-turn output token ceiling. Kept in one place rather than
+ * duplicated as each provider's own local constant (Anthropic's
+ * `max_tokens`, Gemini's `maxOutputTokens`) -- both providers currently
+ * want the same value for this workload, and a future provider can still
+ * override it locally if it genuinely needs to. */
+export const MAX_OUTPUT_TOKENS = 1024;
+
 /** The one seam search-loop.ts depends on. Any provider that can turn a
  * system prompt + tool definitions + running history into text-or-tool-calls
  * can implement this. */

@@ -30,7 +30,11 @@ export function getLlmClient(env: Record<string, string | undefined> = process.e
   const provider = resolveSearchLlmProvider(env);
 
   if (provider === "gemini") {
-    const apiKey = env.GEMINI_API_KEY;
+    // .trim() before the emptiness check: a whitespace-only value (e.g. a
+    // blank line left in .env.local) is not a usable key and must fail the
+    // same clear-error path as a fully missing one, not silently reach the
+    // SDK as "".
+    const apiKey = env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
       throw new Error(
         'SEARCH_LLM_PROVIDER is "gemini" (the default) but GEMINI_API_KEY is not set. ' +
@@ -40,7 +44,7 @@ export function getLlmClient(env: Record<string, string | undefined> = process.e
     return createGeminiClient(apiKey);
   }
 
-  const apiKey = env.ANTHROPIC_API_KEY;
+  const apiKey = env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
       'SEARCH_LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. ' +

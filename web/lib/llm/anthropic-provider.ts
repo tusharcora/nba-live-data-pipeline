@@ -6,16 +6,16 @@
 // why the shared interface looks the way it does.
 
 import Anthropic from "@anthropic-ai/sdk";
-import type {
-  ConversationMessage,
-  LlmClient,
-  LlmResponse,
-  ToolCallRequest,
-  ToolDefinition,
+import {
+  MAX_OUTPUT_TOKENS,
+  type ConversationMessage,
+  type LlmClient,
+  type LlmResponse,
+  type ToolCallRequest,
+  type ToolDefinition,
 } from "@/lib/llm/types";
 
 export const ANTHROPIC_SEARCH_MODEL = "claude-haiku-4-5";
-const MAX_TOKENS = 1024;
 
 export type CreateMessage = (
   params: Anthropic.MessageCreateParamsNonStreaming,
@@ -30,29 +30,40 @@ function toAnthropicTools(tools: ToolDefinition[]): Anthropic.Tool[] {
 }
 
 function toAnthropicMessages(history: ConversationMessage[]): Anthropic.MessageParam[] {
-  return history.map((message) => {
-    if (message.role === "user") {
-      return { role: "user", content: message.content };
-    }
+  return history.map((message): Anthropic.MessageParam => {
+    switch (message.role) {
+      case "user":
+        return { role: "user", content: message.content };
 
-    if (message.role === "assistant") {
-      const content: Anthropic.ContentBlockParam[] = [];
-      if (message.text) content.push({ type: "text", text: message.text });
-      for (const call of message.toolCalls) {
-        content.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
+      case "assistant": {
+        const content: Anthropic.ContentBlockParam[] = [];
+        if (message.text) content.push({ type: "text", text: message.text });
+        for (const call of message.toolCalls) {
+          content.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
+        }
+        return { role: "assistant", content };
       }
-      return { role: "assistant", content };
-    }
 
-    // "tool_results" -- Anthropic relays every tool result as a single
-    // `user` turn of `tool_result` blocks, correlated by `tool_use_id`.
-    const content: Anthropic.ToolResultBlockParam[] = message.results.map((result) => ({
-      type: "tool_result",
-      tool_use_id: result.id,
-      content: JSON.stringify(result.output),
-      is_error: result.isError,
-    }));
-    return { role: "user", content };
+      case "tool_results": {
+        // Anthropic relays every tool result as a single `user` turn of
+        // `tool_result` blocks, correlated by `tool_use_id`.
+        const content: Anthropic.ToolResultBlockParam[] = message.results.map((result) => ({
+          type: "tool_result",
+          tool_use_id: result.id,
+          content: JSON.stringify(result.output),
+          is_error: result.isError,
+        }));
+        return { role: "user", content };
+      }
+
+      default: {
+        // Exhaustiveness check: a new ConversationMessage variant added to
+        // llm/types.ts without a matching case here is a compile error at
+        // this line, not a silent runtime gap.
+        const unhandled: never = message;
+        throw new Error(`toAnthropicMessages: unhandled ConversationMessage: ${JSON.stringify(unhandled)}`);
+      }
+    }
   });
 }
 
@@ -82,7 +93,7 @@ export function anthropicLlmClient(createMessage: CreateMessage): LlmClient {
     async send({ systemPrompt, tools, history }): Promise<LlmResponse> {
       const response = await createMessage({
         model: ANTHROPIC_SEARCH_MODEL,
-        max_tokens: MAX_TOKENS,
+        max_tokens: MAX_OUTPUT_TOKENS,
         system: systemPrompt,
         tools: toAnthropicTools(tools),
         messages: toAnthropicMessages(history),

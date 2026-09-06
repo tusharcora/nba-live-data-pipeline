@@ -30,12 +30,18 @@ function textMessage(text: string): Anthropic.Message {
 }
 
 function toolUseMessage(name: string, input: Record<string, unknown>, id = "tool_1"): Anthropic.Message {
+  return multiToolUseMessage([{ name, input, id }]);
+}
+
+function multiToolUseMessage(
+  calls: { name: string; input: Record<string, unknown>; id: string }[],
+): Anthropic.Message {
   return {
     id: "msg_tool",
     type: "message",
     role: "assistant",
     model: ANTHROPIC_SEARCH_MODEL,
-    content: [{ type: "tool_use", id, name, input }],
+    content: calls.map((call) => ({ type: "tool_use", id: call.id, name: call.name, input: call.input })),
     stop_reason: "tool_use",
     stop_sequence: null,
     usage: { input_tokens: 1, output_tokens: 1 } as Anthropic.Usage,
@@ -97,6 +103,42 @@ describe("anthropicLlmClient", () => {
       text: "",
       toolCalls: [{ id: "abc", name: "get_player_stats", input: { player_name: "LeBron James" } }],
     });
+  });
+
+  it("extracts multiple tool_use blocks from a single raw response, all correctly and in order (regression: extraction, not history round-tripping)", async () => {
+    // Unlike the history-translation tests below (which only exercise
+    // building Anthropic's request from an already-constructed
+    // ConversationMessage), this feeds a raw multi-tool_use SDK response
+    // through the real extractToolCalls path via `send()` -- catches a
+    // regression that drops or corrupts calls during extraction itself.
+    const createMessage = vi.fn().mockResolvedValueOnce(
+      multiToolUseMessage([
+        { id: "call_a", name: "get_player_stats", input: { player_name: "LeBron James" } },
+        { id: "call_b", name: "get_player_stats", input: { player_name: "Kevin Durant" } },
+        {
+          id: "call_c",
+          name: "get_game_result",
+          input: { team_a: "Lakers", team_b: "Celtics", date: "2024-01-03" },
+        },
+      ]),
+    );
+    const client = anthropicLlmClient(createMessage);
+
+    const response = await client.send({
+      systemPrompt: "",
+      tools: TOOLS,
+      history: [{ role: "user", content: "Compare LeBron and Durant, and the Lakers-Celtics result" }],
+    });
+
+    expect(response.toolCalls).toEqual([
+      { id: "call_a", name: "get_player_stats", input: { player_name: "LeBron James" } },
+      { id: "call_b", name: "get_player_stats", input: { player_name: "Kevin Durant" } },
+      {
+        id: "call_c",
+        name: "get_game_result",
+        input: { team_a: "Lakers", team_b: "Celtics", date: "2024-01-03" },
+      },
+    ]);
   });
 
   it("returns final text with no tool calls on end_turn", async () => {

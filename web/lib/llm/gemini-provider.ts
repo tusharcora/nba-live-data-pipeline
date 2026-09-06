@@ -63,16 +63,16 @@ import type {
   GenerateContentResponse,
   Part,
 } from "@google/genai";
-import type {
-  ConversationMessage,
-  LlmClient,
-  LlmResponse,
-  ToolCallRequest,
-  ToolDefinition,
+import {
+  MAX_OUTPUT_TOKENS,
+  type ConversationMessage,
+  type LlmClient,
+  type LlmResponse,
+  type ToolCallRequest,
+  type ToolDefinition,
 } from "@/lib/llm/types";
 
 export const GEMINI_SEARCH_MODEL = "gemini-3.8-flash";
-const MAX_OUTPUT_TOKENS = 1024;
 
 export type GenerateContent = (
   params: GenerateContentParameters,
@@ -87,29 +87,40 @@ function toGeminiTools(tools: ToolDefinition[]): FunctionDeclaration[] {
 }
 
 function toGeminiContents(history: ConversationMessage[]): Content[] {
-  return history.map((message) => {
-    if (message.role === "user") {
-      return { role: "user", parts: [{ text: message.content }] };
-    }
+  return history.map((message): Content => {
+    switch (message.role) {
+      case "user":
+        return { role: "user", parts: [{ text: message.content }] };
 
-    if (message.role === "assistant") {
-      const parts: Part[] = [];
-      if (message.text) parts.push({ text: message.text });
-      for (const call of message.toolCalls) {
-        parts.push({ functionCall: { name: call.name, args: call.input } });
+      case "assistant": {
+        const parts: Part[] = [];
+        if (message.text) parts.push({ text: message.text });
+        for (const call of message.toolCalls) {
+          parts.push({ functionCall: { name: call.name, args: call.input } });
+        }
+        return { role: "model", parts };
       }
-      return { role: "model", parts };
-    }
 
-    // "tool_results" -- see this module's header comment: correlated by
-    // name + array order, not by id.
-    const parts: Part[] = message.results.map((result) => ({
-      functionResponse: {
-        name: result.name,
-        response: result.isError ? { error: result.output } : { output: result.output },
-      },
-    }));
-    return { role: "user", parts };
+      case "tool_results": {
+        // See this module's header comment: correlated by name + array
+        // order, not by id.
+        const parts: Part[] = message.results.map((result) => ({
+          functionResponse: {
+            name: result.name,
+            response: result.isError ? { error: result.output } : { output: result.output },
+          },
+        }));
+        return { role: "user", parts };
+      }
+
+      default: {
+        // Exhaustiveness check: a new ConversationMessage variant added to
+        // llm/types.ts without a matching case here is a compile error at
+        // this line, not a silent runtime gap.
+        const unhandled: never = message;
+        throw new Error(`toGeminiContents: unhandled ConversationMessage: ${JSON.stringify(unhandled)}`);
+      }
+    }
   });
 }
 
@@ -122,6 +133,23 @@ function extractToolCalls(response: GenerateContentResponse): ToolCallRequest[] 
     name: call.name ?? "",
     input: (call.args ?? {}) as Record<string, unknown>,
   }));
+}
+
+// `response.text` and `response.functionCalls` are getters that read
+// `candidates[0]` under the hood -- both throw (rather than returning
+// undefined) when there are no candidates at all, which happens for a
+// safety-blocked prompt or response (no candidates generated at all, as
+// opposed to a normal empty/text-only turn, which these getters handle
+// fine). Guard both reads together so a safety block produces the same
+// honest "couldn't complete this" result as any other provider failure,
+// never an uncaught throw out of the search loop.
+function readGeminiOutput(response: GenerateContentResponse): LlmResponse {
+  try {
+    return { text: response.text ?? "", toolCalls: extractToolCalls(response) };
+  } catch (error) {
+    console.error("[gemini-provider] failed to read response text/functionCalls (likely a safety block):", error);
+    return { text: "", toolCalls: [] };
+  }
 }
 
 /** Builds an `LlmClient` backed by Gemini's `generateContent`, given an
@@ -146,7 +174,7 @@ export function geminiLlmClient(generateContent: GenerateContent): LlmClient {
       // exactly when the model produced a final answer instead of
       // requesting a tool call -- no separate "is this turn final" signal
       // to cross-check.
-      return { text: response.text ?? "", toolCalls: extractToolCalls(response) };
+      return readGeminiOutput(response);
     },
   };
 }
