@@ -1,3 +1,10 @@
+// @vitest-environment node
+//
+// Constructs a real Anthropic client (network calls mocked elsewhere, not
+// here). The Anthropic SDK refuses to initialize under jsdom's browser-like
+// globals unless `dangerouslyAllowBrowser` is set, so this needs Node's
+// plain environment — same reasoning as route.test.ts, found the same way
+// (merge integration, Story 4).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("getAnthropicClient", () => {
