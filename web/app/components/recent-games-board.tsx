@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { type BoardGameRow as BoardGameRowData } from "@/lib/board";
 
 import { BoardGameRow } from "./board-game-row";
+import { FeedTicket } from "./feed-ticket";
 
 type ApiList<T> = { data: T[]; count: number };
 
@@ -28,6 +29,7 @@ const FETCH_ERROR = "Couldn't reach the games service.";
  */
 export function RecentGamesBoard() {
   const [state, setState] = useState<FetchState>({ status: "loading" });
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +37,13 @@ export function RecentGamesBoard() {
     fetch("/api/board")
       .then((res) => res.json())
       .then((data: ApiList<BoardGameRowData> | null) => {
-        if (!cancelled) setState({ status: "loaded", games: data?.data ?? [] });
+        const games = data?.data ?? [];
+        if (!cancelled) setState({ status: "loaded", games });
+        if (games.length > 0) {
+          Promise.resolve().then(() => {
+            if (!cancelled) setSelectedId((prev) => prev ?? games[0].game_id);
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setState({ status: "error", message: FETCH_ERROR });
@@ -87,15 +95,25 @@ export function RecentGamesBoard() {
     return null;
   }
 
+  const selected = state.games.find((g) => g.game_id === selectedId) ?? state.games[0];
+
   return (
     <div className="flex flex-col gap-3">
       <h2 className="font-heading text-lg font-bold tracking-wide text-foreground uppercase">
         Recent games
       </h2>
-      <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
-        {state.games.map((game) => (
-          <BoardGameRow key={game.game_id} game={game} />
-        ))}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+          {state.games.map((game) => (
+            <BoardGameRow
+              key={game.game_id}
+              game={game}
+              isSelected={game.game_id === selected.game_id}
+              onSelect={setSelectedId}
+            />
+          ))}
+        </div>
+        <FeedTicket game={selected} />
       </div>
     </div>
   );

@@ -42,15 +42,39 @@ function StatusBadge({ status }: { status: BoardGameRowData["status"] }) {
   return <Badge variant={presentation.variant}>{presentation.label}</Badge>;
 }
 
-export function BoardGameRow({ game }: { game: BoardGameRowData }) {
+export function BoardGameRow({
+  game,
+  isSelected,
+  onSelect,
+}: {
+  game: BoardGameRowData;
+  isSelected?: boolean;
+  onSelect?: (gameId: number) => void;
+}) {
   const isGreyed = game.status === "final" || game.status === "postponed";
   const showScore = game.status === "live" || game.status === "final";
 
   return (
     <div
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={onSelect ? () => onSelect(game.game_id) : undefined}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(game.game_id);
+              }
+            }
+          : undefined
+      }
       className={cn(
         "grid grid-cols-[80px_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0",
-        isGreyed && "opacity-60"
+        isGreyed && "opacity-60",
+        onSelect && "cursor-pointer",
+        onSelect && FOCUS_RING,
+        isSelected && "border-l-2 border-l-amber-600 bg-muted/60 dark:border-l-amber-500"
       )}
     >
       <div className="flex flex-col gap-1">
@@ -94,7 +118,10 @@ export function BoardGameRow({ game }: { game: BoardGameRowData }) {
         )}
       </div>
 
-      <div className="flex flex-col items-end gap-1.5">
+      <div
+        className="flex flex-col items-end gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
         <Button
           render={<Link href={`/live/${game.game_id}`} />}
           nativeButton={false}
