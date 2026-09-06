@@ -69,6 +69,23 @@ def test_run_streak_breaks_when_other_team_also_scores():
     assert result.kind == "leader"
 
 
+def test_run_streak_stops_when_other_team_scores_in_an_earlier_nonadjacent_leg():
+    """Counterexample: home scores 3, away scores 4, home scores 3 again.
+    The true current unanswered streak for home is only 3 (the most recent leg),
+    since away interrupted it. The streak must break the instant the other team
+    scores, even in a non-adjacent (older) leg, not just when both score simultaneously.
+    """
+    history = [
+        _state(100, 90, pulled_at=NOW),           # home scored 3 (100-97)
+        _state(97, 90, pulled_at=NOW - timedelta(seconds=5)),   # no scoring
+        _state(97, 86, pulled_at=NOW - timedelta(seconds=10)),  # away scored 4 (90-86)
+        _state(94, 86, pulled_at=NOW - timedelta(seconds=15)),  # home scored 3 (97-94)
+    ]
+    result = compute_commentary(history, {}, [], NOW)
+    # home_run_points would be 3 (only the most recent leg), which is < MIN_RUN_POINTS
+    assert result.kind == "leader"
+
+
 def test_stale_nba_stats_reported_when_a_secondary_source_is_fresh():
     history = [_state(91, 88, pulled_at=NOW - timedelta(seconds=60))]
     other_sources = {"balldontlie": _state(89, 88, pulled_at=NOW)}
@@ -96,7 +113,12 @@ def test_no_staleness_reported_when_everything_is_stale():
 
 
 def test_conflict_outranks_run_and_leader_when_values_still_differ():
-    history = [_state(91, 88, pulled_at=NOW)]
+    # Use a 2+ snapshot history that would be a real run (6-0 home) without the conflict
+    history = [
+        _state(97, 88, pulled_at=NOW),
+        _state(94, 88, pulled_at=NOW - timedelta(seconds=5)),
+        _state(91, 88, pulled_at=NOW - timedelta(seconds=10)),
+    ]
     other_sources = {"balldontlie": _state(89, 88, pulled_at=NOW)}
     conflicts = [_conflict("home_score", "balldontlie", detected_at=NOW)]
     result = compute_commentary(history, other_sources, conflicts, NOW)

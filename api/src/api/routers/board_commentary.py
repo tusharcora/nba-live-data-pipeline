@@ -121,9 +121,13 @@ def _check_stale(
 def _detect_run(nba_stats_history: Sequence[_StateLike]) -> Commentary | None:
     """Infers a scoring run from cumulative score snapshots (no
     play-by-play exists) — see design §6.2. `nba_stats_history` must be
-    newest-first. Walks backward accumulating each side's score delta
-    between consecutive snapshots; the streak breaks the moment the
-    *other* side's score also increases.
+    newest-first. Walks backward tracking which single team is
+    attributed the current streak (from the first leg where exactly one
+    side scored); accumulates only that team's points and breaks the
+    instant the OTHER team scores in ANY later (older) leg — not just a
+    leg where both happen to score simultaneously. A leg where neither
+    side scores (a quiet interval — free throw, timeout) doesn't break
+    the streak, it's just skipped.
     """
     if len(nba_stats_history) < 2:
         return None
@@ -132,8 +136,8 @@ def _detect_run(nba_stats_history: Sequence[_StateLike]) -> Commentary | None:
     if newest.home_score is None or newest.away_score is None:
         return None
 
-    home_run_points = 0
-    away_run_points = 0
+    running_team: str | None = None
+    run_points = 0
     current = newest
     for previous in nba_stats_history[1:]:
         if previous.home_score is None or previous.away_score is None:
@@ -143,15 +147,20 @@ def _detect_run(nba_stats_history: Sequence[_StateLike]) -> Commentary | None:
         if home_delta > 0 and away_delta > 0:
             break
         if home_delta <= 0 and away_delta <= 0:
+            current = previous
+            continue
+        scoring_team = "home" if home_delta > 0 else "away"
+        if running_team is None:
+            running_team = scoring_team
+        elif running_team != scoring_team:
             break
-        home_run_points += max(home_delta, 0)
-        away_run_points += max(away_delta, 0)
+        run_points += home_delta if scoring_team == "home" else away_delta
         current = previous
 
-    if home_run_points >= MIN_RUN_POINTS:
-        return Commentary(f"{newest.home_team} on a {home_run_points}-0 run", "run")
-    if away_run_points >= MIN_RUN_POINTS:
-        return Commentary(f"{newest.away_team} on a {away_run_points}-0 run", "run")
+    if running_team == "home" and run_points >= MIN_RUN_POINTS:
+        return Commentary(f"{newest.home_team} on a {run_points}-0 run", "run")
+    if running_team == "away" and run_points >= MIN_RUN_POINTS:
+        return Commentary(f"{newest.away_team} on a {run_points}-0 run", "run")
     return None
 
 
