@@ -54,6 +54,7 @@ describe("POST /api/search", () => {
       citation: null,
       noData: true,
       candidates: null,
+      resultData: null,
     });
 
     const response = await POST(postRequest({ question: "anything" }));
@@ -71,6 +72,7 @@ describe("POST /api/search", () => {
       citation: { table: "player_game_stats", dateRange: "2024-10-22 to 2024-10-22" },
       noData: false,
       candidates: null,
+      resultData: null,
     });
 
     const response = await POST(
@@ -86,6 +88,7 @@ describe("POST /api/search", () => {
       citation: { table: "player_game_stats", dateRange: "2024-10-22 to 2024-10-22" },
       noData: false,
       candidates: null,
+      resultData: null,
     });
 
     const textFrames = frames.slice(0, -1);
@@ -105,6 +108,7 @@ describe("POST /api/search", () => {
       citation: null,
       noData: true,
       candidates: null,
+      resultData: null,
     });
 
     const response = await POST(postRequest({ question: "Lakers vs Celtics on 2099-01-01?" }));
@@ -112,7 +116,7 @@ describe("POST /api/search", () => {
     const doneFrame = body.split("\n\n").filter(Boolean).pop()!;
     const doneJson = JSON.parse(doneFrame.split("data: ")[1]);
 
-    expect(doneJson).toEqual({ citation: null, noData: true, candidates: null });
+    expect(doneJson).toEqual({ citation: null, noData: true, candidates: null, resultData: null });
   });
 
   it("relays an ambiguous candidate list verbatim in the done event", async () => {
@@ -121,6 +125,7 @@ describe("POST /api/search", () => {
       citation: null,
       noData: false,
       candidates: ["LeBron James", "LeBron James Jr."],
+      resultData: null,
     });
 
     const response = await POST(postRequest({ question: "LeBron's points?" }));
@@ -132,7 +137,29 @@ describe("POST /api/search", () => {
       citation: null,
       noData: false,
       candidates: ["LeBron James", "LeBron James Jr."],
+      resultData: null,
     });
+  });
+
+  it("includes resultData in the done event when the search loop returns it", async () => {
+    const resultData = {
+      type: "player_stats" as const,
+      payload: { playerName: "LeBron James", games: [] },
+    };
+    runSearchLoopMock.mockResolvedValueOnce({
+      answerText: "LeBron James scored 30 points.",
+      citation: { table: "player_game_stats", dateRange: "2024-10-22" },
+      noData: false,
+      candidates: null,
+      resultData,
+    });
+
+    const response = await POST(postRequest({ question: "How many points did LeBron score?" }));
+    const body = await readBody(response);
+    const doneFrame = body.split("\n\n").filter(Boolean).pop()!;
+    const doneJson = JSON.parse(doneFrame.split("data: ")[1]);
+
+    expect(doneJson.resultData).toEqual(resultData);
   });
 
   it("rejects a request with no question", async () => {

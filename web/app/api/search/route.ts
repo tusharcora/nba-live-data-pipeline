@@ -131,6 +131,7 @@ export async function POST(request: Request): Promise<Response> {
           citation: result.citation,
           noData: result.noData,
           candidates: result.candidates,
+          resultData: result.resultData,
         }),
       );
       controller.close();
