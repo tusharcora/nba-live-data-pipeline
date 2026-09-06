@@ -85,8 +85,8 @@ class LiveGameState(Base):
     """Silver layer: one row per poll per game while a game is live.
 
     Time-series score/clock state, per source — `source` distinguishes which
-    of the two data sources a given snapshot came from, since both are
-    polled independently and neither overwrites the other (reconciliation
+    of the (now three) data sources a given snapshot came from, since each
+    is polled independently and none overwrites another (reconciliation
     across sources happens downstream, not here).
     """
 
@@ -106,6 +106,15 @@ class LiveGameState(Base):
     period: Mapped[int | None] = mapped_column(Integer, nullable=True)
     clock: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
+    # Only ever populated by source="nba_stats" rows (nba_api's live
+    # scoreboard) -- balldontlie/public_feed rows leave these NULL. See
+    # docs/superpowers/specs/2026-09-06-recent-games-board-and-commentator-design.md
+    # §4.2.
+    home_team: Mapped[str | None] = mapped_column(String, nullable=True)
+    away_team: Mapped[str | None] = mapped_column(String, nullable=True)
+    scheduled_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class BackfillCheckpoint(Base):
@@ -151,13 +160,18 @@ class AuditLog(Base):
 
 
 class SourceConflict(Base):
-    """Meta layer: one row per field-level disagreement between the two data sources."""
+    """Meta layer: one row per field-level disagreement between two data sources."""
 
     __tablename__ = "source_conflicts"
-    # Matches `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N` in
-    # api/src/api/routers/quality.py (db/migrations/versions/
-    # fca5b54cdf40_add_meta_table_indexes_for_hot_query_.py creates this).
-    __table_args__ = (Index("ix_source_conflicts_detected_at", desc("detected_at")),)
+    __table_args__ = (
+        # Matches `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N` in
+        # api/src/api/routers/quality.py.
+        Index("ix_source_conflicts_detected_at", desc("detected_at")),
+        # Backs `QualityReader.recent_conflicts_for_game` (api/src/api/
+        # routers/quality.py) at the per-poll, per-live-game cadence the
+        # board commentary engine needs it at.
+        Index("ix_source_conflicts_game_id_detected_at", "game_id", desc("detected_at")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[str] = mapped_column(String, nullable=False)
