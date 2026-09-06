@@ -15,13 +15,13 @@ Three things this suite proves:
    proving the validation layer rejects bad input before it ever reaches a
    query, not testing the DB.
 2. Every route gated by `require_api_key` (`/games/`, `/quality/`,
-   `/quality/history`, `/live/`) returns 401 for a missing `X-API-Key`
+   `/quality/history`, `/board/`) returns 401 for a missing `X-API-Key`
    header, an empty-string header, a
    wrong value, and the *correct* value in the wrong case (`require_api_key`
    does a plain Python `!=` comparison — see `api/src/api/core/security.py`
    — so a case-only mismatch must still be rejected). The missing-header
    case is already covered per-route by `test_health.py` (`/games/`),
-   `test_quality.py`, and `test_live.py`; this suite adds the empty/wrong
+   `test_quality.py`, and `test_board.py`; this suite adds the empty/wrong
    /wrong-case variants those files don't cover.
 3. The configured API key never leaks into any response body or header,
    across all three routes, on both an authorized (200) and a rejected
@@ -44,8 +44,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from api.routers.board import get_board_reader, get_stream_max_duration_seconds
 from api.routers.games import get_games_reader
-from api.routers.live import get_live_state_reader, get_stream_max_duration_seconds
 from api.routers.quality import get_quality_reader
 
 AUDIT_API_KEY = "sec-audit-suite-key-8821"
@@ -87,8 +87,11 @@ class _EmptyQualityReader:
         return []
 
 
-class _EmptyLiveReader:
-    def get_latest_states(self):
+class _EmptyBoardReader:
+    def latest_per_source_today(self, start_utc, end_utc):
+        return []
+
+    def nba_stats_history_today(self, game_id, start_utc, end_utc, limit):
         return []
 
 
@@ -99,7 +102,7 @@ def client(monkeypatch):
         yield test_client
     app.dependency_overrides.pop(get_games_reader, None)
     app.dependency_overrides.pop(get_quality_reader, None)
-    app.dependency_overrides.pop(get_live_state_reader, None)
+    app.dependency_overrides.pop(get_board_reader, None)
     app.dependency_overrides.pop(get_stream_max_duration_seconds, None)
 
 
@@ -162,7 +165,7 @@ def test_legitimate_date_still_works_after_injection_sweep(client):
 
 # --- 2. Auth bypass across all three protected routes --------------------
 
-PROTECTED_ROUTES = ["/games/", "/quality/", "/quality/history?check_name=psi_pace", "/live/"]
+PROTECTED_ROUTES = ["/games/", "/quality/", "/quality/history?check_name=psi_pace", "/board/"]
 
 # `None` means "don't send the header at all" (already covered per-route by
 # the other test modules — repeated here so the full bypass matrix lives in
@@ -202,7 +205,7 @@ def test_wrong_case_key_differs_from_configured_key():
 def test_api_key_never_appears_in_any_response_body_or_header(client):
     app.dependency_overrides[get_games_reader] = lambda: _CountingGamesReader()
     app.dependency_overrides[get_quality_reader] = lambda: _EmptyQualityReader()
-    app.dependency_overrides[get_live_state_reader] = lambda: _EmptyLiveReader()
+    app.dependency_overrides[get_board_reader] = lambda: _EmptyBoardReader()
     app.dependency_overrides[get_stream_max_duration_seconds] = lambda: 0
 
     responses = [
@@ -214,13 +217,13 @@ def test_api_key_never_appears_in_any_response_body_or_header(client):
             params={"check_name": "psi_pace"},
             headers={"X-API-Key": AUDIT_API_KEY},
         ),
-        client.get("/live/", headers={"X-API-Key": AUDIT_API_KEY}),
+        client.get("/board/", headers={"X-API-Key": AUDIT_API_KEY}),
         # rejected calls (401) — a naive implementation might echo "expected
         # X, got Y" into an error message, which would leak the real key
         client.get("/games/", headers={"X-API-Key": "wrong"}),
         client.get("/quality/"),
         client.get("/quality/history", params={"check_name": "psi_pace"}),
-        client.get("/live/", headers={"X-API-Key": ""}),
+        client.get("/board/", headers={"X-API-Key": ""}),
     ]
 
     for resp in responses:
