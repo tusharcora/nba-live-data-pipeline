@@ -1,0 +1,8 @@
+fastapi>=0.141.1
+psycopg[binary]>=3.3.5
+pydantic-settings>=2.15.0
+redis>=8.1.0
+slowapi>=0.1.10
+sqlalchemy>=2.0.52
+uvicorn[standard]>=0.52.4
+db @ git+https://github.com/tusharcora/nba-live-data-pipeline.git@main#subdirectory=db
