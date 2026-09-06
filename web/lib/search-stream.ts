@@ -26,6 +26,8 @@
  * browser or a real network stream.
  */
 
+import type { SearchResultData } from "@/lib/search-result-types";
+
 export type SearchCitation = {
   table: string;
   dateRange: string;
@@ -43,6 +45,7 @@ export type SearchDonePayload = {
   citation: SearchCitation | null;
   noData: boolean;
   candidates: string[] | null;
+  resultData: SearchResultData | null;
 };
 
 export type SearchErrorPayload = {
@@ -148,7 +151,31 @@ function parseDonePayload(raw: string): SearchDonePayload | null {
     }
   }
 
-  return { citation, noData, candidates };
+  const resultData = parseResultData(obj.resultData);
+
+  return { citation, noData, candidates, resultData };
+}
+
+// Defensive, drift-tolerant, same style as the citation block above: only
+// checks the discriminant `type` is one of the four known values and
+// `payload` is present as an object -- does not deep-validate every nested
+// field (that's the FastAPI/search-tools.ts layer's job; a payload that
+// reaches this far already passed through deriveResultData()). An unknown
+// `type` (or a missing/non-object `payload`) is dropped to null rather
+// than thrown on, consistent with every other field in this function.
+function parseResultData(raw: unknown): SearchResultData | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const validTypes = ["player_stats", "team_games", "leaders", "game_result"];
+  if (typeof obj.type !== "string" || !validTypes.includes(obj.type)) {
+    console.warn("/api/search done payload: unrecognized resultData.type, dropped", obj.type);
+    return null;
+  }
+  if (typeof obj.payload !== "object" || obj.payload === null) {
+    console.warn("/api/search done payload: resultData missing a payload object, dropped", obj);
+    return null;
+  }
+  return raw as SearchResultData;
 }
 
 /**
