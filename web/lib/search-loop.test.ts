@@ -126,12 +126,18 @@ describe("runSearchLoop", () => {
     const result = await runSearchLoop({ question: "LeBron's points?", llmClient, callTool });
 
     // A tool_results message was pushed to history with isError: true for
-    // this call, correlated by id and carrying the original tool name.
+    // this call, correlated by id and carrying the original tool name. The
+    // model-facing output always has the `resultData` key stripped (see
+    // the dedicated resultData-stripping test below) -- even here, where
+    // ERROR_RESULT's resultData was already `null`, the key itself must be
+    // absent, not merely `null`.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { resultData: _omittedFromError, ...strippedErrorResult } = ERROR_RESULT;
     const secondSendArgs = vi.mocked(llmClient.send).mock.calls[1][0];
     const toolResultsMessage = secondSendArgs.history.find((m) => m.role === "tool_results");
     expect(toolResultsMessage).toEqual({
       role: "tool_results",
-      results: [{ id: "call_err", name: "get_player_stats", output: ERROR_RESULT, isError: true }],
+      results: [{ id: "call_err", name: "get_player_stats", output: strippedErrorResult, isError: true }],
     });
 
     // No successful tool call ever happened -> discard the model's own
@@ -272,11 +278,17 @@ describe("runSearchLoop", () => {
     expect(callTool).toHaveBeenNthCalledWith(2, "get_player_stats", { player_name: "Kevin Durant" });
     const secondSendArgs = vi.mocked(llmClient.send).mock.calls[1][0];
     const toolResultsMessage = secondSendArgs.history.find((m) => m.role === "tool_results");
+    // OK_RESULT carries a non-null resultData -- the model-facing output
+    // must have it stripped (see the dedicated resultData-stripping test
+    // below), even though `lastToolResult`/the final SearchResult still get
+    // the full envelope.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { resultData: _omitted, ...strippedOkResult } = OK_RESULT;
     expect(toolResultsMessage).toEqual({
       role: "tool_results",
       results: [
-        { id: "call_a", name: "get_player_stats", output: OK_RESULT, isError: false },
-        { id: "call_b", name: "get_player_stats", output: OK_RESULT, isError: false },
+        { id: "call_a", name: "get_player_stats", output: strippedOkResult, isError: false },
+        { id: "call_b", name: "get_player_stats", output: strippedOkResult, isError: false },
       ],
     });
     expect(result.noData).toBe(false);
@@ -314,5 +326,33 @@ describe("runSearchLoop", () => {
 
     expect(result).toEqual(FALLBACK_RESULT);
     expect(result.resultData).toBeNull();
+  });
+
+  it("strips resultData from the model-facing tool output, but still surfaces it on the final SearchResult", async () => {
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_player_stats", { player_name: "LeBron James" }),
+      finalResponse("LeBron James scored 30 points on 2024-10-22."),
+    );
+    const callTool = vi.fn().mockResolvedValueOnce(OK_RESULT);
+
+    const result = await runSearchLoop({ question: "How many points did LeBron score?", llmClient, callTool });
+
+    // The tool-result message pushed into the second `send()` call's
+    // history (i.e. what actually reaches the LLM) must not carry
+    // resultData at all -- not even as an explicit `null` -- since the
+    // model already sees the same rows via `data`.
+    const secondSendArgs = vi.mocked(llmClient.send).mock.calls[1][0];
+    const toolResultsMessage = secondSendArgs.history.find((m) => m.role === "tool_results");
+    expect(toolResultsMessage?.role).toBe("tool_results");
+    if (toolResultsMessage?.role === "tool_results") {
+      const modelFacingOutput = toolResultsMessage.results[0].output as Record<string, unknown>;
+      expect(modelFacingOutput).not.toHaveProperty("resultData");
+      expect(modelFacingOutput.data).toEqual(OK_RESULT.data);
+    }
+
+    // Meanwhile the BFF-facing SearchResult (built from lastToolResult,
+    // which still carries the full envelope) keeps resultData intact for
+    // the client's tables.
+    expect(result.resultData).toEqual(SAMPLE_RESULT_DATA);
   });
 });

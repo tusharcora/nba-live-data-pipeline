@@ -145,7 +145,14 @@ export async function runSearchLoop(params: {
       if (result.status === "ok" || result.status === "no_match" || result.status === "ambiguous") {
         lastToolResult = result;
       }
-      results.push({ id: call.id, name: call.name, output: result, isError: result.status === "error" });
+      // resultData exists only for the client's tables (finalize() below
+      // threads it through to SearchResult.resultData via lastToolResult).
+      // The model already sees the same rows in `data`, and for
+      // get_team_games in a second, differently-shaped copy that would
+      // invite confused or contradictory prose -- never send it to the LLM.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { resultData: _clientOnlyResultData, ...modelFacingResult } = result;
+      results.push({ id: call.id, name: call.name, output: modelFacingResult, isError: result.status === "error" });
     }
 
     history.push({ role: "tool_results", results });

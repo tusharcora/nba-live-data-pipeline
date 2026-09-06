@@ -69,6 +69,25 @@ describe("SearchResultDataView", () => {
     expect(screen.getByText("Boston Celtics")).toBeInTheDocument();
   });
 
+  it("caps team_games rendering at 15 cards and shows a 'Showing X of Y' line when the count exceeds the cap", () => {
+    const games: GameRow[] = Array.from({ length: 47 }, (_, index) => ({
+      ...SAMPLE_GAME,
+      game_id: index + 1,
+      game_date: `2024-01-${String((index % 28) + 1).padStart(2, "0")}`,
+    }));
+    const resultData: SearchResultData = {
+      type: "team_games",
+      payload: { team: "Dallas Mavericks", games },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+
+    // GameMatchupCard renders each game's status badge ("Final" here, since
+    // every SAMPLE_GAME-derived row shares that status) -- one badge per
+    // rendered card is a reliable proxy for the card count.
+    expect(screen.getAllByText("Final")).toHaveLength(15);
+    expect(screen.getByText("Showing 15 of 47 games")).toBeInTheDocument();
+  });
+
   it("renders a ranked table for leaders", () => {
     const resultData: SearchResultData = {
       type: "leaders",

@@ -26,6 +26,10 @@ import {
 import type { LeadersResultData, SearchResultData } from "@/lib/search-result-types";
 import { cn } from "@/lib/utils";
 
+/** Max `GameMatchupCard`s rendered for a `team_games` result -- see the
+ * "team_games" case below for why this cap exists. */
+const TEAM_GAMES_DISPLAY_LIMIT = 15;
+
 /**
  * A single game's matchup card -- team names/logos, final score, status
  * badge. Built from the same primitives `games/[id]/page.tsx`'s own
@@ -151,14 +155,26 @@ export function SearchResultDataView({ resultData }: { resultData: SearchResultD
         </div>
       );
 
-    case "team_games":
+    case "team_games": {
+      // The backend sends up to `DEFAULT_ROWS_LIMIT` (200) games with no
+      // `limit` param on get_team_games -- cap the rendered card list so a
+      // season-scoped question doesn't stack up to 200 matchup cards (and
+      // ~400 remote team-logo images) inside the answer card.
+      const games = resultData.payload.games;
+      const visibleGames = games.slice(0, TEAM_GAMES_DISPLAY_LIMIT);
       return (
         <div className="flex flex-col gap-3">
-          {resultData.payload.games.map((game) => (
+          {visibleGames.map((game) => (
             <GameMatchupCard key={game.game_id} game={game} />
           ))}
+          {games.length > TEAM_GAMES_DISPLAY_LIMIT && (
+            <p className="text-xs text-muted-foreground">
+              Showing {TEAM_GAMES_DISPLAY_LIMIT} of {games.length} games
+            </p>
+          )}
         </div>
       );
+    }
 
     case "leaders":
       return <LeadersTable {...resultData.payload} />;
