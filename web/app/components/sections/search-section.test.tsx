@@ -298,6 +298,69 @@ describe("SearchSection", () => {
     expect(screen.getByText(/took too long to respond/i)).toBeInTheDocument();
   });
 
+  it("renders SearchResultDataView's content when the done payload carries resultData", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      mockStreamResponse([
+        dataChunk("Luka Dončić scored 41 points."),
+        `event: done\ndata: ${DONE_ANSWER({
+          citation: { table: "player_game_stats", dateRange: "2024-01-03" },
+          resultData: {
+            type: "player_stats",
+            payload: {
+              playerName: "Luka Dončić",
+              games: [
+                {
+                  stat_id: "1",
+                  game_id: 1,
+                  player_id: 1629029,
+                  player_first_name: "Luka",
+                  player_last_name: "Dončić",
+                  team: "DAL",
+                  points: 41,
+                  rebounds: 6,
+                  assists: 5,
+                  steals: 1,
+                  blocks: 0,
+                  turnovers: 4,
+                  minutes_played: "31",
+                  game_date: "2024-01-03",
+                  home_team: "Dallas Mavericks",
+                  away_team: "Portland Trail Blazers",
+                  home_score: 126,
+                  away_score: 97,
+                },
+              ],
+            },
+          },
+        })}\n\n`,
+      ])
+    );
+
+    await askQuestion("How many points did Luka score on Jan 3?");
+
+    expect(
+      await screen.findByText("Luka Dončić scored 41 points.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("41")).toBeInTheDocument();
+  });
+
+  it("renders the answer with no table when resultData is null (no-data/ambiguous/older payload)", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      mockStreamResponse([
+        dataChunk("Some answer."),
+        `event: done\ndata: ${DONE_ANSWER({
+          citation: { table: "games", dateRange: "2024-01-03" },
+        })}\n\n`,
+      ])
+    );
+
+    await askQuestion("A question.");
+
+    expect(await screen.findByText("Some answer.")).toBeInTheDocument();
+    // No crash, and no stray table rendered for a null resultData.
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
   it("never sends a request for a blank/whitespace-only question", async () => {
     const user = userEvent.setup();
     render(<SearchSection />);
