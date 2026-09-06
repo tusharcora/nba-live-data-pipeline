@@ -32,8 +32,8 @@ function providerOf(client: unknown): string {
 }
 
 describe("resolveSearchLlmProvider", () => {
-  it("defaults to gemini when SEARCH_LLM_PROVIDER is unset", () => {
-    expect(resolveSearchLlmProvider({})).toBe("gemini");
+  it("defaults to groq when SEARCH_LLM_PROVIDER is unset", () => {
+    expect(resolveSearchLlmProvider({})).toBe("groq");
   });
 
   it("accepts 'anthropic', 'gemini', and 'groq', case-insensitively", () => {
@@ -58,22 +58,43 @@ describe("getLlmClient", () => {
     createGroqClientMock.mockClear();
   });
 
-  it("defaults to gemini, constructed with GEMINI_API_KEY", () => {
-    const client = getLlmClient({ GEMINI_API_KEY: "g-key" });
+  it("defaults to groq, constructed with GROQ_API_KEY", () => {
+    const client = getLlmClient({ GROQ_API_KEY: "gr-key" });
+    expect(createGroqClientMock).toHaveBeenCalledWith("gr-key");
+    expect(createAnthropicClientMock).not.toHaveBeenCalled();
+    expect(createGeminiClientMock).not.toHaveBeenCalled();
+    expect(providerOf(client)).toBe("groq");
+  });
+
+  it("throws a clear config error -- not a silent fallback to another provider -- when groq (the default) has no GROQ_API_KEY", () => {
+    expect(() => getLlmClient({})).toThrow(/GROQ_API_KEY is not set/);
+    expect(createAnthropicClientMock).not.toHaveBeenCalled();
+    expect(createGeminiClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a whitespace-only GROQ_API_KEY the same as a missing one, when groq is the (default) implicit selection", () => {
+    expect(() => getLlmClient({ GROQ_API_KEY: "  \t" })).toThrow(/GROQ_API_KEY is not set/);
+    expect(createGroqClientMock).not.toHaveBeenCalled();
+  });
+
+  it("uses gemini when explicitly selected, constructed with GEMINI_API_KEY", () => {
+    const client = getLlmClient({ SEARCH_LLM_PROVIDER: "gemini", GEMINI_API_KEY: "g-key" });
     expect(createGeminiClientMock).toHaveBeenCalledWith("g-key");
     expect(createAnthropicClientMock).not.toHaveBeenCalled();
     expect(createGroqClientMock).not.toHaveBeenCalled();
     expect(providerOf(client)).toBe("gemini");
   });
 
-  it("throws a clear config error -- not a silent fallback to another provider -- when gemini (the default) has no GEMINI_API_KEY", () => {
-    expect(() => getLlmClient({})).toThrow(/GEMINI_API_KEY is not set/);
+  it("throws a clear config error -- not a silent fallback to another provider -- when gemini is explicitly selected but has no GEMINI_API_KEY", () => {
+    expect(() => getLlmClient({ SEARCH_LLM_PROVIDER: "gemini" })).toThrow(/GEMINI_API_KEY is not set/);
     expect(createAnthropicClientMock).not.toHaveBeenCalled();
     expect(createGroqClientMock).not.toHaveBeenCalled();
   });
 
   it("rejects a whitespace-only GEMINI_API_KEY the same as a missing one", () => {
-    expect(() => getLlmClient({ GEMINI_API_KEY: "   " })).toThrow(/GEMINI_API_KEY is not set/);
+    expect(() =>
+      getLlmClient({ SEARCH_LLM_PROVIDER: "gemini", GEMINI_API_KEY: "   " }),
+    ).toThrow(/GEMINI_API_KEY is not set/);
     expect(createGeminiClientMock).not.toHaveBeenCalled();
   });
 
@@ -106,7 +127,7 @@ describe("getLlmClient", () => {
     expect(providerOf(client)).toBe("groq");
   });
 
-  it("throws a clear config error -- not a silent fallback to gemini (the default) -- when groq is selected but has no GROQ_API_KEY", () => {
+  it("throws a clear config error -- not a silent fallback to another provider -- when groq is explicitly selected but has no GROQ_API_KEY", () => {
     expect(() => getLlmClient({ SEARCH_LLM_PROVIDER: "groq" })).toThrow(/GROQ_API_KEY is not set/);
     expect(createGeminiClientMock).not.toHaveBeenCalled();
     expect(createAnthropicClientMock).not.toHaveBeenCalled();

@@ -1,9 +1,19 @@
 // Provider-selection factory for the NL stats search BFF route. Reads
-// SEARCH_LLM_PROVIDER (defaulting to "gemini", the free-tier provider) and
-// constructs the matching LlmClient with its own API key. A missing key
-// for the *selected* provider is a configuration error, not a silent
-// fallback to another provider -- better to fail loudly at request time
-// than to quietly bill the wrong provider or serve degraded behavior.
+// SEARCH_LLM_PROVIDER (defaulting to "groq" -- see below) and constructs
+// the matching LlmClient with its own API key. A missing key for the
+// *selected* provider is a configuration error, not a silent fallback to
+// another provider -- better to fail loudly at request time than to
+// quietly bill the wrong provider or serve degraded behavior.
+//
+// Default provider history: started as "gemini" (free tier). Switched to
+// "groq" after live production testing showed repeated real 503 "high
+// demand" errors from a just-launched Gemini model (gemini-3.8-flash,
+// four days old at the time) -- a genuine reliability gap, not a code
+// bug. Groq runs on different infrastructure (its own LPU hardware, not
+// GPU-based), is also free with no credit card, and was live-verified
+// end-to-end (multiple real questions, correct answers, correct
+// citations, notably faster responses) before becoming the default.
+// Gemini remains fully supported as an explicit alternative.
 
 import { createAnthropicClient } from "@/lib/llm/anthropic-provider";
 import { createGeminiClient } from "@/lib/llm/gemini-provider";
@@ -12,7 +22,7 @@ import type { LlmClient } from "@/lib/llm/types";
 
 export type SearchLlmProvider = "anthropic" | "gemini" | "groq";
 
-const DEFAULT_PROVIDER: SearchLlmProvider = "gemini";
+const DEFAULT_PROVIDER: SearchLlmProvider = "groq";
 
 export function resolveSearchLlmProvider(env: Record<string, string | undefined> = process.env): SearchLlmProvider {
   const raw = env.SEARCH_LLM_PROVIDER?.trim().toLowerCase();
