@@ -24,13 +24,28 @@ const encoder = new TextEncoder();
 
 // Wire shape (pinned for Story 3 / the frontend):
 //   data: {"text":"..."}\n\n                      (repeated, incremental answer text)
-//   event: done\ndata: {"citation":..., "noData":..., "candidates":...}\n\n  (once, terminal)
+//   event: done\ndata: {"citation":..., "noData":..., "candidates":...}\n\n  (once, terminal --
+//     the search loop RAN TO COMPLETION: a real answer, a genuine
+//     no-data/ambiguous tool result, but never a provider/infra failure)
+//   event: error\ndata: {"message":"..."}\n\n                              (once, terminal --
+//     the search loop or LLM client construction THREW: missing/invalid
+//     API key, network error, rate limit, malformed provider response.
+//     Distinct from event: done on purpose -- a provider/config failure
+//     must never render identically to a genuine "no data for that"
+//     answer. The specific underlying error is never sent to the client;
+//     it's logged server-side via console.error only.)
 function sseTextChunk(text: string): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify({ text })}\n\n`);
 }
 
 function sseDone(result: Omit<SearchResult, "answerText">): Uint8Array {
   return encoder.encode(`event: done\ndata: ${JSON.stringify(result)}\n\n`);
+}
+
+const SEARCH_UNAVAILABLE_MESSAGE = "Search is temporarily unavailable. Please try again shortly.";
+
+function sseError(): Uint8Array {
+  return encoder.encode(`event: error\ndata: ${JSON.stringify({ message: SEARCH_UNAVAILABLE_MESSAGE })}\n\n`);
 }
 
 // The loop's final answer text already exists in full (see
@@ -92,13 +107,18 @@ export async function POST(request: Request): Promise<Response> {
         const llmClient = getLlmClient();
         result = await runSearchLoop({ question, llmClient });
       } catch (error) {
-        // Covers both a provider client construction failure (e.g. no API
-        // key configured for the selected SEARCH_LLM_PROVIDER) and a
-        // failure inside the loop itself (network, auth, rate limit, ...)
-        // — same honest "couldn't complete this" contract as a tool
-        // failure, never a guess dressed up as an answer.
+        // A provider/infrastructure failure -- LLM client construction
+        // throwing (e.g. no API key configured for the selected
+        // SEARCH_LLM_PROVIDER) or a failure inside the loop itself
+        // (network, auth, rate limit, malformed provider response, ...).
+        // Deliberately a distinct event from `done`: a genuine "no data for
+        // that" answer is the search loop running to completion and
+        // reporting honestly (see search-loop.ts's CAP-5 handling); this is
+        // the loop never completing at all, which the client must be able
+        // to tell apart. The specific error is logged here, never sent to
+        // the client.
         console.error("[api/search] runSearchLoop failed:", error);
-        safeEnqueue(sseDone({ citation: null, noData: true, candidates: null }));
+        safeEnqueue(sseError());
         controller.close();
         return;
       }

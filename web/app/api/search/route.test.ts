@@ -154,18 +154,19 @@ describe("POST /api/search", () => {
     expect(response.status).toBe(400);
   });
 
-  it("emits an honest done event (never a thrown error to the client) if the search loop itself fails", async () => {
+  it("emits a distinct event: error (never event: done, never a thrown error to the client) if the search loop itself fails", async () => {
     runSearchLoopMock.mockRejectedValueOnce(new Error("LLM API unreachable"));
 
     const response = await POST(postRequest({ question: "anything" }));
     const body = await readBody(response);
 
-    expect(body).toContain("event: done");
-    const doneJson = JSON.parse(body.split("data: ")[1]);
-    expect(doneJson).toEqual({ citation: null, noData: true, candidates: null });
+    expect(body).toContain("event: error");
+    expect(body).not.toContain("event: done");
+    const errorJson = JSON.parse(body.split("data: ")[1]);
+    expect(errorJson).toEqual({ message: "Search is temporarily unavailable. Please try again shortly." });
   });
 
-  it("emits an honest done event if constructing the LLM client itself throws", async () => {
+  it("emits a distinct event: error if constructing the LLM client itself throws", async () => {
     getLlmClientMock.mockImplementationOnce(() => {
       throw new Error("GEMINI_API_KEY not configured");
     });
@@ -174,8 +175,19 @@ describe("POST /api/search", () => {
     const body = await readBody(response);
 
     expect(runSearchLoopMock).not.toHaveBeenCalled();
-    expect(body).toContain("event: done");
-    const doneJson = JSON.parse(body.split("data: ")[1]);
-    expect(doneJson).toEqual({ citation: null, noData: true, candidates: null });
+    expect(body).toContain("event: error");
+    expect(body).not.toContain("event: done");
+    const errorJson = JSON.parse(body.split("data: ")[1]);
+    expect(errorJson).toEqual({ message: "Search is temporarily unavailable. Please try again shortly." });
+  });
+
+  it("never leaks the underlying error message to the client in the error event", async () => {
+    runSearchLoopMock.mockRejectedValueOnce(new Error("secret upstream detail: API key sk-abc123"));
+
+    const response = await POST(postRequest({ question: "anything" }));
+    const body = await readBody(response);
+
+    expect(body).not.toContain("secret upstream detail");
+    expect(body).not.toContain("sk-abc123");
   });
 });
