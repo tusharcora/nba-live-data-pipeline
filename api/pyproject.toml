@@ -34,4 +34,8 @@ dev = [
 ]
 
 [tool.uv.sources]
-db = { path = "../db", editable = true }
+# Vercel deploys only the api/ subtree, so ../db doesn't exist in that build
+# context -- fetch db from this repo's own GitHub subdirectory there instead
+# of a local editable path. Local dev (`cd api && uv run pytest`) still works,
+# it just won't pick up uncommitted db/ changes until they're pushed.
+db = { git = "https://github.com/tusharcora/nba-live-data-pipeline.git", subdirectory = "db", rev = "main" }

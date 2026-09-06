@@ -71,7 +71,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "db", editable = "../db" },
+    { name = "db", git = "https://github.com/tusharcora/nba-live-data-pipeline.git?subdirectory=db&rev=main" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.5" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
@@ -362,24 +362,13 @@ wheels = [
 [[package]]
 name = "db"
 version = "0.1.0"
-source = { editable = "../db" }
+source = { git = "https://github.com/tusharcora/nba-live-data-pipeline.git?subdirectory=db&rev=main#ee1d1153b0e725ed1be9a0cb010d62589566f3da" }
 dependencies = [
     { name = "alembic" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.19.1" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.5" },
-    { name = "pydantic-settings", specifier = ">=2.15.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.52" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "deprecated"
