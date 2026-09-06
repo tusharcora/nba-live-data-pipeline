@@ -4,8 +4,5 @@
     "index.py": {
       "maxDuration": 30
     }
-  },
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.py" }
-  ]
+  }
 }
