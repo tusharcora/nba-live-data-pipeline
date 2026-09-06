@@ -369,6 +369,16 @@ class FakeScoreboardSource:
         return self._scoreboard
 
 
+class FakeNbaLiveScoreboardClient:
+    def __init__(self, scoreboard: dict | None = None) -> None:
+        self._scoreboard = scoreboard or {"scoreboard": {"games": []}}
+        self.call_count = 0
+
+    def get_scoreboard(self) -> dict:
+        self.call_count += 1
+        return self._scoreboard
+
+
 def _balldontlie_pages() -> list[dict]:
     return [
         {
@@ -420,13 +430,15 @@ def test_live_game_flow_writes_raw_pull_for_each_source():
         raw_pull_sink=raw_pull_sink,
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=quality_metric_sink,
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
-    assert len(raw_pull_sink.written) == 2
+    assert len(raw_pull_sink.written) == 3
     sources = {rp.source for rp in raw_pull_sink.written}
-    assert sources == {"balldontlie", "public_feed"}
+    assert sources == {"balldontlie", "public_feed", "nba_stats"}
 
     bdl_pull = next(rp for rp in raw_pull_sink.written if rp.source == "balldontlie")
     assert bdl_pull.endpoint == "games"
@@ -436,8 +448,11 @@ def test_live_game_flow_writes_raw_pull_for_each_source():
     assert pf_pull.endpoint == "scoreboard"
     assert pf_pull.payload == _public_feed_scoreboard()
 
+    ns_pull = next(rp for rp in raw_pull_sink.written if rp.source == "nba_stats")
+    assert ns_pull.endpoint == "scoreboard"
 
-def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
+
+def test_live_game_flow_extracts_live_game_state_rows_from_all_sources():
     live_game_state_sink = FakeRowSink()
 
     live_game_flow(
@@ -445,8 +460,10 @@ def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert len(live_game_state_sink.written) == 2
@@ -454,6 +471,80 @@ def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
     assert sources == {"balldontlie", "public_feed"}
     for row in live_game_state_sink.written:
         assert isinstance(row, LiveGameState)
+
+
+def test_live_game_flow_writes_nba_stats_rows_when_present():
+    live_game_state_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=live_game_state_sink,
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
+        balldontlie_client=FakeBallDontLieClient([]),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=FakeNbaLiveScoreboardClient(_nba_stats_scoreboard()),
+    )
+
+    sources = {row.source for row in live_game_state_sink.written}
+    assert sources == {"nba_stats"}
+    assert len(live_game_state_sink.written) == 4  # every game in _nba_stats_scoreboard()
+
+
+def test_live_game_flow_matches_and_writes_conflicts_across_sources():
+    conflict_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=FakeRowSink(),
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=conflict_sink,
+        balldontlie_client=FakeBallDontLieClient(
+            [
+                {
+                    "data": [
+                        {
+                            "id": 15908,
+                            "status": "3rd Qtr",
+                            "home_team_score": 89,
+                            "visitor_team_score": 88,
+                            "home_team": {"full_name": "Miami Heat"},
+                            "visitor_team": {"full_name": "Boston Celtics"},
+                        }
+                    ],
+                    "meta": {"next_cursor": None},
+                }
+            ]
+        ),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=FakeNbaLiveScoreboardClient(
+            {
+                "scoreboard": {
+                    "games": [
+                        {
+                            "gameId": "0022500123",
+                            "gameStatus": 2,
+                            "gameStatusText": "Qtr 3 4:12",
+                            "gameTimeUTC": "2026-09-06T23:30:00Z",
+                            "period": 3,
+                            "gameClock": "PT04M12.00S",
+                            "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
+                            "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
+                        }
+                    ]
+                }
+            }
+        ),
+    )
+
+    assert len(conflict_sink.written) == 1
+    conflict = conflict_sink.written[0]
+    assert conflict.game_id == "22500123"
+    assert conflict.field_name == "home_score"
+    assert conflict.primary_source == "nba_stats"
+    assert conflict.secondary_source == "balldontlie"
 
 
 def test_live_game_flow_writes_poll_lag_metric_exactly_once():
@@ -464,8 +555,10 @@ def test_live_game_flow_writes_poll_lag_metric_exactly_once():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=FakeRowSink(),
         quality_metric_sink=quality_metric_sink,
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert len(quality_metric_sink.written) == 1
@@ -475,7 +568,7 @@ def test_live_game_flow_writes_poll_lag_metric_exactly_once():
     assert metric.metric_value >= 0
     assert metric.metadata_json == {"date": "2026-09-01"}
 
-    assert result["raw_pulls_written"] == 2
+    assert result["raw_pulls_written"] == 3
     assert result["live_game_states_written"] == 2
 
 
@@ -488,8 +581,10 @@ def test_live_game_flow_requests_both_sources_with_the_given_date():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=FakeRowSink(),
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=balldontlie_client,
         public_feed_client=public_feed_client,
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert balldontlie_client.requested_dates == ["2026-09-01"]
@@ -515,15 +610,17 @@ def test_live_game_flow_handles_multiple_balldontlie_pages():
         raw_pull_sink=raw_pull_sink,
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(pages),
         public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     bdl_pulls = [rp for rp in raw_pull_sink.written if rp.source == "balldontlie"]
     assert len(bdl_pulls) == 2
     bdl_states = [row for row in live_game_state_sink.written if row.source == "balldontlie"]
     assert len(bdl_states) == 2
-    assert result["raw_pulls_written"] == 3  # 2 balldontlie pages + 1 public_feed pull
+    assert result["raw_pulls_written"] == 4  # 2 balldontlie pages + 1 public_feed + 1 nba_stats
     assert result["live_game_states_written"] == 2
 
 

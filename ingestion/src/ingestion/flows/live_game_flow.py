@@ -14,6 +14,7 @@ from ingestion.flows.backfill_flow import (
     SQLAlchemyRawPullSink,
 )
 from ingestion.sources.balldontlie import BallDontLieClient
+from ingestion.sources.nba_live import NbaLiveScoreboardClient
 from ingestion.sources.public_feed import PublicFeedClient
 
 
@@ -33,6 +34,17 @@ class ScoreboardSource(Protocol):
     """
 
     def get_scoreboard(self, date: str) -> dict: ...
+
+
+@runtime_checkable
+class LiveScoreboardSource(Protocol):
+    """Injectable nba_stats (nba_api live scoreboard) client — matches
+    `NbaLiveScoreboardClient.get_scoreboard() -> dict`. No `date` param,
+    unlike `ScoreboardSource` above: nba_api's live scoreboard is always
+    "today" (ET) by construction, with no historical/date-scoped mode.
+    """
+
+    def get_scoreboard(self) -> dict: ...
 
 
 @runtime_checkable
@@ -368,66 +380,101 @@ def live_game_flow(
     raw_pull_sink: RawPullSink | None = None,
     live_game_state_sink: RowSink | None = None,
     quality_metric_sink: RowSink | None = None,
+    conflict_sink: RowSink | None = None,
     balldontlie_client: GamesPageSource | None = None,
     public_feed_client: ScoreboardSource | None = None,
+    nba_stats_client: LiveScoreboardSource | None = None,
 ) -> dict:
-    """One live-poll cycle against both data sources (docs/prd.md §12, Week 2).
+    """One live-poll cycle against all three data sources (docs/prd.md
+    §12; docs/superpowers/specs/2026-09-06-recent-games-board-and-
+    commentator-design.md §4).
 
-    A single pass, not a real-time loop — repeated polling during game
-    windows is a Prefect deployment-scheduling concern, out of scope for the
-    flow body itself (see plan doc). For the given `date`:
+    1. Pulls nba_stats's live scoreboard first — canonical for team
+       identity this poll (see `match_game_ids_by_team_overlap`) — then
+       balldontlie's `/games` pages and ESPN's scoreboard, writing each as
+       its own Bronze `RawPull`.
+    2. Extracts one Silver `LiveGameState` row per game from each source,
+       matches balldontlie's/public_feed's game ids onto nba_stats's
+       canonical id space by team-name overlap, and remaps them
+       accordingly before writing (an unmatched row keeps its native id,
+       orphaned but harmless).
+    3. Reconciles nba_stats's scores against each secondary source
+       (`reconcile_live_states`) and writes any resulting
+       `SourceConflict` rows via `conflict_sink`.
+    4. Writes exactly one freshness `QualityMetric`, unchanged from before.
 
-    1. Pulls every page of balldontlie's `/games` response and ESPN's
-       (`PublicFeedClient`) scoreboard response, writing each as its own
-       Bronze `RawPull` row via `raw_pull_sink` (reusing
-       `backfill_flow.RawPullSink`/`SQLAlchemyRawPullSink` rather than
-       redefining a second Bronze sink).
-    2. Extracts one Silver `LiveGameState` row per game from each source's
-       payload and writes it via `live_game_state_sink`.
-    3. Writes exactly one freshness `QualityMetric`
-       (`check_name="live_poll_lag_seconds"`) measuring the wall-clock gap
-       between the start of this poll and the moment the metric is
-       recorded, via `quality_metric_sink`.
-
-    All three sinks and both source clients are injected so the flow body
-    never opens a DB connection or makes an HTTP call itself — production
-    code gets real SQLAlchemy/HTTP-backed implementations by default; tests
-    pass in-memory fakes (see `ingestion/tests/test_live_game_flow.py`).
+    All sinks and source clients are injected; production code gets real
+    implementations by default, tests pass in-memory fakes.
     """
     logger = get_run_logger()
     poll_started_at = datetime.now(timezone.utc)
 
     session_factory: sessionmaker[Session] | None = None
-    if raw_pull_sink is None or live_game_state_sink is None or quality_metric_sink is None:
+    if (
+        raw_pull_sink is None
+        or live_game_state_sink is None
+        or quality_metric_sink is None
+        or conflict_sink is None
+    ):
         session_factory = sessionmaker(bind=create_engine(Settings().runtime_database_url))
     raw_pull_sink = raw_pull_sink or SQLAlchemyRawPullSink(session_factory)  # type: ignore[arg-type]
     live_game_state_sink = live_game_state_sink or SQLAlchemyRowSink(session_factory)  # type: ignore[arg-type]
     quality_metric_sink = quality_metric_sink or SQLAlchemyRowSink(session_factory)  # type: ignore[arg-type]
+    conflict_sink = conflict_sink or SQLAlchemyRowSink(session_factory)  # type: ignore[arg-type]
     balldontlie_client = balldontlie_client or BallDontLieClient(
         api_key=Settings().balldontlie_api_key
     )
     public_feed_client = public_feed_client or PublicFeedClient(
         base_url=Settings().public_feed_base_url
     )
+    nba_stats_client = nba_stats_client or NbaLiveScoreboardClient()
 
     raw_pulls_written = 0
     live_game_states_written = 0
 
+    nba_stats_payload = nba_stats_client.get_scoreboard()
+    raw_pull_sink.write(
+        RawPull(source="nba_stats", endpoint="scoreboard", payload=nba_stats_payload)
+    )
+    raw_pulls_written += 1
+    nba_stats_states = extract_nba_stats_live_states(nba_stats_payload)
+    nba_stats_team_names = {
+        state.game_id: {state.home_team, state.away_team}
+        for state in nba_stats_states
+        if state.home_team and state.away_team
+    }
+
+    balldontlie_states: list[LiveGameState] = []
+    balldontlie_team_names: dict[int, set[str]] = {}
     for page in balldontlie_client.get_games_pages(date):
         raw_pull_sink.write(RawPull(source="balldontlie", endpoint="games", payload=page))
         raw_pulls_written += 1
-        for state in extract_balldontlie_live_states(page):
-            live_game_state_sink.write(state)
-            live_game_states_written += 1
+        balldontlie_states.extend(extract_balldontlie_live_states(page))
+        balldontlie_team_names.update(extract_balldontlie_team_names(page))
 
-    scoreboard = public_feed_client.get_scoreboard(date)
+    public_feed_payload = public_feed_client.get_scoreboard(date)
     raw_pull_sink.write(
-        RawPull(source="public_feed", endpoint="scoreboard", payload=scoreboard)
+        RawPull(source="public_feed", endpoint="scoreboard", payload=public_feed_payload)
     )
     raw_pulls_written += 1
-    for state in extract_public_feed_live_states(scoreboard):
+    public_feed_states = extract_public_feed_live_states(public_feed_payload)
+    public_feed_team_names = extract_public_feed_team_names(public_feed_payload)
+
+    remap_game_ids(
+        balldontlie_states,
+        match_game_ids_by_team_overlap(nba_stats_team_names, balldontlie_team_names),
+    )
+    remap_game_ids(
+        public_feed_states,
+        match_game_ids_by_team_overlap(nba_stats_team_names, public_feed_team_names),
+    )
+
+    for state in (*nba_stats_states, *balldontlie_states, *public_feed_states):
         live_game_state_sink.write(state)
         live_game_states_written += 1
+
+    for conflict in reconcile_live_states(nba_stats_states, balldontlie_states, public_feed_states):
+        conflict_sink.write(conflict)
 
     poll_lag_seconds = (datetime.now(timezone.utc) - poll_started_at).total_seconds()
     quality_metric_sink.write(
