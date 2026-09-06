@@ -6,13 +6,16 @@ homepage usage and `GET /live` (retired — see api/src/api/main.py).
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
@@ -353,3 +356,74 @@ def get_board(
         return {"data": rows, "count": len(rows)}
 
     return cached_json(CACHE_KEY, CACHE_TTL_SECONDS, _compute)
+
+
+DEFAULT_STREAM_POLL_INTERVAL_SECONDS = 5.0
+# Same rationale as the retired `live.py`'s MAX_STREAM_DURATION_SECONDS —
+# bounds worst-case per-connection resource usage, not a real game-length
+# expectation.
+MAX_STREAM_DURATION_SECONDS = 4 * 60 * 60
+
+
+async def board_stream_generator(
+    board_reader: BoardReader,
+    quality_reader: QualityReader,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    interval_seconds: float = DEFAULT_STREAM_POLL_INTERVAL_SECONDS,
+    max_duration_seconds: float = MAX_STREAM_DURATION_SECONDS,
+    now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> AsyncIterator[str]:
+    """The testable core of `GET /board/stream`: poll -> merge -> yield ->
+    sleep. Emits only *today's* rows (the set that actually changes) —
+    historical rows are static and never part of this stream. Mirrors the
+    retired `live.py`'s `live_event_generator` shape.
+    """
+    elapsed = 0.0
+    while elapsed < max_duration_seconds:
+        if await is_disconnected():
+            return
+        now = now_fn()
+        start_utc, end_utc = et_today_bounds(now)
+        today_states = board_reader.latest_per_source_today(start_utc, end_utc)
+        by_game = _group_by_game(today_states)
+        rows = [
+            _board_row_for_group(game_id, sources, board_reader, quality_reader, start_utc, end_utc, now)
+            for game_id, sources in by_game.items()
+        ]
+        rows.sort(key=_sort_key)
+        yield f"data: {json.dumps({'data': rows})}\n\n"
+        await sleep(interval_seconds)
+        elapsed += interval_seconds
+
+
+def get_stream_interval_seconds() -> float:
+    return DEFAULT_STREAM_POLL_INTERVAL_SECONDS
+
+
+def get_stream_max_duration_seconds() -> float:
+    return MAX_STREAM_DURATION_SECONDS
+
+
+@router.get("/stream")
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def stream_board(
+    request: Request,
+    board_reader: BoardReader = Depends(get_board_reader),
+    quality_reader: QualityReader = Depends(get_quality_reader),
+    interval_seconds: float = Depends(get_stream_interval_seconds),
+    max_duration_seconds: float = Depends(get_stream_max_duration_seconds),
+) -> StreamingResponse:
+    """SSE stream of today's board rows — replaces `GET /live`."""
+    generator = board_stream_generator(
+        board_reader=board_reader,
+        quality_reader=quality_reader,
+        is_disconnected=request.is_disconnected,
+        interval_seconds=interval_seconds,
+        max_duration_seconds=max_duration_seconds,
+    )
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )

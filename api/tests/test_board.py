@@ -1,3 +1,5 @@
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -6,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from api.routers.board import (
+    board_stream_generator,
     et_today_bounds,
     get_board_reader,
 )
@@ -294,3 +297,72 @@ def test_board_live_row_source_pulled_at_reflects_nba_stats_freshness():
         assert row["source_pulled_at"] == nba_stats_time.isoformat()
     finally:
         _clear_overrides()
+
+
+class FakeDisconnect:
+    def __init__(self, values):
+        self._values = list(values)
+        self.call_count = 0
+
+    async def __call__(self) -> bool:
+        value = self._values[self.call_count] if self.call_count < len(self._values) else True
+        self.call_count += 1
+        return value
+
+
+class FakeSleep:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+def test_board_stream_generator_yields_one_event_per_poll():
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(1, "nba_stats", 91, 88, "in_progress", now,
+                            home_team="Miami Heat", away_team="Boston Celtics")]
+    board_reader = FakeBoardReader(today_states=today_states, history_by_game={1: today_states})
+    quality_reader = FakeQualityReader()
+
+    async def _run():
+        events = []
+        async for event in board_stream_generator(
+            board_reader=board_reader,
+            quality_reader=quality_reader,
+            is_disconnected=FakeDisconnect([False, True]),
+            sleep=FakeSleep(),
+            interval_seconds=0,
+            max_duration_seconds=10,
+            now_fn=lambda: now,
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert len(events) == 1
+    payload = json.loads(events[0].removeprefix("data: ").strip())
+    row = payload["data"][0]
+    assert row["game_id"] == 1
+    assert row["commentary"]["kind"] == "leader"
+
+
+def test_board_stream_generator_stops_on_disconnect():
+    async def _run():
+        events = []
+        async for event in board_stream_generator(
+            board_reader=FakeBoardReader(),
+            quality_reader=FakeQualityReader(),
+            is_disconnected=FakeDisconnect([True]),
+            sleep=FakeSleep(),
+        ):
+            events.append(event)
+        return events
+
+    assert asyncio.run(_run()) == []
+
+
+def test_board_stream_requires_api_key():
+    resp = client.get("/board/stream")
+    assert resp.status_code == 401
