@@ -35,3 +35,6 @@ dev = [
 
 [tool.uv.sources]
 db = { path = "../db", editable = true }
+
+[tool.vercel]
+entrypoint = "api.src.api.main:app"
