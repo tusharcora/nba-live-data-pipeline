@@ -38,6 +38,7 @@ const OK_RESULT: ToolResultEnvelope = {
   date_range: "2024-10-22 to 2024-10-22",
   data: [{ points: 30 }],
   candidates: null,
+  message: null,
 };
 
 const NO_MATCH_RESULT: ToolResultEnvelope = {
@@ -46,6 +47,7 @@ const NO_MATCH_RESULT: ToolResultEnvelope = {
   date_range: null,
   data: null,
   candidates: null,
+  message: "No game found between Lakers and Celtics on 2099-01-01.",
 };
 
 const AMBIGUOUS_RESULT: ToolResultEnvelope = {
@@ -54,6 +56,7 @@ const AMBIGUOUS_RESULT: ToolResultEnvelope = {
   date_range: null,
   data: null,
   candidates: ["LeBron James", "LeBron James Jr."],
+  message: "Multiple players match 'LeBron' -- please clarify which one.",
 };
 
 const ERROR_RESULT: ToolResultEnvelope = {
@@ -62,6 +65,7 @@ const ERROR_RESULT: ToolResultEnvelope = {
   date_range: null,
   data: null,
   candidates: null,
+  message: null,
 };
 
 describe("runSearchLoop", () => {
@@ -164,6 +168,7 @@ describe("runSearchLoop", () => {
       date_range: null,
       data: [{ points: 30 }],
       candidates: null,
+      message: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", createMessage, callTool });
@@ -182,6 +187,7 @@ describe("runSearchLoop", () => {
       date_range: null,
       data: [{ points: 30 }],
       candidates: null,
+      message: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", createMessage, callTool });
@@ -200,6 +206,7 @@ describe("runSearchLoop", () => {
       date_range: "2024-10-22 to 2024-10-22",
       data: [{ points: 30 }],
       candidates: null,
+      message: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", createMessage, callTool });
@@ -218,6 +225,7 @@ describe("runSearchLoop", () => {
       date_range: null,
       data: null,
       candidates: [],
+      message: "Multiple players match 'LeBron' -- please clarify which one.",
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", createMessage, callTool });

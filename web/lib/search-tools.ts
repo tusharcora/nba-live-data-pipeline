@@ -3,29 +3,33 @@
 // name and parameters; the LLM never sees SQL or a database credential —
 // only these typed tool schemas.
 //
-// ASSUMED Story 1 contract: at the time this route was built, Story 1
-// (api/'s new FastAPI tool endpoints) had not landed yet. query-tools.md
-// pins each tool's name/params/return *shape* but not its HTTP path or
-// wire envelope, so the endpoint paths and ToolResultEnvelope below are
-// this story's own assumption, made to the same conventions every other
-// api/ router already follows (kebab-case path, GET, require_api_key,
-// slowapi rate limit). If Dev1's real endpoints differ, that mismatch is
-// exactly what Story 4's integration pass reconciles — see this repo's PR
-// description for the full assumption written out for reviewers.
+// RECONCILED against Story 1's real endpoints (api/src/api/routers/query_tools.py,
+// PR #58). The endpoint paths and auth below were correctly assumed before
+// Story 1 landed; the query-param names and response envelope were NOT —
+// this module was updated in place once the real contract was available
+// (see PR #57's follow-up commit and the comment thread on PR #58).
 //
-//   GET /tools/player-stats?player_name=...&date=...&date_range_start=...&date_range_end=...
-//   GET /tools/team-games?team=...&date=...&date_range_start=...&date_range_end=...
-//   GET /tools/leaders?stat=...&date_range_start=...&date_range_end=...&limit=...
+//   GET /tools/player-stats?player_name=...&date=...&start_date=...&end_date=...
+//   GET /tools/team-games?team=...&date=...&start_date=...&end_date=...
+//   GET /tools/leaders?stat=...&start_date=...&end_date=...&limit=...
 //   GET /tools/game-result?team_a=...&team_b=...&date=...
 //
-// Assumed response envelope (every tool, always this shape):
-//   {
-//     status: "ok" | "no_match" | "ambiguous",
-//     table: string | null,       // e.g. "player_game_stats" — null unless status "ok"
-//     date_range: string | null,  // human-readable, e.g. "2024-10-22 to 2024-11-05" — CAP-2/CAP-4
-//     data: unknown | null,
-//     candidates: string[] | null // populated only when status is "ambiguous"
-//   }
+// Real response envelope (api/src/api/routers/query_tools.py's module
+// docstring — every route returns exactly one of these three shapes):
+//   {"status": "ok",        "data": <payload>,  "candidates": null,              "message": null}
+//   {"status": "no_match",  "data": null,       "candidates": null,              "message": <str>}
+//   {"status": "ambiguous", "data": null,       "candidates": [{"name": ...}],   "message": <str>}
+//
+// Notably: there is no top-level `table` or `date_range` field, and
+// `candidates` is a list of `{name: string}` objects, not plain strings.
+// CAP-4 (every answer cites a table + date range) and the pinned
+// `citation: {table, dateRange}` contract with Story 3 both need those two
+// values regardless — TOOL_TABLE_MAP and deriveDateRange() below compute
+// them locally instead of reading them off the wire: `table` from a static
+// per-tool map (the BFF always knows which table a tool call is grounded
+// in, since it's the one that dispatched the call), and `dateRange` from
+// `data.date_range` (present on `get_leaders`) or from the `game_date`
+// value(s) actually present in `data` for the other three tools.
 //
 // CAP-5: a zero-row match is `status: "no_match"`, never an empty `data: []`
 // with `status: "ok"` — the model must be able to tell "found nothing" apart
@@ -40,6 +44,7 @@ export interface ToolResultEnvelope {
   date_range: string | null;
   data: unknown;
   candidates: string[] | null;
+  message: string | null;
 }
 
 const ERROR_ENVELOPE: ToolResultEnvelope = {
@@ -48,6 +53,7 @@ const ERROR_ENVELOPE: ToolResultEnvelope = {
   date_range: null,
   data: null,
   candidates: null,
+  message: null,
 };
 
 interface DateAwareInput {
@@ -55,6 +61,10 @@ interface DateAwareInput {
   date_range?: unknown;
 }
 
+// FastAPI's real query params are `start_date`/`end_date` (api/src/api/routers/query_tools.py),
+// not `date_range_start`/`date_range_end` as originally assumed. Our own
+// tool schema's input shape (`date_range: {start, end}`, what the LLM sends
+// us) is unchanged — only this mapping onto the outgoing query string moves.
 function appendDateParams(params: URLSearchParams, input: DateAwareInput): void {
   if (typeof input.date === "string" && input.date) {
     params.set("date", input.date);
@@ -62,8 +72,8 @@ function appendDateParams(params: URLSearchParams, input: DateAwareInput): void 
   const range = input.date_range;
   if (range && typeof range === "object" && !Array.isArray(range)) {
     const { start, end } = range as { start?: unknown; end?: unknown };
-    if (typeof start === "string" && start) params.set("date_range_start", start);
-    if (typeof end === "string" && end) params.set("date_range_end", end);
+    if (typeof start === "string" && start) params.set("start_date", start);
+    if (typeof end === "string" && end) params.set("end_date", end);
   }
 }
 
@@ -74,6 +84,18 @@ const TOOL_PATHS: Record<ToolName, string> = {
   get_team_games: "/tools/team-games",
   get_leaders: "/tools/leaders",
   get_game_result: "/tools/game-result",
+};
+
+// The Gold table each tool's "ok" data is grounded in — the real envelope
+// carries no `table` field, so this is the BFF's own knowledge of which
+// table each tool call ultimately reads (api/src/api/routers/query_tools.py's
+// module docstring: get_player_stats/get_leaders read `player_game_stats`,
+// get_team_games/get_game_result read `games`).
+const TOOL_TABLE_MAP: Record<ToolName, string> = {
+  get_player_stats: "player_game_stats",
+  get_team_games: "games",
+  get_leaders: "player_game_stats",
+  get_game_result: "games",
 };
 
 function buildQuery(name: ToolName, input: Record<string, unknown>): string {
@@ -145,9 +167,73 @@ function hasRequiredFields(name: ToolName, input: Record<string, unknown>): bool
   }
 }
 
-function normalizeEnvelope(raw: unknown): ToolResultEnvelope {
+// Extracts a "YYYY-MM-DD" (or ISO datetime) date string off a row, tolerant
+// of it being missing or non-string — real rows always have `game_date`,
+// but this stays defensive against a shape drift rather than throwing.
+function rowDate(row: unknown): string | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as { game_date?: unknown }).game_date;
+  return typeof value === "string" ? value : null;
+}
+
+function formatDateRange(start: string | null, end: string | null): string | null {
+  if (!start && !end) return null;
+  if (!start) return end;
+  if (!end) return start;
+  return start === end ? start : `${start} to ${end}`;
+}
+
+// Derives a human-readable date range from an "ok" result's `data` payload.
+// Every tool's real shape (per api/tests/test_query_tools.py's fixtures) is
+// handled explicitly rather than guessed at generically, since each one
+// nests dates differently:
+//   get_player_stats / get_team_games -> data.games[].game_date (min..max)
+//   get_leaders                       -> data.date_range.{start_date,end_date} (already a range)
+//   get_game_result                   -> data.game.game_date (a single date)
+function deriveDateRange(name: ToolName, data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as Record<string, unknown>;
+
+  if (name === "get_leaders") {
+    const range = payload.date_range;
+    if (range && typeof range === "object") {
+      const { start_date, end_date } = range as { start_date?: unknown; end_date?: unknown };
+      return formatDateRange(
+        typeof start_date === "string" ? start_date : null,
+        typeof end_date === "string" ? end_date : null,
+      );
+    }
+    return null;
+  }
+
+  if (name === "get_game_result") {
+    return rowDate(payload.game);
+  }
+
+  // get_player_stats / get_team_games: both nest their rows under `games`.
+  const games = payload.games;
+  if (!Array.isArray(games) || games.length === 0) return null;
+  const dates = games.map(rowDate).filter((d): d is string => d !== null).sort();
+  if (dates.length === 0) return null;
+  return formatDateRange(dates[0], dates[dates.length - 1]);
+}
+
+// The real `candidates` shape is `[{name: string}, ...]` (see
+// api/tests/test_query_tools.py's `test_get_player_stats_ambiguous_name_returns_candidates`),
+// not plain strings — extract `.name` so the rest of the BFF (and the
+// pinned `candidates: string[] | null` contract with Story 3) only ever
+// deals with plain names.
+function extractCandidateNames(candidates: unknown): string[] | null {
+  if (!Array.isArray(candidates)) return null;
+  const names = candidates
+    .map((c) => (c && typeof c === "object" ? (c as { name?: unknown }).name : null))
+    .filter((n): n is string => typeof n === "string");
+  return names;
+}
+
+function normalizeEnvelope(name: ToolName, raw: unknown): ToolResultEnvelope {
   if (!raw || typeof raw !== "object") return ERROR_ENVELOPE;
-  const candidate = raw as Partial<ToolResultEnvelope>;
+  const candidate = raw as { status?: unknown; data?: unknown; candidates?: unknown; message?: unknown };
   if (
     candidate.status !== "ok" &&
     candidate.status !== "no_match" &&
@@ -155,12 +241,20 @@ function normalizeEnvelope(raw: unknown): ToolResultEnvelope {
   ) {
     return ERROR_ENVELOPE;
   }
+
+  const data = candidate.data ?? null;
+  const isOk = candidate.status === "ok";
+
   return {
     status: candidate.status,
-    table: typeof candidate.table === "string" ? candidate.table : null,
-    date_range: typeof candidate.date_range === "string" ? candidate.date_range : null,
-    data: candidate.data ?? null,
-    candidates: Array.isArray(candidate.candidates) ? candidate.candidates : null,
+    // Derived, not read off the wire — see the module header comment and
+    // deriveDateRange() above for why. Only meaningful (and only computed)
+    // for a genuinely grounded "ok" result.
+    table: isOk ? TOOL_TABLE_MAP[name] : null,
+    date_range: isOk ? deriveDateRange(name, data) : null,
+    data,
+    candidates: extractCandidateNames(candidate.candidates),
+    message: typeof candidate.message === "string" ? candidate.message : null,
   };
 }
 
@@ -173,7 +267,7 @@ export async function callTool(
   if (!hasRequiredFields(name, input)) return ERROR_ENVELOPE;
   try {
     const raw = await fetchFromApi(`${TOOL_PATHS[name]}${buildQuery(name, input)}`);
-    return normalizeEnvelope(raw);
+    return normalizeEnvelope(name, raw);
   } catch (error) {
     // Logged (not swallowed silently) so a real FastAPI outage or contract
     // mismatch against Story 1's real endpoints is visible in server logs —
