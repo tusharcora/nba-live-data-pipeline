@@ -1,3 +1,9 @@
+// @vitest-environment node
+//
+// This route handler test exercises real Request/Response/ReadableStream
+// (Node's fetch-API globals) rather than jsdom's DOM-focused environment,
+// which is the project default after Story 3/4 consolidated the two
+// per-story vitest configs into one (see vitest.config.ts).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Both the Anthropic client and the search loop are mocked — this test
