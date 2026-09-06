@@ -175,19 +175,122 @@ def test_board_includes_historical_rows_not_in_todays_set():
 
 
 def test_board_excludes_historical_row_already_covered_by_todays_set():
+    """The Gold `games` table's `game_id` for an nba_stats-sourced game is
+    offset by `NBA_GAME_ID_OFFSET` relative to `live_game_state`'s unoffset
+    nba_api id (see ingestion/src/ingestion/sources/nba_stats.py's
+    `offset_game_id` — e.g. nba_api id 22500123 -> Gold id 100022500123).
+    Comparing the two id spaces directly (the pre-fix behavior) never
+    matched, so a same-day dbt materialization of a finished game would
+    render it TWICE — once from today's set, once again from Gold. The
+    historical row here uses the correctly-offset id, so the fix must
+    recognize it as the same real game and exclude it.
+    """
     now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
-    today_states = [_state(999, "nba_stats", 118, 109, "final", now,
+    today_states = [_state(22500123, "nba_stats", 118, 109, "final", now,
                             home_team="Golden State Warriors", away_team="Phoenix Suns")]
     historical_rows = [
         {
-            "game_id": 999, "home_team": "Golden State Warriors", "away_team": "Phoenix Suns",
-            "home_score": 118, "away_score": 109, "source_pulled_at": now,
+            "game_id": 100022500123, "home_team": "Golden State Warriors",
+            "away_team": "Phoenix Suns", "home_score": 118, "away_score": 109,
+            "source_pulled_at": now,
         }
     ]
     _override(today_states=today_states, historical_rows=historical_rows)
     try:
         resp = client.get("/board/", headers={"X-API-Key": API_KEY})
         rows = resp.json()["data"]
-        assert len([r for r in rows if r["game_id"] == 999]) == 1
+        # The offset Gold row must be excluded (the fix) ...
+        assert len([r for r in rows if r["game_id"] == 100022500123]) == 0
+        # ... and today's own (unoffset) row is still present exactly once.
+        assert len([r for r in rows if r["game_id"] == 22500123]) == 1
+    finally:
+        _clear_overrides()
+
+
+def test_board_excludes_historical_row_matching_fallback_only_native_id():
+    """A fallback-only today row (no nba_stats source — e.g. balldontlie)
+    uses its native id space directly: balldontlie's ids already match
+    Gold's directly, so no offset applies. This path worked before the
+    id-space fix; this test confirms it still works after.
+    """
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(888, "balldontlie", 118, 109, "Final", now)]
+    historical_rows = [
+        {
+            "game_id": 888, "home_team": "Golden State Warriors",
+            "away_team": "Phoenix Suns", "home_score": 118, "away_score": 109,
+            "source_pulled_at": now,
+        }
+    ]
+    _override(today_states=today_states, historical_rows=historical_rows)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        rows = resp.json()["data"]
+        assert len([r for r in rows if r["game_id"] == 888]) == 1
+    finally:
+        _clear_overrides()
+
+
+def test_board_fallback_status_scheduled_for_not_yet_started_game():
+    """A fallback row (no nba_stats coverage) with no scores yet must
+    render `scheduled`, not `live` — the pre-fix keyword logic
+    (`status not in ("Final", "final")`) mislabeled every non-final status,
+    including a genuinely not-yet-started game, as `live`.
+    """
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(5, "balldontlie", None, None, "Scheduled", now)]
+    _override(today_states=today_states)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 5)
+        assert row["status"] == "scheduled"
+        assert row["commentary"] is None
+    finally:
+        _clear_overrides()
+
+
+def test_board_fallback_status_live_with_real_scores():
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(6, "balldontlie", 50, 48, "3rd Qtr", now)]
+    _override(today_states=today_states)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 6)
+        assert row["status"] == "live"
+    finally:
+        _clear_overrides()
+
+
+def test_board_fallback_status_final():
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(7, "balldontlie", 101, 99, "Final", now)]
+    _override(today_states=today_states)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 7)
+        assert row["status"] == "final"
+    finally:
+        _clear_overrides()
+
+
+def test_board_live_row_source_pulled_at_reflects_nba_stats_freshness():
+    """`source_pulled_at` on a live row must reflect nba_stats's own
+    freshness (every other field on the row comes from nba_stats), not
+    the freshest of any source — otherwise a stale nba_stats score can
+    render next to a misleadingly-fresh "as of" timestamp borrowed from a
+    secondary source, exactly when a "Feed stale" commentary line fires.
+    """
+    nba_stats_time = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    secondary_time = datetime(2026, 1, 1, 20, 5, 0, tzinfo=timezone.utc)  # fresher
+    today_states = [
+        _state(8, "nba_stats", 60, 58, "in_progress", nba_stats_time,
+               home_team="Denver Nuggets", away_team="Utah Jazz", period=2, clock="5:00"),
+        _state(8, "balldontlie", 60, 58, "2nd Qtr", secondary_time),
+    ]
+    _override(today_states=today_states, history_by_game={8: [today_states[0]]})
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 8)
+        assert row["source_pulled_at"] == nba_stats_time.isoformat()
     finally:
         _clear_overrides()

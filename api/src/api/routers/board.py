@@ -48,6 +48,17 @@ _STATUS_MAP = {
 
 _SORT_ORDER = {"live": 0, "final": 1, "scheduled": 2, "postponed": 3}
 
+# Matches ingestion/src/ingestion/sources/nba_stats.py's NBA_GAME_ID_OFFSET.
+# Duplicated here rather than imported -- `api` has no dependency on
+# `ingestion` -- so this must stay in sync if that constant ever changes.
+NBA_GAME_ID_OFFSET = 100_000_000_000
+
+# Fallback-row (no nba_stats coverage today) status classification —
+# mirrors live_game_flow.py's `_normalize_nba_stats_status` postponement
+# keywords, applied to whatever raw status string a secondary source uses
+# since none of them share nba_stats's normalized vocabulary.
+_FALLBACK_POSTPONED_KEYWORDS = ("postpon", "cancel", "suspend", "delay")
+
 
 def et_today_bounds(now_utc: datetime) -> tuple[datetime, datetime]:
     """UTC `[start, end)` bounds for "today" in America/New_York, given
@@ -144,7 +155,7 @@ def _derive_status(nba_stats_latest: LiveGameState | None) -> str:
 
 
 def _serialize_live_row(
-    game_id: int, nba_stats_latest: LiveGameState, commentary, freshest_pulled_at: datetime
+    game_id: int, nba_stats_latest: LiveGameState, commentary
 ) -> dict:
     status = _derive_status(nba_stats_latest)
     return {
@@ -161,13 +172,33 @@ def _serialize_live_row(
             if nba_stats_latest.scheduled_start
             else None
         ),
-        "source_pulled_at": freshest_pulled_at.isoformat(),
+        # nba_stats_latest.pulled_at, not the freshest of any source —
+        # every other field on this row comes from nba_stats, so the "as of"
+        # timestamp must reflect that same row's actual freshness. Using the
+        # freshest of any source would show a stale score next to a fresh
+        # timestamp exactly when a "Feed stale" commentary line is firing.
+        "source_pulled_at": nba_stats_latest.pulled_at.isoformat(),
         "commentary": (
             {"text": commentary.text, "kind": commentary.kind} if commentary else None
         )
         if status == "live"
         else None,
     }
+
+
+def _derive_fallback_status(fallback: LiveGameState) -> str:
+    """Keyword-based status classification for a fallback (no nba_stats
+    coverage) row — secondary sources don't share nba_stats's normalized
+    status vocabulary, so this can't reuse `_STATUS_MAP`/`_derive_status`.
+    """
+    lowered = (fallback.status or "").lower()
+    if any(keyword in lowered for keyword in _FALLBACK_POSTPONED_KEYWORDS):
+        return "postponed"
+    if "final" in lowered:
+        return "final"
+    if fallback.home_score is None and fallback.away_score is None:
+        return "scheduled"
+    return "live"
 
 
 def _serialize_fallback_row(game_id: int, fallback: LiveGameState) -> dict:
@@ -177,7 +208,7 @@ def _serialize_fallback_row(game_id: int, fallback: LiveGameState) -> dict:
     """
     return {
         "game_id": game_id,
-        "status": "live" if fallback.status not in ("Final", "final") else "final",
+        "status": _derive_fallback_status(fallback),
         "home_team": None,
         "away_team": None,
         "home_score": fallback.home_score,
@@ -242,8 +273,7 @@ def _board_row_for_group(
         other_latest = {s: state for s, state in sources.items() if s != "nba_stats"}
         commentary = compute_commentary(history, other_latest, conflicts, now)
 
-    freshest = max(sources.values(), key=lambda s: s.pulled_at)
-    return _serialize_live_row(game_id, nba_stats_latest, commentary, freshest.pulled_at)
+    return _serialize_live_row(game_id, nba_stats_latest, commentary)
 
 
 def _group_by_game(states: Sequence[LiveGameState]) -> dict[int, dict[str, LiveGameState]]:
@@ -273,11 +303,27 @@ def compute_board(
     ]
     today_rows.sort(key=_sort_key)
 
-    today_game_ids = set(by_game.keys())
+    # Exclusion set must live in Gold's id space, not live_game_state's.
+    # `LiveGameState.game_id` for an nba_stats row is the unoffset nba_api
+    # id (e.g. 22500123); the Gold `games` table's id for that same game is
+    # offset by NBA_GAME_ID_OFFSET (e.g. 100022500123 — see
+    # ingestion/src/ingestion/sources/nba_stats.py's `offset_game_id`).
+    # Comparing them directly (the pre-fix behavior) never matched, so a
+    # same-day dbt run could duplicate a finished game on the board: once
+    # from today's live/final set, once again from the Gold fallback.
+    # Games without an nba_stats row (fallback-only, e.g. balldontlie) use
+    # their native id unchanged — balldontlie's id space already matches
+    # Gold directly, and public_feed/ESPN's id space never appears in Gold
+    # at all, so passing it through unoffset is harmless (it just never
+    # excludes anything, which is correct).
+    today_gold_ids = {
+        (NBA_GAME_ID_OFFSET + game_id) if "nba_stats" in sources else game_id
+        for game_id, sources in by_game.items()
+    }
     historical_rows = [
         _normalize_historical_row(row)
         for row in games_reader.list_games(None)
-        if row["game_id"] not in today_game_ids
+        if row["game_id"] not in today_gold_ids
     ]
 
     return today_rows + historical_rows
