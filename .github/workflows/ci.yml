@@ -57,6 +57,7 @@ jobs:
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
+      - run: npm run test
       # Informational only this week (see dependency-audit below for why:
       # no cheap way yet to distinguish new vs. pre-existing findings) —
       # continue-on-error keeps a known third-party CVE from hard-blocking

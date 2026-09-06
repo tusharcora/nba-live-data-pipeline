@@ -9,6 +9,7 @@ import {
   Radio,
   Search,
   Settings as SettingsIcon,
+  Sparkles,
 } from "lucide-react";
 
 import {
@@ -47,6 +48,7 @@ const NAV_ITEMS = [
   { href: "/live", label: "Live Board", icon: Radio },
   { href: "/quality", label: "Data Quality Scorecard", icon: BarChart3 },
   { href: "/explorer", label: "Historical Explorer", icon: Search },
+  { href: "/search", label: "Ask a Stats Question", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 
@@ -69,7 +71,7 @@ function formatGameDate(dateStr: string): string {
  * Global ⌘K / Ctrl+K command palette, mounted once in `app/layout.tsx` so
  * it's reachable from every page. Three sections:
  *
- * - Navigate: the app's five pages.
+ * - Navigate: the app's six pages.
  * - Actions: a density toggle, wired to Employee D2's
  *   ("keyboard-shortcuts-and-density") `toggleDensity()`/`useDensity()`
  *   from `@/lib/density` (this item started as a disabled stub before
