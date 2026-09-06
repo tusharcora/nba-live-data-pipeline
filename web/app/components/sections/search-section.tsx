@@ -69,11 +69,13 @@ type SearchState =
  * `readSearchStream` (`lib/search-stream.ts`), kept there so it's unit
  * tested without a DOM.
  *
- * Assumed contract with `/api/search` (may not have landed yet -- see this
- * story's spec Design Notes and the PR body for the exact caveat): POST
- * `{ question }`, an `event-stream` response of anonymous `data:` text
- * chunks terminated by `event: done` / JSON `data:` matching
- * `{ citation, noData, candidates }`.
+ * Contract with `/api/search` (see `lib/search-stream.ts`'s header for the
+ * full, confirmed shape): POST `{ question }`, an `event-stream` response
+ * of anonymous `data:` text chunks terminated by either `event: done` /
+ * JSON `data:` matching `{ citation, noData, candidates }` (the search
+ * genuinely completed), or `event: error` / JSON `data:` matching
+ * `{ message }` (the backend failed to run the search at all -- rendered
+ * as its own distinct `error` state below, never folded into "no-data").
  */
 export function SearchSection() {
   const [question, setQuestion] = useState("");
@@ -141,28 +143,53 @@ export function SearchSection() {
         for await (const event of readSearchStream(response)) {
           if (supersededByNewerRequest()) return;
 
-          if (event.kind === "chunk") {
-            setState((prev) =>
-              prev.status === "streaming"
-                ? { status: "streaming", text: prev.text + event.text }
-                : prev
-            );
-            continue;
-          }
+          switch (event.kind) {
+            case "chunk":
+              setState((prev) =>
+                prev.status === "streaming"
+                  ? { status: "streaming", text: prev.text + event.text }
+                  : prev
+              );
+              break;
 
-          // event.kind === "done"
-          reachedDone = true;
-          const { payload } = event;
-          if (payload.noData) {
-            setState({ status: "no-data" });
-          } else if (payload.candidates && payload.candidates.length > 0) {
-            setState({ status: "ambiguous", candidates: payload.candidates });
-          } else {
-            setState((prev) => ({
-              status: "answer",
-              text: prev.status === "streaming" ? prev.text : "",
-              citation: payload.citation,
-            }));
+            case "done": {
+              reachedDone = true;
+              const { payload } = event;
+              if (payload.noData) {
+                setState({ status: "no-data" });
+              } else if (payload.candidates && payload.candidates.length > 0) {
+                setState({ status: "ambiguous", candidates: payload.candidates });
+              } else {
+                setState((prev) => ({
+                  status: "answer",
+                  text: prev.status === "streaming" ? prev.text : "",
+                  citation: payload.citation,
+                }));
+              }
+              break;
+            }
+
+            case "error":
+              // Distinct from both the transport-level errors below (this
+              // one came from the backend itself, mid-stream) and from
+              // "no-data" (the search failed to run at all -- it never
+              // produced a real, genuine, or ambiguous result to relay).
+              // Reuses the same destructive `error` state/visual treatment
+              // as a transport failure, since it's the same *kind* of
+              // situation from the user's point of view: the search is
+              // broken, not that there's no data. Returns directly (like
+              // "done" above returns via readSearchStream ending the
+              // generator) rather than falling through to the post-loop
+              // "stream ended early" check.
+              setState({ status: "error", message: event.payload.message });
+              return;
+
+            default: {
+              // Exhaustiveness check: a new `SearchStreamEvent` kind that
+              // isn't handled above fails to compile here.
+              const exhaustiveCheck: never = event;
+              return exhaustiveCheck;
+            }
           }
         }
       } catch {

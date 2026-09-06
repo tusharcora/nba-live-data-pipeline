@@ -9,8 +9,17 @@
  * anonymous `data:` frames carry a JSON object `{"text": "..."}` per chunk
  * (not raw text -- JSON-wrapping avoids a literal blank line inside the
  * answer text ever being mistaken for an SSE frame boundary), concatenating
- * each chunk's `text` field in order; the stream ends with one `event: done`
- * frame whose `data:` line is a JSON object matching `SearchDonePayload`.
+ * each chunk's `text` field in order; the stream ends with either one
+ * `event: done` frame whose `data:` line is a JSON object matching
+ * `SearchDonePayload`, or -- for a provider/infrastructure failure that
+ * kept the search from running at all -- one `event: error` frame whose
+ * `data:` line is a JSON object matching `SearchErrorPayload`. `done` and
+ * `error` are deliberately distinct terminal events, not a field on the
+ * same payload: `done` always means the search itself completed (a real
+ * answer, a genuine no-data result, or ambiguous candidates); `error`
+ * means the backend failed to run the search at all, which the UI must
+ * render as its own distinct state, never indistinguishable from a
+ * genuine "no data for that" answer.
  *
  * Pure, DOM-free module by design so the trickiest logic here (SSE framing
  * split across arbitrary chunk boundaries) is unit-testable without a
@@ -36,9 +45,24 @@ export type SearchDonePayload = {
   candidates: string[] | null;
 };
 
+export type SearchErrorPayload = {
+  message: string;
+};
+
 export type SearchStreamEvent =
   | { kind: "chunk"; text: string }
-  | { kind: "done"; payload: SearchDonePayload };
+  | { kind: "done"; payload: SearchDonePayload }
+  | { kind: "error"; payload: SearchErrorPayload };
+
+/** Shown when an `event: error` frame's JSON payload doesn't parse or
+ * doesn't carry a usable `message` -- the `error` event type itself is
+ * already an unambiguous signal that the search failed, so a malformed
+ * payload still surfaces the distinct unavailable state (with this
+ * fallback copy) rather than being treated as a fatal parse failure the
+ * way a malformed `done` payload is. Exported so the UI layer can reuse
+ * the exact same fallback copy if it ever needs to. */
+export const DEFAULT_SEARCH_ERROR_MESSAGE =
+  "Search is temporarily unavailable. Please try again shortly.";
 
 /**
  * One `\n\n`-delimited SSE frame, already stripped of its trailing blank
@@ -128,6 +152,29 @@ function parseDonePayload(raw: string): SearchDonePayload | null {
 }
 
 /**
+ * Parses an `error` frame's JSON `data:` payload, defensively -- unlike
+ * `parseDonePayload`, this never returns null/throws: the `event: error`
+ * type alone is already an unambiguous "the search failed" signal, so a
+ * missing/malformed `message` field falls back to
+ * `DEFAULT_SEARCH_ERROR_MESSAGE` rather than losing that signal entirely.
+ */
+function parseErrorPayload(raw: string): SearchErrorPayload {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { message: DEFAULT_SEARCH_ERROR_MESSAGE };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { message: DEFAULT_SEARCH_ERROR_MESSAGE };
+  }
+  const message = (parsed as Record<string, unknown>).message;
+  return typeof message === "string" && message.trim()
+    ? { message }
+    : { message: DEFAULT_SEARCH_ERROR_MESSAGE };
+}
+
+/**
  * Parses one answer-text chunk frame's JSON `data:` payload
  * (`{"text": "..."}`, matching `route.ts`'s `sseTextChunk()`). Returns
  * `null` on anything that doesn't match -- invalid JSON, a non-object, or
@@ -163,7 +210,9 @@ function parseChunkPayload(raw: string): string | null {
  * comes through. Only a `done` event whose payload fails to parse is
  * fatal: with no usable payload the caller can't tell normal/no-data/
  * ambiguous apart, so this throws and the caller's fetch try/catch should
- * route to the connection-error state.
+ * route to the connection-error state. An `error` event is never fatal to
+ * parse (see `parseErrorPayload`) -- it always yields a distinct `error`
+ * stream event, falling back to `DEFAULT_SEARCH_ERROR_MESSAGE` at worst.
  */
 export async function* readSearchStream(
   response: Response
@@ -206,6 +255,11 @@ export async function* readSearchStream(
             throw new Error("Malformed `done` payload in /api/search stream");
           }
           yield { kind: "done", payload };
+          return;
+        }
+
+        if (parsed.event === "error") {
+          yield { kind: "error", payload: parseErrorPayload(parsed.data) };
           return;
         }
 

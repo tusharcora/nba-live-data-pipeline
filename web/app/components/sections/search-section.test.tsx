@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SearchSection, STREAM_TIMEOUT_MS } from "./search-section";
 import { responseFromChunks as mockStreamResponse } from "@/lib/test-support/sse-stream";
+import { DEFAULT_SEARCH_ERROR_MESSAGE } from "@/lib/search-stream";
 
 /**
  * Component-level coverage of this story's I/O & Edge-Case Matrix
@@ -173,6 +174,41 @@ describe("SearchSection", () => {
 
     // The question input reflects the picked candidate too.
     expect(screen.getByLabelText(/ask a stats question/i)).toHaveValue("LeBron James");
+  });
+
+  it("renders the distinct unavailable-error state, never the no-data state, for a backend event: error frame", async () => {
+    // A provider/infrastructure failure (bad API key, network error, etc.)
+    // -- the backend never completed the search at all, which must never
+    // look like a genuine "no data for that" answer.
+    vi.mocked(fetch).mockResolvedValue(
+      mockStreamResponse([
+        dataChunk("this text should never be shown"),
+        'event: error\ndata: {"message":"The search provider is temporarily unreachable."}\n\n',
+      ])
+    );
+
+    await askQuestion("Any question");
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
+    // The backend's own message is relayed verbatim, not just the fallback.
+    expect(
+      screen.getByText("The search provider is temporarily unreachable.")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No data for that")).not.toBeInTheDocument();
+    expect(screen.queryByText(/this text should never be shown/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to a default message when a backend error frame carries no usable message", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      mockStreamResponse(['event: error\ndata: {not valid json\n\n'])
+    );
+
+    await askQuestion("Any question");
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(DEFAULT_SEARCH_ERROR_MESSAGE)
+    ).toBeInTheDocument();
   });
 
   it("renders a connection-error alert when the fetch itself fails", async () => {
