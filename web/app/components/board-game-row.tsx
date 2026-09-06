@@ -100,6 +100,7 @@ export function BoardGameRow({ game }: { game: BoardGameRowData }) {
           nativeButton={false}
           size="sm"
           variant="ghost"
+          aria-label={`View feed for ${abbr(game.away_team)} at ${abbr(game.home_team)}`}
           className={cn("border border-border bg-transparent hover:bg-muted/60", FOCUS_RING)}
         >
           View Feed
