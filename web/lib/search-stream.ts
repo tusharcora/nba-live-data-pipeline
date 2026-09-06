@@ -4,11 +4,13 @@
  * reads `response.body` directly (`getReader()` + `TextDecoder`) instead
  * of using `EventSource` the way `/api/live` does (`app/live/LiveBoard.tsx`).
  *
- * Assumed contract (published to Dev2, not yet confirmed against a real
- * route -- see the spec's Design Notes for the caveat): anonymous
- * `data: <text>` frames are answer-text chunks, concatenated verbatim in
- * order; the stream ends with one `event: done` frame whose `data:` line
- * is a JSON object matching `SearchDonePayload`.
+ * Contract confirmed against Dev2's real route (`web/app/api/search/route.ts`
+ * on `story2/bff-search-route`, cross-checked during that PR's review):
+ * anonymous `data:` frames carry a JSON object `{"text": "..."}` per chunk
+ * (not raw text -- JSON-wrapping avoids a literal blank line inside the
+ * answer text ever being mistaken for an SSE frame boundary), concatenating
+ * each chunk's `text` field in order; the stream ends with one `event: done`
+ * frame whose `data:` line is a JSON object matching `SearchDonePayload`.
  *
  * Pure, DOM-free module by design so the trickiest logic here (SSE framing
  * split across arbitrary chunk boundaries) is unit-testable without a
@@ -126,17 +128,42 @@ function parseDonePayload(raw: string): SearchDonePayload | null {
 }
 
 /**
+ * Parses one answer-text chunk frame's JSON `data:` payload
+ * (`{"text": "..."}`, matching `route.ts`'s `sseTextChunk()`). Returns
+ * `null` on anything that doesn't match -- invalid JSON, a non-object, or
+ * a missing/non-string `text` field -- so the caller can drop just that
+ * one chunk (logging why) rather than fail the whole stream over one bad
+ * frame; unlike a malformed `done` payload, losing one chunk still leaves
+ * the rest of the answer usable.
+ */
+function parseChunkPayload(raw: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const text = (parsed as Record<string, unknown>).text;
+  return typeof text === "string" ? text : null;
+}
+
+/**
  * Reads a `fetch()` Response's body as a stream of `SearchStreamEvent`s.
  * Buffers partial lines/frames across chunk boundaries -- a `\n\n`
  * separator (or the final flush at stream end) can land anywhere relative
  * to a `TextDecoder` chunk boundary, so this never assumes one network
  * chunk lines up with one SSE frame.
  *
- * A frame that fails to parse (`parseSSEFrame` returns null) is skipped,
- * not fatal -- the stream keeps going. Only a `done` event whose payload
- * fails to parse is fatal: with no usable payload the caller can't tell
- * normal/no-data/ambiguous apart, so this throws and the caller's fetch
- * try/catch should route to the connection-error state.
+ * A frame that fails to parse (`parseSSEFrame` returns null), or a chunk
+ * frame whose JSON payload doesn't match `{"text": string}`, is skipped,
+ * not fatal -- the stream keeps going and the rest of the answer still
+ * comes through. Only a `done` event whose payload fails to parse is
+ * fatal: with no usable payload the caller can't tell normal/no-data/
+ * ambiguous apart, so this throws and the caller's fetch try/catch should
+ * route to the connection-error state.
  */
 export async function* readSearchStream(
   response: Response
@@ -181,7 +208,16 @@ export async function* readSearchStream(
           yield { kind: "done", payload };
           return;
         }
-        yield { kind: "chunk", text: parsed.data };
+
+        const chunkText = parseChunkPayload(parsed.data);
+        if (chunkText === null) {
+          console.warn(
+            "/api/search data chunk: not valid JSON `{\"text\": string}`, dropped",
+            parsed.data
+          );
+          continue;
+        }
+        yield { kind: "chunk", text: chunkText };
       }
 
       if (done) return;

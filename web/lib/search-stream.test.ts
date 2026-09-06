@@ -15,10 +15,14 @@ async function collect(response: Response): Promise<SearchStreamEvent[]> {
 }
 
 describe("readSearchStream", () => {
-  it("streams a happy-path answer split across two chunks, then a done payload with a citation", async () => {
+  it("streams a happy-path answer split across two JSON-wrapped chunks, then a done payload with a citation", async () => {
+    // Matches Dev2's real `sseTextChunk()` output (`web/app/api/search/route.ts`
+    // on story2/bff-search-route): each chunk's `data:` line is
+    // `{"text": "..."}`, not raw text -- confirmed against that PR's own
+    // `route.test.ts` fixtures during its review.
     const response = responseFromChunks([
-      "data: The Lakers won\n\n",
-      "data:  103-98 on 2026-01-05\n\n",
+      'data: {"text":"The Lakers won"}\n\n',
+      'data: {"text":" 103-98 on 2026-01-05"}\n\n',
       'event: done\ndata: {"citation":{"table":"games","dateRange":"2025-10-01..2026-01-05"},"noData":false,"candidates":null}\n\n',
     ]);
 
@@ -42,8 +46,8 @@ describe("readSearchStream", () => {
     // The separator between the two `data:` frames is split: one chunk
     // ends mid-way through it, the next begins with the rest.
     const response = responseFromChunks([
-      "data: partial answer\n",
-      '\ndata: rest\n\nevent: done\ndata: {"citation":null,"noData":false,"candidates":null}\n\n',
+      'data: {"text":"partial answer"}\n',
+      '\ndata: {"text":"rest"}\n\nevent: done\ndata: {"citation":null,"noData":false,"candidates":null}\n\n',
     ]);
 
     const events = await collect(response);
@@ -51,6 +55,26 @@ describe("readSearchStream", () => {
     expect(events[0]).toEqual({ kind: "chunk", text: "partial answer" });
     expect(events[1]).toEqual({ kind: "chunk", text: "rest" });
     expect(events[2].kind).toBe("done");
+  });
+
+  it("drops a chunk frame whose JSON payload doesn't match `{text: string}`, without breaking the stream", async () => {
+    const response = responseFromChunks([
+      "data: {not valid json\n\n", // invalid JSON
+      'data: {"answer":"wrong field name"}\n\n', // valid JSON, no `text` field
+      "data: [1,2,3]\n\n", // valid JSON, but an array
+      'data: {"text":"real chunk"}\n\n',
+      'event: done\ndata: {"citation":null,"noData":false,"candidates":null}\n\n',
+    ]);
+
+    const events = await collect(response);
+
+    expect(events).toEqual([
+      { kind: "chunk", text: "real chunk" },
+      {
+        kind: "done",
+        payload: { citation: null, noData: false, candidates: null },
+      },
+    ]);
   });
 
   it("reports noData via the done payload", async () => {
@@ -130,7 +154,7 @@ describe("readSearchStream", () => {
   it("skips a malformed frame (no data/event fields) without breaking the stream", async () => {
     const response = responseFromChunks([
       ": this is a comment, not a field\n\n",
-      "data: real chunk\n\n",
+      'data: {"text":"real chunk"}\n\n',
       'event: done\ndata: {"citation":null,"noData":false,"candidates":null}\n\n',
     ]);
 

@@ -21,6 +21,12 @@ import { responseFromChunks as mockStreamResponse } from "@/lib/test-support/sse
 const DONE_ANSWER = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({ citation: null, noData: false, candidates: null, ...overrides });
 
+/** One answer-text chunk frame, matching Dev2's real `sseTextChunk()`
+ * output (`web/app/api/search/route.ts` on story2/bff-search-route):
+ * `data: {"text": "..."}`, not raw text. `JSON.stringify` handles any
+ * characters (quotes, parens, etc.) in `text` safely. */
+const dataChunk = (text: string) => `data: ${JSON.stringify({ text })}\n\n`;
+
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn());
 });
@@ -48,8 +54,8 @@ describe("SearchSection", () => {
   it("renders the streamed answer and its citation once the stream completes (happy path)", async () => {
     vi.mocked(fetch).mockResolvedValue(
       mockStreamResponse([
-        "data: The Lakers won\n\n",
-        "data:  103-98\n\n",
+        dataChunk("The Lakers won"),
+        dataChunk(" 103-98"),
         `event: done\ndata: ${DONE_ANSWER({
           citation: { table: "games", dateRange: "2025-10-01..2026-01-05" },
         })}\n\n`,
@@ -78,7 +84,7 @@ describe("SearchSection", () => {
     // from a normal, sourced answer.
     vi.mocked(fetch).mockResolvedValue(
       mockStreamResponse([
-        "data: The Lakers won 103-98\n\n",
+        dataChunk("The Lakers won 103-98"),
         `event: done\ndata: ${DONE_ANSWER({ citation: null })}\n\n`,
       ])
     );
@@ -97,7 +103,7 @@ describe("SearchSection", () => {
   it("renders a distinct no-data panel, not a normal answer, when noData is true", async () => {
     vi.mocked(fetch).mockResolvedValue(
       mockStreamResponse([
-        "data: (this text should never be shown)\n\n",
+        dataChunk("(this text should never be shown)"),
         `event: done\ndata: ${DONE_ANSWER({ noData: true })}\n\n`,
       ])
     );
@@ -138,7 +144,7 @@ describe("SearchSection", () => {
 
     vi.mocked(fetch).mockResolvedValueOnce(
       mockStreamResponse([
-        "data: LeBron James scored 30 points\n\n",
+        dataChunk("LeBron James scored 30 points"),
         `event: done\ndata: ${DONE_ANSWER({
           citation: { table: "player_game_stats", dateRange: "2026-01-05..2026-01-05" },
         })}\n\n`,
@@ -210,7 +216,7 @@ describe("SearchSection", () => {
     // No `event: done` frame at all -- e.g. a truncated response, a proxy
     // timeout, or a server crash mid-stream. Without this state, the UI
     // would be stuck showing "Thinking…"/"Answering…" forever.
-    vi.mocked(fetch).mockResolvedValue(mockStreamResponse(["data: partial answer\n\n"]));
+    vi.mocked(fetch).mockResolvedValue(mockStreamResponse([dataChunk("partial answer")]));
 
     await askQuestion("Any question");
 
