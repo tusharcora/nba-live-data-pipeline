@@ -165,7 +165,7 @@ class FakePlayerStatsToolReader:
             {f"{r['player_first_name']} {r['player_last_name']}" for r in self.player_rows}
         )
 
-    def get_player_stats(self, player_name, start_date, end_date):
+    def get_player_stats(self, player_name, start_date, end_date, limit):
         self.call_count += 1
         out = []
         for r in self.player_rows:
@@ -188,7 +188,9 @@ class FakePlayerStatsToolReader:
                 }
             )
             out.append(row)
-        return out
+        # Same ORDER BY game_date DESC + LIMIT the real reader applies.
+        out.sort(key=lambda row: row["game_date"], reverse=True)
+        return out[:limit]
 
 
 class FakeTeamGamesToolReader:
@@ -203,7 +205,7 @@ class FakeTeamGamesToolReader:
             names.add(g["away_team"])
         return sorted(names)
 
-    def get_team_games(self, team_name, start_date, end_date):
+    def get_team_games(self, team_name, start_date, end_date, limit):
         self.call_count += 1
         out = []
         for g in self.games:
@@ -214,7 +216,9 @@ class FakeTeamGamesToolReader:
             if end_date is not None and g["game_date"] > end_date:
                 continue
             out.append(dict(g))
-        return out
+        # Same ORDER BY game_date DESC + LIMIT the real reader applies.
+        out.sort(key=lambda row: row["game_date"], reverse=True)
+        return out[:limit]
 
 
 class FakeLeadersToolReader:
@@ -479,7 +483,7 @@ def test_get_player_stats_stat_id_is_stringified_for_js_safety(client):
         def distinct_player_names(self):
             return ["LeBron James"]
 
-        def get_player_stats(self, player_name, start_date, end_date):
+        def get_player_stats(self, player_name, start_date, end_date, limit):
             return [
                 {
                     "stat_id": big_stat_id,
@@ -513,6 +517,70 @@ def test_get_player_stats_stat_id_is_stringified_for_js_safety(client):
     stat_id = resp.json()["data"]["games"][0]["stat_id"]
     assert stat_id == str(big_stat_id)
     assert isinstance(stat_id, str)
+
+
+def test_get_player_stats_diacritic_insensitive_exact_match(client):
+    """Real ingested data includes diacritic names (e.g. Luka Dončić,
+    Nikola Jokić) -- a plain-ASCII query must still resolve exactly,
+    not fall through to fuzzy (or worse, no_match)."""
+    reader = FakePlayerStatsToolReader(
+        player_rows=[
+            {
+                "stat_id": 99,
+                "game_id": 1,
+                "player_id": 77,
+                "player_first_name": "Luka",
+                "player_last_name": "Dončić",
+                "team": "Mavericks",
+                "points": 40,
+                "rebounds": 10,
+                "assists": 10,
+                "steals": 1,
+                "blocks": 0,
+                "turnovers": 4,
+                "minutes_played": "38:00",
+            }
+        ],
+    )
+    app.dependency_overrides[get_player_stats_tool_reader] = lambda: reader
+
+    resp = client.get("/tools/player-stats", **_auth(params={"player_name": "Luka Doncic"}))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["player_name"] == "Luka Dončić"
+
+
+def test_get_player_stats_respects_limit_param(client):
+    """Without a cap, a wide date range for a long-career player could
+    return an unbounded row set into the LLM tool-calling loop."""
+    reader = FakePlayerStatsToolReader()
+    app.dependency_overrides[get_player_stats_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stats", **_auth(params={"player_name": "LeBron James", "limit": 1})
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    games = body["data"]["games"]
+    assert len(games) == 1
+    # Most recent game first (game_date desc): Jan-5 (stat_id 3) over Jan-3 (stat_id 1).
+    assert games[0]["stat_id"] == "3"
+
+
+def test_get_player_stats_rejects_limit_above_upper_bound(client):
+    reader = FakePlayerStatsToolReader()
+    app.dependency_overrides[get_player_stats_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stats",
+        **_auth(params={"player_name": "LeBron James", "limit": 501}),
+    )
+
+    assert resp.status_code == 422
 
 
 def test_get_player_stats_requires_api_key(client):
@@ -660,6 +728,36 @@ def test_get_team_games_filters_by_date_range(client):
     assert {g["game_id"] for g in body["data"]["games"]} == {3}
 
 
+def test_get_team_games_respects_limit_param(client):
+    """Without a cap, a wide date range for a long-tenured franchise could
+    return an unbounded row set into the LLM tool-calling loop."""
+    reader = FakeTeamGamesToolReader()
+    app.dependency_overrides[get_team_games_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/team-games", **_auth(params={"team": "Boston Celtics", "limit": 1})
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    games = body["data"]["games"]
+    assert len(games) == 1
+    # Most recent Celtics game first (game_date desc): Jan-7 (game_id 3) over Jan-3 (game_id 1).
+    assert games[0]["game_id"] == 3
+
+
+def test_get_team_games_rejects_limit_above_upper_bound(client):
+    reader = FakeTeamGamesToolReader()
+    app.dependency_overrides[get_team_games_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/team-games", **_auth(params={"team": "Boston Celtics", "limit": 501})
+    )
+
+    assert resp.status_code == 422
+
+
 def test_get_team_games_requires_api_key(client):
     reader = FakeTeamGamesToolReader()
     app.dependency_overrides[get_team_games_tool_reader] = lambda: reader
@@ -766,6 +864,31 @@ def test_get_leaders_rejects_malformed_date(client):
     assert resp.status_code == 400
 
 
+def test_get_leaders_stat_param_is_case_insensitive(client):
+    """Consistent with this module's fuzzy name matching being
+    case-insensitive -- a caller/LLM shouldn't need to get a fixed,
+    small enum-like param's exact case right either."""
+    reader = FakeLeadersToolReader()
+    app.dependency_overrides[get_leaders_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/leaders",
+        **_auth(
+            params={
+                "stat": "ASSISTS",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-31",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["stat"] == "assists"
+    assert reader.call_count == 1
+
+
 def test_get_leaders_requires_api_key(client):
     reader = FakeLeadersToolReader()
     app.dependency_overrides[get_leaders_tool_reader] = lambda: reader
@@ -870,6 +993,50 @@ def test_get_game_result_no_match_team_name(client):
             params={
                 "team_a": "Nonexistent City Team",
                 "team_b": "Boston Celtics",
+                "date": "2024-01-03",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "no_match"
+
+
+def test_get_game_result_ambiguous_team_b(client):
+    """Mirrors test_get_game_result_ambiguous_team_a -- team_b is resolved
+    independently of team_a, and an ambiguous team_b must surface the same
+    way an ambiguous team_a does, not be masked by team_a already having
+    resolved cleanly."""
+    reader = FakeGameResultToolReader()
+    app.dependency_overrides[get_game_result_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/game-result",
+        **_auth(
+            params={"team_a": "Boston Celtics", "team_b": "Los Angeles", "date": "2024-01-03"}
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ambiguous"
+    candidate_names = {c["name"] for c in body["candidates"]}
+    assert candidate_names == {"Los Angeles Lakers", "Los Angeles Clippers"}
+
+
+def test_get_game_result_no_match_team_b(client):
+    """Mirrors test_get_game_result_no_match_team_name, but for team_b --
+    a team_a that resolves cleanly must not short-circuit team_b's own
+    no-match check."""
+    reader = FakeGameResultToolReader()
+    app.dependency_overrides[get_game_result_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/game-result",
+        **_auth(
+            params={
+                "team_a": "Los Angeles Lakers",
+                "team_b": "Nonexistent City Team",
                 "date": "2024-01-03",
             }
         ),

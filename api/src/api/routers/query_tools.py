@@ -22,13 +22,15 @@ from the `/games`/`/player-stats` browsing convention):
 
 Name resolution
 ---------------
-Player/team names are resolved via `_resolve_name`: exact case-insensitive
-match first; if none, fuzzy match (`difflib.get_close_matches`, cutoff 0.6)
-against the distinct names actually present in the relevant Gold table (not
-some fixed roster) -- 0 fuzzy hits is `no_match`, exactly 1 is treated as
-resolved, 2+ is `ambiguous` with those names as candidates. Shared by both
-player and team resolution so the exact/fuzzy/ambiguous decision tree isn't
-duplicated four times.
+Player/team names are resolved via `_resolve_name`: exact case-insensitive,
+diacritic-insensitive match first (via `_normalize_name` -- real ingested
+data includes names like "Dončić"/"Jokić", and a plain-ASCII query must
+still resolve); if none, fuzzy match (`difflib.get_close_matches`, cutoff
+0.6) against the distinct names actually present in the relevant Gold table
+(not some fixed roster) -- 0 fuzzy hits is `no_match`, exactly 1 is treated
+as resolved, 2+ is `ambiguous` with those names as candidates. Shared by
+both player and team resolution so the exact/fuzzy/ambiguous decision tree
+isn't duplicated four times.
 
 Tables reflected via SQLAlchemy Core (`Table(..., autoload_with=engine)`),
 same as `games.py`/`player_stats.py` -- no new ORM models, dbt owns
@@ -42,6 +44,7 @@ query-tools.md's literal "players or teams" wording.
 from __future__ import annotations
 
 import difflib
+import unicodedata
 from dataclasses import dataclass
 from datetime import date as date_type
 from typing import Literal, Protocol, runtime_checkable
@@ -64,11 +67,24 @@ ALLOWED_LEADER_STATS = {"points", "rebounds", "assists", "steals", "blocks", "tu
 
 DEFAULT_LEADERS_LIMIT = 10
 
-# Fuzzy-match cutoff and max candidates surfaced on an ambiguous match (SPEC
-# fixes the cutoff at 0.6; the candidate cap is a defensive bound so a very
-# loose name doesn't dump the entire roster back at the model).
+# Fuzzy-match cutoff and max candidates surfaced on an ambiguous match --
+# both are implementation choices (no spec document pins a specific number),
+# picked empirically: 0.6 is difflib's own suggested default cutoff and
+# catches common typos without over-matching; the candidate cap is a
+# defensive bound so a very loose name doesn't dump the entire roster back
+# at the model.
 FUZZY_CUTOFF = 0.6
 MAX_FUZZY_CANDIDATES = 10
+
+# Row-count cap for get_player_stats/get_team_games -- unlike get_leaders
+# (which is inherently bounded by its own `limit` param), these two return
+# every matching row with no cap by default, so a wide/unbounded date range
+# for a long-career player or an old franchise could return an very large
+# result back into the LLM tool-calling loop. Default keeps the common case
+# (a season or so) uncapped in practice; MAX_ROWS_LIMIT bounds the Query
+# param itself so a caller can't request an unbounded result on purpose.
+DEFAULT_ROWS_LIMIT = 200
+MAX_ROWS_LIMIT = 500
 
 
 # --------------------------------------------------------------------------
@@ -100,30 +116,49 @@ class ResolvedName:
     candidates: list[str] | None = None
 
 
-def _resolve_name(candidates: list[str], query: str) -> ResolvedName:
-    """Exact case-insensitive match first; else fuzzy match (cutoff 0.6)
-    against `candidates` (the distinct names actually present in the
-    relevant Gold table). 0 fuzzy hits -> no_match. 1 fuzzy hit -> resolved.
-    2+ fuzzy hits -> ambiguous.
-
-    Both the exact and fuzzy comparisons strip/lowercase the query first, and
-    the fuzzy comparison also lowercases the candidate side (mapping back to
-    each candidate's original casing for the result) -- otherwise a
-    lowercase user query, or one with incidental leading/trailing
-    whitespace, could spuriously depress the difflib similarity ratio below
-    the 0.6 cutoff against an oddly-cased Gold name and produce a wrong
-    `no_match`/`ambiguous`.
+def _normalize_name(text: str) -> str:
+    """Case-fold and strip diacritics for name comparison -- this project's
+    real ingested data includes names like "Luka Dončić" and "Nikola
+    Jokić", and a caller (or the LLM relaying a user's plain-ASCII typing)
+    typing "Doncic"/"Jokic" must still resolve. `NFKD` decomposes each
+    accented character into its base letter plus a separate combining mark
+    (`unicodedata.combining` is true only for the mark), so dropping
+    combining characters after decomposition leaves the plain base letters.
     """
-    lower_query = query.strip().lower()
-    exact = [name for name in candidates if name.lower() == lower_query]
+    decomposed = unicodedata.normalize("NFKD", text)
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return stripped.strip().lower()
+
+
+def _resolve_name(candidates: list[str], query: str) -> ResolvedName:
+    """Exact case-insensitive, diacritic-insensitive match first; else fuzzy
+    match (`difflib`, cutoff `FUZZY_CUTOFF`) against `candidates` (the
+    distinct names actually present in the relevant Gold table). 0 fuzzy
+    hits -> no_match. 1 fuzzy hit -> resolved. 2+ fuzzy hits -> ambiguous.
+
+    Both the exact and fuzzy comparisons normalize the query first (via
+    `_normalize_name`: strip/lowercase plus diacritic-folding), and the
+    fuzzy comparison also normalizes the candidate side (mapping back to
+    each candidate's original casing/diacritics for the result) -- so a
+    plain-ASCII query like "Doncic" matches Gold data spelled "Dončić", and
+    incidental leading/trailing whitespace or casing never spuriously
+    depresses the difflib similarity ratio below the cutoff.
+    """
+    normalized_query = _normalize_name(query)
+    exact = [name for name in candidates if _normalize_name(name) == normalized_query]
     if exact:
         return ResolvedName(status="ok", name=exact[0])
 
-    lower_to_original: dict[str, str] = {name.lower(): name for name in candidates}
-    fuzzy_lower = difflib.get_close_matches(
-        lower_query, list(lower_to_original.keys()), n=MAX_FUZZY_CANDIDATES, cutoff=FUZZY_CUTOFF
+    normalized_to_original: dict[str, str] = {
+        _normalize_name(name): name for name in candidates
+    }
+    fuzzy_normalized = difflib.get_close_matches(
+        normalized_query,
+        list(normalized_to_original.keys()),
+        n=MAX_FUZZY_CANDIDATES,
+        cutoff=FUZZY_CUTOFF,
     )
-    fuzzy = [lower_to_original[name] for name in fuzzy_lower]
+    fuzzy = [normalized_to_original[name] for name in fuzzy_normalized]
     if not fuzzy:
         return ResolvedName(status="no_match")
     if len(fuzzy) == 1:
@@ -151,6 +186,17 @@ def _parse_query_date(value: str | None, param_name: str) -> date_type | None:
         ) from exc
 
 
+def _reject_reversed_range(start_date: date_type | None, end_date: date_type | None) -> None:
+    """Shared `start_date > end_date` guard -- used by every route that
+    accepts a `start_date`/`end_date` pair (`get_player_stats`,
+    `get_team_games` via `_reject_date_and_range_combo` below, and
+    `get_leaders` directly, since it has no single `date` param and so
+    doesn't need the rest of that function's combo check).
+    """
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "start_date must not be after end_date")
+
+
 def _reject_date_and_range_combo(
     filter_date: date_type | None, start_date: date_type | None, end_date: date_type | None
 ) -> None:
@@ -159,8 +205,7 @@ def _reject_date_and_range_combo(
             status.HTTP_400_BAD_REQUEST,
             "date cannot be combined with start_date/end_date -- use one filter mode",
         )
-    if start_date is not None and end_date is not None and start_date > end_date:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "start_date must not be after end_date")
+    _reject_reversed_range(start_date, end_date)
 
 
 def _player_full_name_expr(player_game_stats: Table):
@@ -197,6 +242,7 @@ class PlayerStatsToolReader(Protocol):
         player_name: str,
         start_date: date_type | None,
         end_date: date_type | None,
+        limit: int,
     ) -> list[dict]: ...
 
 
@@ -222,6 +268,7 @@ class SQLAlchemyPlayerStatsToolReader:
         player_name: str,
         start_date: date_type | None,
         end_date: date_type | None,
+        limit: int,
     ) -> list[dict]:
         metadata = MetaData()
         player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
@@ -240,6 +287,7 @@ class SQLAlchemyPlayerStatsToolReader:
             .join(games, player_game_stats.c.game_id == games.c.game_id)
             .where(func.lower(full_name) == player_name.lower())
             .order_by(games.c.game_date.desc())
+            .limit(limit)
         )
         if start_date is not None:
             stmt = stmt.where(games.c.game_date >= start_date)
@@ -280,6 +328,13 @@ def get_player_stats(
         description="Filter to games on or before this date, YYYY-MM-DD. "
         "Mutually exclusive with `date`.",
     ),
+    limit: int = Query(
+        default=DEFAULT_ROWS_LIMIT,
+        gt=0,
+        le=MAX_ROWS_LIMIT,
+        description=f"Max number of game rows to return (1-{MAX_ROWS_LIMIT}), "
+        "most recent first.",
+    ),
     reader: PlayerStatsToolReader = Depends(get_player_stats_tool_reader),
 ) -> dict:
     """Per-game stat lines for one player, resolved by (fuzzy) name.
@@ -306,7 +361,7 @@ def get_player_stats(
     if resolved.status == "no_match":
         return _no_match(f"No player found matching '{player_name}'.")
 
-    rows = reader.get_player_stats(resolved.name, effective_start, effective_end)
+    rows = reader.get_player_stats(resolved.name, effective_start, effective_end, limit)
     if not rows:
         return _no_match(
             f"No stats found for {resolved.name} in the given date range."
@@ -337,6 +392,7 @@ class TeamGamesToolReader(Protocol):
         team_name: str,
         start_date: date_type | None,
         end_date: date_type | None,
+        limit: int,
     ) -> list[dict]: ...
 
 
@@ -357,6 +413,7 @@ class SQLAlchemyTeamGamesToolReader:
         team_name: str,
         start_date: date_type | None,
         end_date: date_type | None,
+        limit: int,
     ) -> list[dict]:
         metadata = MetaData()
         games = Table("games", metadata, autoload_with=self._engine)
@@ -365,6 +422,7 @@ class SQLAlchemyTeamGamesToolReader:
             select(games)
             .where(or_(games.c.home_team == team_name, games.c.away_team == team_name))
             .order_by(games.c.game_date.desc())
+            .limit(limit)
         )
         if start_date is not None:
             stmt = stmt.where(games.c.game_date >= start_date)
@@ -420,6 +478,13 @@ def get_team_games(
         description="Filter to games on or before this date, YYYY-MM-DD. "
         "Mutually exclusive with `date`.",
     ),
+    limit: int = Query(
+        default=DEFAULT_ROWS_LIMIT,
+        gt=0,
+        le=MAX_ROWS_LIMIT,
+        description=f"Max number of game rows to return (1-{MAX_ROWS_LIMIT}), "
+        "most recent first.",
+    ),
     reader: TeamGamesToolReader = Depends(get_team_games_tool_reader),
 ) -> dict:
     """Game rows (opponent, score, date) for one team, resolved by (fuzzy) name.
@@ -446,7 +511,7 @@ def get_team_games(
     if resolved.status == "no_match":
         return _no_match(f"No team found matching '{team}'.")
 
-    rows = reader.get_team_games(resolved.name, effective_start, effective_end)
+    rows = reader.get_team_games(resolved.name, effective_start, effective_end, limit)
     if not rows:
         return _no_match(f"No games found for {resolved.name} in the given date range.")
 
@@ -542,7 +607,12 @@ class SQLAlchemyLeadersToolReader:
                 player_game_stats.c.player_first_name,
                 player_game_stats.c.player_last_name,
             )
-            .order_by(func.sum(stat_col).desc().nulls_last())
+            # Secondary sort key on player_id makes a tie between two
+            # players' summed totals deterministic (otherwise the DB is
+            # free to return tied rows in an arbitrary/unstable order, so
+            # the same request could rank two tied players differently
+            # from one call to the next).
+            .order_by(func.sum(stat_col).desc().nulls_last(), player_game_stats.c.player_id.asc())
             .limit(limit)
         )
 
@@ -598,7 +668,11 @@ def get_leaders(
     bare empty list. `stat` outside `ALLOWED_LEADER_STATS` is a 400 (a
     caller error, not a data gap).
     """
-    if stat not in ALLOWED_LEADER_STATS:
+    # Case-insensitive, matching the fuzzy name matching elsewhere in this
+    # module -- a caller/LLM shouldn't need to get "assists" vs "Assists"
+    # exactly right for a fixed, small enum-like param.
+    stat_key = stat.strip().lower()
+    if stat_key not in ALLOWED_LEADER_STATS:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"stat must be one of: {', '.join(sorted(ALLOWED_LEADER_STATS))}",
@@ -606,17 +680,12 @@ def get_leaders(
 
     parsed_start_date = _parse_query_date(start_date, "start_date")
     parsed_end_date = _parse_query_date(end_date, "end_date")
-    if (
-        parsed_start_date is not None
-        and parsed_end_date is not None
-        and parsed_start_date > parsed_end_date
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "start_date must not be after end_date")
+    _reject_reversed_range(parsed_start_date, parsed_end_date)
 
-    result = reader.get_leaders(stat, parsed_start_date, parsed_end_date, limit)
+    result = reader.get_leaders(stat_key, parsed_start_date, parsed_end_date, limit)
 
     if not result["leaders"]:
-        return _no_match(f"No {stat} data found for the given date range.")
+        return _no_match(f"No {stat_key} data found for the given date range.")
 
     leaders = [
         {
@@ -629,7 +698,7 @@ def get_leaders(
 
     return _ok(
         {
-            "stat": stat,
+            "stat": stat_key,
             "date_range": {
                 "start_date": result["start_date"],
                 "end_date": result["end_date"],
