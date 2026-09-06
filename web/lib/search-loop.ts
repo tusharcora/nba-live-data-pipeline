@@ -26,6 +26,7 @@
 
 import type { ConversationMessage, LlmClient, ToolCallResult } from "@/lib/llm/types";
 import { TOOL_DEFINITIONS, callTool as defaultCallTool, type ToolResultEnvelope } from "@/lib/search-tools";
+import type { SearchResultData } from "@/lib/search-result-types";
 
 export type CallTool = (
   name: string,
@@ -42,6 +43,7 @@ export interface SearchResult {
   citation: Citation | null;
   noData: boolean;
   candidates: string[] | null;
+  resultData: SearchResultData | null;
 }
 
 const MAX_ITERATIONS = 6;
@@ -63,6 +65,7 @@ export const FALLBACK_RESULT: SearchResult = {
   citation: null,
   noData: true,
   candidates: null,
+  resultData: null,
 };
 
 function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | null): SearchResult {
@@ -80,7 +83,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
   const answerText = rawAnswerText.trim() || "Here's what I found:";
 
   if (lastToolResult.status === "no_match") {
-    return { answerText, citation: null, noData: true, candidates: null };
+    return { answerText, citation: null, noData: true, candidates: null, resultData: null };
   }
 
   if (lastToolResult.status === "ambiguous") {
@@ -95,6 +98,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
       citation: null,
       noData: false,
       candidates: lastToolResult.candidates,
+      resultData: null,
     };
   }
 
@@ -109,6 +113,7 @@ function finalize(rawAnswerText: string, lastToolResult: ToolResultEnvelope | nu
     citation: { table: lastToolResult.table, dateRange: lastToolResult.date_range },
     noData: false,
     candidates: null,
+    resultData: lastToolResult.resultData,
   };
 }
 

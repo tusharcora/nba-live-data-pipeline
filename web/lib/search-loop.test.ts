@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { FALLBACK_RESULT, runSearchLoop } from "@/lib/search-loop";
 import type { ToolResultEnvelope } from "@/lib/search-tools";
 import type { LlmClient, LlmResponse } from "@/lib/llm/types";
+import type { SearchResultData } from "@/lib/search-result-types";
 
 // The LLM call is always mocked against a fake LlmClient per this repo's
 // offline-testing convention (CLAUDE.md) — no real LLM or network call
@@ -25,11 +26,17 @@ function finalResponse(text: string): LlmResponse {
   return { text, toolCalls: [] };
 }
 
+const SAMPLE_RESULT_DATA: SearchResultData = {
+  type: "player_stats",
+  payload: { playerName: "LeBron James", games: [] },
+};
+
 const OK_RESULT: ToolResultEnvelope = {
   status: "ok",
   table: "player_game_stats",
   date_range: "2024-10-22 to 2024-10-22",
   data: [{ points: 30 }],
+  resultData: SAMPLE_RESULT_DATA,
   candidates: null,
   message: null,
 };
@@ -39,6 +46,7 @@ const NO_MATCH_RESULT: ToolResultEnvelope = {
   table: null,
   date_range: null,
   data: null,
+  resultData: null,
   candidates: null,
   message: "No game found between Lakers and Celtics on 2099-01-01.",
 };
@@ -48,6 +56,7 @@ const AMBIGUOUS_RESULT: ToolResultEnvelope = {
   table: null,
   date_range: null,
   data: null,
+  resultData: null,
   candidates: ["LeBron James", "LeBron James Jr."],
   message: "Multiple players match 'LeBron' -- please clarify which one.",
 };
@@ -57,6 +66,7 @@ const ERROR_RESULT: ToolResultEnvelope = {
   table: null,
   date_range: null,
   data: null,
+  resultData: null,
   candidates: null,
   message: null,
 };
@@ -162,6 +172,7 @@ describe("runSearchLoop", () => {
       data: [{ points: 30 }],
       candidates: null,
       message: null,
+      resultData: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", llmClient, callTool });
@@ -181,6 +192,7 @@ describe("runSearchLoop", () => {
       data: [{ points: 30 }],
       candidates: null,
       message: null,
+      resultData: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", llmClient, callTool });
@@ -200,6 +212,7 @@ describe("runSearchLoop", () => {
       data: [{ points: 30 }],
       candidates: null,
       message: null,
+      resultData: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", llmClient, callTool });
@@ -219,6 +232,7 @@ describe("runSearchLoop", () => {
       data: null,
       candidates: [],
       message: "Multiple players match 'LeBron' -- please clarify which one.",
+      resultData: null,
     } satisfies ToolResultEnvelope);
 
     const result = await runSearchLoop({ question: "LeBron's points?", llmClient, callTool });
@@ -266,5 +280,39 @@ describe("runSearchLoop", () => {
       ],
     });
     expect(result.noData).toBe(false);
+  });
+
+  it("happy path: resultData is populated alongside the citation", async () => {
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_player_stats", { player_name: "LeBron James" }),
+      finalResponse("LeBron James scored 30 points on 2024-10-22."),
+    );
+    const callTool = vi.fn().mockResolvedValueOnce(OK_RESULT);
+
+    const result = await runSearchLoop({ question: "How many points did LeBron score?", llmClient, callTool });
+
+    expect(result.resultData).toEqual(SAMPLE_RESULT_DATA);
+  });
+
+  it("resultData is null on a no_match result, same as citation", async () => {
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_game_result", { team_a: "Lakers", team_b: "Celtics", date: "2099-01-01" }),
+      finalResponse("I couldn't find a game between those teams on that date."),
+    );
+    const callTool = vi.fn().mockResolvedValueOnce(NO_MATCH_RESULT);
+
+    const result = await runSearchLoop({ question: "Lakers vs Celtics on 2099-01-01?", llmClient, callTool });
+
+    expect(result.resultData).toBeNull();
+  });
+
+  it("resultData is null on FALLBACK_RESULT (no tool call ever succeeded)", async () => {
+    const llmClient = fakeLlmClient(finalResponse("I don't know."));
+    const callTool = vi.fn();
+
+    const result = await runSearchLoop({ question: "asdf", llmClient, callTool });
+
+    expect(result).toEqual(FALLBACK_RESULT);
+    expect(result.resultData).toBeNull();
   });
 });
