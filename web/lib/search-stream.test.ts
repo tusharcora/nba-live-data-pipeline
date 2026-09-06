@@ -5,7 +5,7 @@
 // environment, see `vitest.config.ts`) doesn't implement those.
 import { describe, expect, it } from "vitest";
 
-import { readSearchStream, type SearchStreamEvent } from "./search-stream";
+import { DEFAULT_SEARCH_ERROR_MESSAGE, readSearchStream, type SearchStreamEvent } from "./search-stream";
 import { responseFromChunks } from "./test-support/sse-stream";
 
 async function collect(response: Response): Promise<SearchStreamEvent[]> {
@@ -141,6 +141,49 @@ describe("readSearchStream", () => {
           noData: false,
           candidates: null,
         },
+      },
+    ]);
+  });
+
+  it("reports a distinct error event, not a done event, for an event: error frame", async () => {
+    const response = responseFromChunks([
+      'data: {"text":"this text should never be shown"}\n\n',
+      'event: error\ndata: {"message":"Search is temporarily unavailable. Please try again shortly."}\n\n',
+    ]);
+
+    const events = await collect(response);
+
+    expect(events).toEqual([
+      { kind: "chunk", text: "this text should never be shown" },
+      {
+        kind: "error",
+        payload: { message: DEFAULT_SEARCH_ERROR_MESSAGE },
+      },
+    ]);
+  });
+
+  it("falls back to a default message when an error frame's JSON is malformed, without throwing", async () => {
+    const response = responseFromChunks(["event: error\ndata: {not valid json\n\n"]);
+
+    const events = await collect(response);
+
+    expect(events).toEqual([
+      {
+        kind: "error",
+        payload: { message: DEFAULT_SEARCH_ERROR_MESSAGE },
+      },
+    ]);
+  });
+
+  it("falls back to a default message when an error frame has no usable `message` field", async () => {
+    const response = responseFromChunks(['event: error\ndata: {"reason":"wrong field name"}\n\n']);
+
+    const events = await collect(response);
+
+    expect(events).toEqual([
+      {
+        kind: "error",
+        payload: { message: DEFAULT_SEARCH_ERROR_MESSAGE },
       },
     ]);
   });
