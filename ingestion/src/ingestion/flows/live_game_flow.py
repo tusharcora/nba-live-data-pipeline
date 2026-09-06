@@ -148,6 +148,69 @@ def extract_public_feed_live_states(payload: dict) -> list[LiveGameState]:
     return states
 
 
+_NBA_STATS_STATUS_BY_CODE = {1: "scheduled", 2: "in_progress", 3: "final"}
+
+_POSTPONEMENT_KEYWORDS = ("postpon", "cancel", "suspend", "delay")
+
+
+def _normalize_nba_stats_status(game_status: int, game_status_text: str) -> str:
+    """gameStatus (1/2/3) maps to scheduled/in_progress/final, but a
+    postponement/cancellation is signaled through `gameStatusText`
+    regardless of the numeric code (ASSUMED — see module docstring in
+    `nba_live.py`), so that keyword check runs first and overrides the
+    numeric mapping. Matches the substring-based detection style already
+    used by `web/lib/live-status.ts`'s retiring `getStatusPresentation`.
+    """
+    lowered = game_status_text.lower()
+    if any(keyword in lowered for keyword in _POSTPONEMENT_KEYWORDS):
+        return "postponed"
+    return _NBA_STATS_STATUS_BY_CODE.get(game_status, "scheduled")
+
+
+def extract_nba_stats_live_states(payload: dict) -> list[LiveGameState]:
+    """Extract one `LiveGameState` per game from nba_api's live scoreboard
+    payload. ASSUMED shape — see `nba_live.py`'s module docstring; NOT yet
+    verified against a real response.
+
+    `status` is normalized to exactly one of "scheduled" / "in_progress" /
+    "final" / "postponed" (not nba_api's raw `gameStatusText`) so
+    `api/src/api/routers/board.py`'s status derivation is a direct 1:1
+    lookup rather than a second round of substring matching.
+
+    `game_id` strips leading zeros from nba_api's own string game id
+    (e.g. "0022500123" -> 22500123) via a plain `int()` cast — this is a
+    *different* id space from balldontlie's/public_feed's own native ids;
+    see `match_game_ids_by_team_overlap` for how those get reconciled onto
+    this one.
+    """
+    games = payload.get("scoreboard", {}).get("games", [])
+    states = []
+    for game in games:
+        home = game.get("homeTeam", {})
+        away = game.get("awayTeam", {})
+        status = _normalize_nba_stats_status(
+            game.get("gameStatus", 1), game.get("gameStatusText", "")
+        )
+        game_time = game.get("gameTimeUTC")
+        states.append(
+            LiveGameState(
+                game_id=int(game["gameId"]),
+                source="nba_stats",
+                home_score=home.get("score"),
+                away_score=away.get("score"),
+                period=game.get("period"),
+                clock=game.get("gameClock") or None,
+                status=status,
+                home_team=f"{home['teamCity']} {home['teamName']}" if home else None,
+                away_team=f"{away['teamCity']} {away['teamName']}" if away else None,
+                scheduled_start=(
+                    datetime.fromisoformat(game_time) if game_time else None
+                ),
+            )
+        )
+    return states
+
+
 @flow(name="live-game-flow")
 def live_game_flow(
     date: str,

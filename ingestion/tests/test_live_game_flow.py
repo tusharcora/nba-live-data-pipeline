@@ -1,6 +1,7 @@
 from db.models import LiveGameState, QualityMetric, RawPull
 from ingestion.flows.live_game_flow import (
     extract_balldontlie_live_states,
+    extract_nba_stats_live_states,
     extract_public_feed_live_states,
     live_game_flow,
 )
@@ -143,6 +144,103 @@ def test_extract_public_feed_live_states_handles_missing_score_and_status():
 
 def test_extract_public_feed_live_states_empty_events():
     assert extract_public_feed_live_states({"events": []}) == []
+
+
+def _nba_stats_scoreboard() -> dict:
+    return {
+        "scoreboard": {
+            "gameDate": "2026-09-06",
+            "games": [
+                {
+                    "gameId": "0022500123",
+                    "gameStatus": 2,
+                    "gameStatusText": "Qtr 3 4:12",
+                    "gameTimeUTC": "2026-09-06T23:30:00Z",
+                    "period": 3,
+                    "gameClock": "PT04M12.00S",
+                    "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
+                    "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
+                },
+                {
+                    "gameId": "0022500124",
+                    "gameStatus": 1,
+                    "gameStatusText": "7:30 pm ET",
+                    "gameTimeUTC": "2026-09-07T00:30:00Z",
+                    "period": 0,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Minnesota", "teamName": "Timberwolves", "score": 0},
+                    "awayTeam": {"teamCity": "Dallas", "teamName": "Mavericks", "score": 0},
+                },
+                {
+                    "gameId": "0022500125",
+                    "gameStatus": 3,
+                    "gameStatusText": "Final",
+                    "gameTimeUTC": "2026-09-06T19:00:00Z",
+                    "period": 4,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Golden State", "teamName": "Warriors", "score": 118},
+                    "awayTeam": {"teamCity": "Phoenix", "teamName": "Suns", "score": 109},
+                },
+                {
+                    "gameId": "0022500126",
+                    "gameStatus": 1,
+                    "gameStatusText": "Postponed",
+                    "gameTimeUTC": "2026-09-07T00:00:00Z",
+                    "period": 0,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Denver", "teamName": "Nuggets", "score": 0},
+                    "awayTeam": {"teamCity": "Utah", "teamName": "Jazz", "score": 0},
+                },
+            ],
+        }
+    }
+
+
+def test_extract_nba_stats_live_states_normalizes_team_names_and_scores():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    live = next(s for s in states if s.game_id == 22500123)
+    assert live.source == "nba_stats"
+    assert live.home_team == "Miami Heat"
+    assert live.away_team == "Boston Celtics"
+    assert live.home_score == 91
+    assert live.away_score == 88
+    assert live.period == 3
+    assert live.status == "in_progress"
+
+
+def test_extract_nba_stats_live_states_scheduled_game_has_start_time_no_score_yet():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    scheduled = next(s for s in states if s.game_id == 22500124)
+    assert scheduled.status == "scheduled"
+    assert scheduled.scheduled_start.isoformat() == "2026-09-07T00:30:00+00:00"
+    assert scheduled.home_score == 0
+
+
+def test_extract_nba_stats_live_states_final_game():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    final = next(s for s in states if s.game_id == 22500125)
+    assert final.status == "final"
+    assert final.home_score == 118
+    assert final.away_score == 109
+
+
+def test_extract_nba_stats_live_states_postponed_regardless_of_game_status_code():
+    """gameStatus=1 alone would normally mean "scheduled" -- the postponement
+    keyword in gameStatusText overrides that, matching the substring-based
+    postponed/cancelled/suspended/delayed detection this codebase already
+    uses in `web/lib/live-status.ts`'s retiring `getStatusPresentation`.
+    """
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    postponed = next(s for s in states if s.game_id == 22500126)
+    assert postponed.status == "postponed"
+
+
+def test_extract_nba_stats_live_states_empty_games():
+    assert extract_nba_stats_live_states({"scoreboard": {"games": []}}) == []
 
 
 # --- Flow orchestration tests (fakes only, no DB/network) --------------------
