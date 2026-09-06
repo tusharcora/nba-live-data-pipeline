@@ -1,4 +1,4 @@
-from db.models import LiveGameState, QualityMetric, RawPull
+from db.models import LiveGameState, QualityMetric, RawPull, SourceConflict
 from ingestion.flows.live_game_flow import (
     extract_balldontlie_live_states,
     extract_balldontlie_team_names,
@@ -7,6 +7,7 @@ from ingestion.flows.live_game_flow import (
     extract_public_feed_team_names,
     live_game_flow,
     match_game_ids_by_team_overlap,
+    reconcile_live_states,
     remap_game_ids,
 )
 
@@ -524,3 +525,90 @@ def test_live_game_flow_handles_multiple_balldontlie_pages():
     assert len(bdl_states) == 2
     assert result["raw_pulls_written"] == 3  # 2 balldontlie pages + 1 public_feed pull
     assert result["live_game_states_written"] == 2
+
+
+# --- Score reconciliation tests -----------------------------------------------
+
+
+def test_reconcile_live_states_flags_disagreeing_scores():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=89, away_score=88, status="3rd Qtr")
+    ]
+
+    conflicts = reconcile_live_states(nba_stats_states, balldontlie_states, [])
+
+    assert len(conflicts) == 1
+    conflict = conflicts[0]
+    assert isinstance(conflict, SourceConflict)
+    assert conflict.game_id == "1"
+    assert conflict.field_name == "home_score"
+    assert conflict.primary_source == "nba_stats"
+    assert conflict.primary_value == "91"
+    assert conflict.secondary_source == "balldontlie"
+    assert conflict.secondary_value == "89"
+
+
+def test_reconcile_live_states_agreeing_scores_yield_no_conflicts():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=91, away_score=88, status="3rd Qtr")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []
+
+
+def test_reconcile_live_states_never_compares_status_field():
+    """status vocabularies differ by source design (nba_api's normalized
+    tokens vs. balldontlie's raw strings vs. ESPN's STATUS_* constants) —
+    comparing it would flag a "conflict" every single poll for reasons
+    that have nothing to do with real disagreement.
+    """
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=91, away_score=88, status="3rd Qtr")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []
+
+
+def test_reconcile_live_states_checks_both_secondary_sources_independently():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=89, away_score=88, status="3rd Qtr")
+    ]
+    public_feed_states = [
+        LiveGameState(game_id=1, source="public_feed", home_score=91, away_score=90, status="STATUS_IN_PROGRESS")
+    ]
+
+    conflicts = reconcile_live_states(nba_stats_states, balldontlie_states, public_feed_states)
+
+    fields_by_secondary = {c.secondary_source: c.field_name for c in conflicts}
+    assert fields_by_secondary == {"balldontlie": "home_score", "public_feed": "away_score"}
+
+
+def test_reconcile_live_states_skips_games_with_no_secondary_row():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, [], []) == []
+
+
+def test_reconcile_live_states_skips_games_with_no_scores_yet():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=None, away_score=None, status="scheduled")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=None, away_score=None, status="Scheduled")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []

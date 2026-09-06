@@ -5,7 +5,8 @@ from prefect import flow, get_run_logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from db.models import LiveGameState, QualityMetric, RawPull
+from db.models import LiveGameState, QualityMetric, RawPull, SourceConflict
+from quality.reconciliation import reconcile_game
 from ingestion.config import Settings
 from ingestion.flows.backfill_flow import (
     GamesPageSource,
@@ -296,6 +297,69 @@ def remap_game_ids(
     for state in states:
         state.game_id = id_map.get(state.game_id, state.game_id)
     return states
+
+
+def _score_fields(state: LiveGameState) -> dict[str, str]:
+    """`home_score`/`away_score` as comparable strings, omitting a field
+    that's still `None` (nothing to compare yet, e.g. before tip-off).
+    `status` is deliberately excluded — see `reconcile_live_states`.
+    """
+    fields: dict[str, str] = {}
+    if state.home_score is not None:
+        fields["home_score"] = str(state.home_score)
+    if state.away_score is not None:
+        fields["away_score"] = str(state.away_score)
+    return fields
+
+
+def reconcile_live_states(
+    nba_stats_states: list[LiveGameState],
+    balldontlie_states: list[LiveGameState],
+    public_feed_states: list[LiveGameState],
+) -> list[SourceConflict]:
+    """3-way reconciliation for one poll: nba_stats as primary against each
+    secondary source independently (2 pairwise comparisons per game_id,
+    not a true 3-way merge) — the same "primary source wins" rule as
+    `quality.reconciliation.reconcile_game`, invoked twice. Only
+    `home_score`/`away_score` are ever compared — `status` strings differ
+    by source vocabulary (nba_api's normalized tokens vs. balldontlie's
+    raw strings vs. ESPN's STATUS_* constants) and comparing them would
+    flag a false "conflict" on every single poll, flooding the quality
+    scorecard with noise that has nothing to do with a real disagreement.
+
+    Assumes every state's `game_id` has already been remapped onto
+    nba_stats's canonical id space (`remap_game_ids`) — a game_id shared
+    across the three lists is only meaningful once that's happened.
+    """
+    balldontlie_by_id = {s.game_id: s for s in balldontlie_states}
+    public_feed_by_id = {s.game_id: s for s in public_feed_states}
+
+    conflicts: list[SourceConflict] = []
+    for nba_state in nba_stats_states:
+        primary_fields = _score_fields(nba_state)
+        if not primary_fields:
+            continue
+
+        for secondary_source, lookup in (
+            ("balldontlie", balldontlie_by_id),
+            ("public_feed", public_feed_by_id),
+        ):
+            secondary_state = lookup.get(nba_state.game_id)
+            if secondary_state is None:
+                continue
+            secondary_fields = _score_fields(secondary_state)
+            if not secondary_fields:
+                continue
+            game_conflicts, _ = reconcile_game(
+                game_id=str(nba_state.game_id),
+                primary_source="nba_stats",
+                primary_fields=primary_fields,
+                secondary_source=secondary_source,
+                secondary_fields=secondary_fields,
+            )
+            conflicts.extend(game_conflicts)
+
+    return conflicts
 
 
 @flow(name="live-game-flow")
