@@ -35,9 +35,14 @@ function textCompletion(text: string): ChatCompletion {
 // Builds a raw `choices[0].message.tool_calls` response -- the real shape
 // `extractToolCalls` reads, with `function.arguments` as a JSON *string*
 // (per ChatCompletionMessageToolCall.Function -- not an already-parsed
-// object like Anthropic's `input` or Gemini's `args`).
+// object like Anthropic's `input` or Gemini's `args`). `text` defaults to
+// `null` (the common case: a pure tool-call turn), but can be set to
+// exercise a turn carrying both reasoning text AND tool calls at once --
+// `message.content` and `message.tool_calls` are independent fields on the
+// same message, not mutually exclusive.
 function toolCallCompletion(
   calls: { id: string; name: string; args: Record<string, unknown> | string }[],
+  text: string | null = null,
 ): ChatCompletion {
   return {
     id: "chatcmpl-2",
@@ -51,7 +56,7 @@ function toolCallCompletion(
         logprobs: null,
         message: {
           role: "assistant",
-          content: null,
+          content: text,
           tool_calls: calls.map((call) => ({
             id: call.id,
             type: "function",
@@ -122,6 +127,33 @@ describe("groqLlmClient", () => {
 
     expect(response).toEqual({
       text: "",
+      toolCalls: [{ id: "call_abc", name: "get_player_stats", input: { player_name: "LeBron James" } }],
+    });
+  });
+
+  it("extracts both the reasoning text AND the tool calls when a turn carries both at once", async () => {
+    // Regression guard: message.content and message.tool_calls are
+    // independent fields on the same ChatCompletionMessage, not mutually
+    // exclusive -- a turn can carry a preamble ("Let me look that up...")
+    // alongside a tool call. Nothing else in this suite exercises a
+    // non-null content on a tool_calls response (toolCallCompletion
+    // defaults `text` to null), so a regression that started dropping the
+    // model's reasoning text on a combined turn would otherwise go
+    // uncaught.
+    const createChatCompletion = vi
+      .fn()
+      .mockResolvedValueOnce(
+        toolCallCompletion(
+          [{ id: "call_abc", name: "get_player_stats", args: { player_name: "LeBron James" } }],
+          "Let me look up LeBron's stats for that date.",
+        ),
+      );
+    const client = groqLlmClient(createChatCompletion);
+
+    const response = await client.send({ systemPrompt: "", tools: TOOLS, history: [{ role: "user", content: "q" }] });
+
+    expect(response).toEqual({
+      text: "Let me look up LeBron's stats for that date.",
       toolCalls: [{ id: "call_abc", name: "get_player_stats", input: { player_name: "LeBron James" } }],
     });
   });
