@@ -6,7 +6,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from api.core.config import Settings
 from api.core.rate_limit import limiter
-from api.routers import games, live, player_stats, quality, query_tools
+from api.routers import board, games, live, player_stats, quality, query_tools
 
 app = FastAPI(title="Live Box Score Pipeline API")
 
@@ -31,6 +31,7 @@ app.add_middleware(
 
 app.include_router(games.router)
 app.include_router(live.router)
+app.include_router(board.router)
 app.include_router(quality.router)
 app.include_router(player_stats.router)
 app.include_router(query_tools.router)
