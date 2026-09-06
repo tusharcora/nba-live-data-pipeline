@@ -43,6 +43,7 @@ The pipeline's Gold data (`games`, `player_game_stats`) is queryable today only 
 - New tool endpoints carry the same `slowapi` rate limiting already applied to every other `api/` route.
 - Testing follows this repo's existing offline-verification convention: the FastAPI tool endpoints are tested against fake rows with no live database connection, and the BFF's tool-use loop is tested with the LLM SDK call mocked — no real database or LLM calls run in CI.
 - This feature ships as its own branch off `main`, independent of the concurrently in-progress `v2-sportsbook-redesign` branch, so the two land as separately reviewable changes.
+- The LLM integration is provider-agnostic: `search-loop.ts` depends only on a shared `LlmClient` interface, never a specific SDK, so a new provider is addable without touching the loop itself. The active provider is selected via `SEARCH_LLM_PROVIDER`, defaulting to **Gemini 3.8 Flash** (`@google/genai`) for its free tier; Anthropic (Claude Haiku 4.5) remains supported as an explicit alternative. A missing/invalid API key for the selected provider fails fast with a clear config error, never a silent fallback to another provider.
 
 ## Non-goals
 
@@ -59,10 +60,9 @@ A user on the new search page types a plain-English question about a specific pl
 
 ## Assumptions
 
-- The LLM for this feature is Claude Haiku 4.5, carried forward from earlier project research (cost/speed profile suited to extraction-style workloads) but not independently re-confirmed in this session.
 - "Other factors" in the user's original phrasing ("stats on players or teams or dates and other factors") is covered by CAP-1 through CAP-3 (player, team, date, head-to-head, league-leader); no additional query dimension was named.
 
 ## Open Questions
 
 - Should league-leader queries (CAP-2) be limited or specially caveated given how few days are currently backfilled, beyond the date-range disclosure already required — or is the disclosure itself sufficient for v1?
-- What should the new page be named/routed as (e.g. `/search` vs `/ask`), and where should it be linked from in navigation?
+- Should a provider/config failure (e.g. a missing API key) render as a distinct "search unavailable" state, or continue to render identically to CAP-5's honest "no data" state as it does today? Live-verified during Story 4 review: the two are currently indistinguishable to the end user, which risks masking a real outage as an empty-data result. Raised for human decision, not yet resolved either way.
