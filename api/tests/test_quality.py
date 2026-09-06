@@ -77,12 +77,14 @@ class FakeQualityReader:
         conflicts_total=0,
         conflicts_recent=(),
         history_rows=(),
+        conflicts_by_game=(),
     ):
         self._metric_rows = list(metric_rows)
         self._schema_changes = list(schema_changes)
         self._conflicts_total = conflicts_total
         self._conflicts_recent = list(conflicts_recent)
         self._history_rows = list(history_rows)
+        self._conflicts_by_game = list(conflicts_by_game)
         self.call_count = 0
         self.history_call_count = 0
 
@@ -104,6 +106,9 @@ class FakeQualityReader:
         """
         self.history_call_count += 1
         return [row for row in self._history_rows if row.check_name == check_name]
+
+    def recent_conflicts_for_game(self, game_id, window_seconds):
+        return [c for c in self._conflicts_by_game if c.game_id == game_id]
 
 
 def _override_reader(reader):
@@ -411,3 +416,22 @@ def test_quality_history_different_check_names_do_not_collide_in_cache(monkeypat
         {"run_at": "2026-08-02T00:00:00+00:00", "value": 0.05}
     ]
     assert reader.history_call_count == 2  # both were misses against distinct keys
+
+
+# --- recent_conflicts_for_game (QualityReader protocol extension) ---
+
+
+def test_recent_conflicts_for_game_filters_by_game_id():
+    conflict_for_game_1 = _conflict(
+        1, "1", "home_score", "nba_stats", "91", "balldontlie", "89", "91",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    conflict_for_game_2 = _conflict(
+        2, "2", "home_score", "nba_stats", "80", "balldontlie", "79", "80",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    reader = FakeQualityReader(conflicts_by_game=[conflict_for_game_1, conflict_for_game_2])
+
+    result = reader.recent_conflicts_for_game("1", window_seconds=300)
+
+    assert result == [conflict_for_game_1]
