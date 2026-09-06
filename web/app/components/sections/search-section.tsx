@@ -9,6 +9,7 @@ import {
   Search,
   SearchX,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -308,7 +309,24 @@ function SearchResult({
                     : null}
                 </span>
               </div>
-            ) : null}
+            ) : (
+              // CAP-4: every answer must state which table/date range it
+              // came from. A `citation: null` alongside a real answer is a
+              // sourcing gap, not a normal state -- rendering nothing here
+              // would make an unsourced answer indistinguishable from a
+              // sourced one. Kept in the "answer" branch (rather than a
+              // separate top-level state) because the answer text itself
+              // is still real content worth showing; only the missing
+              // citation needs to be made visible, not the whole answer
+              // hidden behind an error-style state.
+              <div
+                role="alert"
+                className="flex items-start gap-2 border-t border-border pt-3 text-xs text-amber-600 dark:text-amber-500"
+              >
+                <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+                <span>No source citation was returned for this answer.</span>
+              </div>
+            )}
           </CardContent>
         </Card>
       );

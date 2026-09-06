@@ -72,6 +72,28 @@ describe("SearchSection", () => {
     );
   });
 
+  it("renders an explicit sourcing-gap indicator, never a silent citation-less answer (CAP-4)", async () => {
+    // citation: null with noData: false and candidates: null -- a real
+    // answer with nothing to cite. Must never render indistinguishably
+    // from a normal, sourced answer.
+    vi.mocked(fetch).mockResolvedValue(
+      mockStreamResponse([
+        "data: The Lakers won 103-98\n\n",
+        `event: done\ndata: ${DONE_ANSWER({ citation: null })}\n\n`,
+      ])
+    );
+
+    await askQuestion("Who won the Lakers game on Jan 5?");
+
+    await waitFor(() =>
+      expect(screen.getByText("The Lakers won 103-98")).toBeInTheDocument()
+    );
+    expect(
+      await screen.findByText(/no source citation was returned/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Source:/)).not.toBeInTheDocument();
+  });
+
   it("renders a distinct no-data panel, not a normal answer, when noData is true", async () => {
     vi.mocked(fetch).mockResolvedValue(
       mockStreamResponse([
@@ -100,6 +122,51 @@ describe("SearchSection", () => {
     expect(await screen.findByText(/did you mean/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "LeBron James" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "LeBron James Jr." })).toBeInTheDocument();
+  });
+
+  it("re-queries with the picked candidate's name when a 'did you mean' button is clicked", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      mockStreamResponse([
+        `event: done\ndata: ${DONE_ANSWER({
+          candidates: ["LeBron James", "LeBron James Jr."],
+        })}\n\n`,
+      ])
+    );
+
+    const user = await askQuestion("How many points did LeBron score?");
+    expect(await screen.findByText(/did you mean/i)).toBeInTheDocument();
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      mockStreamResponse([
+        "data: LeBron James scored 30 points\n\n",
+        `event: done\ndata: ${DONE_ANSWER({
+          citation: { table: "player_game_stats", dateRange: "2026-01-05..2026-01-05" },
+        })}\n\n`,
+      ])
+    );
+
+    await user.click(screen.getByRole("button", { name: "LeBron James" }));
+
+    // Re-queries with the candidate's exact display string as a brand-new
+    // question -- the second `/api/search` call, not the first.
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/search",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ question: "LeBron James" }),
+      })
+    );
+
+    // The ambiguous panel is replaced by the new answer, not left showing
+    // alongside it.
+    expect(
+      await screen.findByText("LeBron James scored 30 points")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/did you mean/i)).not.toBeInTheDocument();
+
+    // The question input reflects the picked candidate too.
+    expect(screen.getByLabelText(/ask a stats question/i)).toHaveValue("LeBron James");
   });
 
   it("renders a connection-error alert when the fetch itself fails", async () => {
