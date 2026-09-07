@@ -35,7 +35,16 @@ export function RecentGamesBoard() {
     let cancelled = false;
 
     fetch("/api/board")
-      .then((res) => res.json())
+      .then((res) => {
+        // The BFF route always returns valid JSON, even on a backend
+        // failure (`{status: "unreachable"}` with a 502) -- checking
+        // `res.ok` here is what tells that apart from a genuine "zero
+        // games" response, which also has a 200 with an empty `data`
+        // array. Without this check, an unreachable backend silently
+        // renders as an empty board instead of the error state below.
+        if (!res.ok) throw new Error("unreachable");
+        return res.json();
+      })
       .then((data: ApiList<BoardGameRowData> | null) => {
         const games = data?.data ?? [];
         if (!cancelled) setState({ status: "loaded", games });
