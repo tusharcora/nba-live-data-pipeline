@@ -9,6 +9,7 @@ export type BoardCommentary = { text: string; kind: BoardCommentaryKind };
 
 export type BoardGameRow = {
   game_id: number;
+  gold_game_id: number | null;
   status: BoardStatus;
   home_team: string | null;
   away_team: string | null;

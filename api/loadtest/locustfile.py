@@ -1,6 +1,6 @@
 """Locust load test simulating the "live game window" scenario from
 `docs/prd.md` §09: concurrent authenticated readers hitting `/games` and
-`/quality` while a smaller number of viewers hold open `/live` SSE
+`/quality` while a smaller number of viewers hold open `/board/stream` SSE
 connections, during a window when a game is actually in progress.
 
 Run (see `README.md` for the full explanation):
@@ -33,12 +33,13 @@ from locust import HttpUser, between, task
 API_KEY_HEADER = "X-API-Key"
 API_KEY_ENV_VAR = "API_SERVICE_KEY"
 
-# How many SSE `data:` events to read off `/live` before disconnecting.
-# `/live` is a long-lived stream (up to `MAX_STREAM_DURATION_SECONDS` = 4h
-# server-side) — fully simulating that per simulated user would mean each
-# Locust "user" pins one connection open for hours, which defeats the point
-# of a load test that's supposed to run in a few minutes and measure p95
-# latency across many *requests*. Instead this treats a `/live` visit as
+# How many SSE `data:` events to read off `/board/stream` before
+# disconnecting. `/board/stream` is a long-lived stream (up to
+# `MAX_STREAM_DURATION_SECONDS` = 4h server-side) — fully simulating that
+# per simulated user would mean each Locust "user" pins one connection open
+# for hours, which defeats the point of a load test that's supposed to run
+# in a few minutes and measure p95 latency across many *requests*. Instead
+# this treats a `/board/stream` visit as
 # "connect, read a handful of events, disconnect" — enough to exercise the
 # connection-acceptance and first-few-poll-iterations path (the part that
 # actually touches the DB and the pool this PR tunes) without the test
@@ -64,12 +65,12 @@ class LiveGameWindowUser(HttpUser):
     """Simulates one dashboard viewer during a live game window.
 
     Weighted tasks approximate a viewer whose dashboard is polling `/games`
-    and `/quality` periodically while a `/live` SSE connection (opened once
-    per weighted task pick, then closed after a few events) represents the
-    live-score panel. `wait_time` between tasks approximates a real
-    dashboard's poll cadence rather than hammering the API in a tight loop,
-    which would test something other than the "live game window" scenario
-    the PRD actually describes.
+    and `/quality` periodically while a `/board/stream` SSE connection
+    (opened once per weighted task pick, then closed after a few events)
+    represents the live-score panel. `wait_time` between tasks approximates
+    a real dashboard's poll cadence rather than hammering the API in a
+    tight loop, which would test something other than the "live game
+    window" scenario the PRD actually describes.
     """
 
     # 1-5s between tasks per simulated user — a real dashboard polls
@@ -101,7 +102,8 @@ class LiveGameWindowUser(HttpUser):
 
     @task(1)
     def watch_live(self) -> None:
-        """`GET /live` — open the SSE stream, read a few events, disconnect.
+        """`GET /board/stream` — open the SSE stream, read a few events,
+        disconnect.
 
         Deliberately not a full streaming simulation (see
         `SSE_EVENTS_TO_READ`'s docstring above) — this measures the cost of
@@ -114,8 +116,8 @@ class LiveGameWindowUser(HttpUser):
         """
         events_read = 0
         with self.client.get(
-            "/live/",
-            name="/live (connect + first events)",
+            "/board/stream",
+            name="/board/stream (connect + first events)",
             stream=True,
             catch_response=True,
         ) as response:

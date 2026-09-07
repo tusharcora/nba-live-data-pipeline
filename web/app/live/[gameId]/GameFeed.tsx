@@ -121,12 +121,14 @@ export function GameFeed({ gameId }: { gameId: string }) {
         </div>
       )}
 
-      <Link
-        href={`/games/${game.game_id}`}
-        className="text-sm text-amber-600 underline dark:text-amber-500"
-      >
-        View full box score
-      </Link>
+      {game.gold_game_id !== null && (
+        <Link
+          href={`/games/${game.gold_game_id}`}
+          className="text-sm text-amber-600 underline dark:text-amber-500"
+        >
+          View full box score
+        </Link>
+      )}
     </div>
   );
 }

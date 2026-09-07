@@ -163,6 +163,11 @@ def _serialize_live_row(
     status = _derive_status(nba_stats_latest)
     return {
         "game_id": game_id,
+        # nba_stats's id is unoffset (e.g. 22500123); the Gold `games` table
+        # stores this same game offset by NBA_GAME_ID_OFFSET (e.g.
+        # 100022500123) once nba_api backfills it — see the comment above
+        # `today_gold_ids` in `compute_board` for the full id-space story.
+        "gold_game_id": NBA_GAME_ID_OFFSET + game_id,
         "status": status,
         "home_team": nba_stats_latest.home_team,
         "away_team": nba_stats_latest.away_team,
@@ -211,6 +216,11 @@ def _serialize_fallback_row(game_id: int, fallback: LiveGameState) -> dict:
     """
     return {
         "game_id": game_id,
+        # balldontlie's native id already matches Gold's balldontlie-space
+        # rows directly (see the `today_gold_ids` comment in `compute_board`
+        # for why); public_feed's id space never appears in Gold at all, so
+        # there's genuinely nothing to link to for that case.
+        "gold_game_id": game_id if fallback.source == "balldontlie" else None,
         "status": _derive_fallback_status(fallback),
         "home_team": None,
         "away_team": None,
@@ -234,6 +244,7 @@ def _normalize_historical_row(row: dict) -> dict:
     pulled_at = row.get("source_pulled_at")
     return {
         "game_id": row["game_id"],
+        "gold_game_id": row["game_id"],
         "status": "final",
         "home_team": row["home_team"],
         "away_team": row["away_team"],
@@ -345,10 +356,17 @@ def get_board(
     Response shape:
         {"data": [<board row>, ...], "count": <int>}
 
-    Each row: `{game_id, status ("scheduled"|"live"|"final"|"postponed"),
-    home_team, away_team, home_score, away_score, period, clock,
-    scheduled_start, source_pulled_at, commentary ({text, kind} | null)}`.
+    Each row: `{game_id, gold_game_id, status
+    ("scheduled"|"live"|"final"|"postponed"), home_team, away_team,
+    home_score, away_score, period, clock, scheduled_start,
+    source_pulled_at, commentary ({text, kind} | null)}`.
     `commentary` is only ever non-null for `status: "live"` rows.
+
+    gold_game_id: int | null — the id this same game would have in the Gold
+    `games` table (already offset for nba_stats-covered rows), so the
+    frontend never needs to know about the offset convention itself. Null
+    when there's no reliable Gold-table id for this row yet (a
+    `public_feed`-only fallback row).
     """
 
     def _compute() -> dict:

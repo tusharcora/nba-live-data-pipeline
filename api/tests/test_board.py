@@ -299,6 +299,80 @@ def test_board_live_row_source_pulled_at_reflects_nba_stats_freshness():
         _clear_overrides()
 
 
+def test_board_live_row_gold_game_id_is_offset():
+    """A live (nba_stats-covered) row's `gold_game_id` must be nba_api's
+    unoffset id + `NBA_GAME_ID_OFFSET` -- the id this game will have once
+    nba_api backfills it into the Gold `games` table.
+    """
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [
+        _state(22500123, "nba_stats", 91, 88, "in_progress", now,
+               home_team="Miami Heat", away_team="Boston Celtics", period=3, clock="4:12"),
+    ]
+    _override(today_states=today_states, history_by_game={22500123: today_states})
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 22500123)
+        assert row["gold_game_id"] == 100022500123
+    finally:
+        _clear_overrides()
+
+
+def test_board_balldontlie_fallback_row_gold_game_id_matches_native_id():
+    """A `balldontlie`-only fallback row's `gold_game_id` equals its own
+    `game_id` -- balldontlie's native id space already matches Gold's
+    directly, no offset applies.
+    """
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(888, "balldontlie", 50, 48, "2nd Qtr", now)]
+    _override(today_states=today_states)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 888)
+        assert row["gold_game_id"] == 888
+    finally:
+        _clear_overrides()
+
+
+def test_board_public_feed_fallback_row_gold_game_id_is_null():
+    """A `public_feed`-only fallback row's `gold_game_id` is `None` --
+    `public_feed`'s id space never appears in Gold at all, so there's
+    genuinely nothing to link a box-score page to yet.
+    """
+    now = datetime(2026, 1, 1, 20, 0, 0, tzinfo=timezone.utc)
+    today_states = [_state(777, "public_feed", 50, 48, "2nd Qtr", now)]
+    _override(today_states=today_states)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 777)
+        assert row["gold_game_id"] is None
+    finally:
+        _clear_overrides()
+
+
+def test_board_historical_row_gold_game_id_matches_its_own_game_id():
+    """A Gold `games` row is already in Gold's id space by definition, so
+    its `gold_game_id` is just its own `game_id`.
+    """
+    historical_rows = [
+        {
+            "game_id": 999,
+            "home_team": "Golden State Warriors",
+            "away_team": "Phoenix Suns",
+            "home_score": 118,
+            "away_score": 109,
+            "source_pulled_at": datetime(2025, 12, 1, tzinfo=timezone.utc),
+        }
+    ]
+    _override(historical_rows=historical_rows)
+    try:
+        resp = client.get("/board/", headers={"X-API-Key": API_KEY})
+        row = next(r for r in resp.json()["data"] if r["game_id"] == 999)
+        assert row["gold_game_id"] == 999
+    finally:
+        _clear_overrides()
+
+
 class FakeDisconnect:
     def __init__(self, values):
         self._values = list(values)
