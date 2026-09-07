@@ -58,10 +58,24 @@ export function BoardGameRow({
     <div
       role={onSelect ? "button" : undefined}
       tabIndex={onSelect ? 0 : undefined}
-      onClick={onSelect ? () => onSelect(game.game_id) : undefined}
+      aria-pressed={onSelect ? Boolean(isSelected) : undefined}
+      onClick={
+        onSelect
+          ? (e) => {
+              // Let clicks that originate from (or inside) the nested "View
+              // Feed" link fall through to its own native activation --
+              // only a plain e.target !== e.currentTarget check would also
+              // swallow clicks on ordinary row content (team names, scores,
+              // the status badge), since those are descendants too.
+              if ((e.target as HTMLElement).closest("a, button")) return;
+              onSelect(game.game_id);
+            }
+          : undefined
+      }
       onKeyDown={
         onSelect
           ? (e) => {
+              if ((e.target as HTMLElement).closest("a, button")) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 onSelect(game.game_id);
@@ -70,10 +84,11 @@ export function BoardGameRow({
           : undefined
       }
       className={cn(
-        "grid grid-cols-[80px_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0",
-        isGreyed && "opacity-60",
+        "grid grid-cols-[80px_1fr_auto] items-center gap-4 px-4 py-3 last:border-b-0",
         onSelect && "cursor-pointer",
         onSelect && FOCUS_RING,
+        "border-b border-border",
+        isGreyed && "opacity-60",
         isSelected && "border-l-2 border-l-amber-600 bg-muted/60 dark:border-l-amber-500"
       )}
     >
@@ -118,10 +133,7 @@ export function BoardGameRow({
         )}
       </div>
 
-      <div
-        className="flex flex-col items-end gap-1.5"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex flex-col items-end gap-1.5">
         <Button
           render={<Link href={`/live/${game.game_id}`} />}
           nativeButton={false}
