@@ -3407,6 +3407,342 @@ git commit -m "web: retire the standalone /live page, superseded by the unified 
 
 ---
 
+## Task 18: Restore the "Feed ticket" sidebar alongside the row list
+
+**Added post-hoc**, after user review of the completed board: the pre-redesign board had a two-column layout (row list + a "Feed ticket" detail sidebar for the selected game), and Task 15's rewrite dropped the sidebar entirely in favor of routing "View Feed" to the new `/live/[gameId]` page. The user wants the sidebar back **alongside** that page, not instead of it: clicking a row selects it and shows a quick-glance detail panel in the sidebar (mirroring the row's live/scheduled/final/postponed status); the "View Feed" button remains a separate, distinct action navigating to the full `/live/[gameId]` page.
+
+**Files:**
+- Create: `web/app/components/feed-ticket.tsx`
+- Modify: `web/app/components/board-game-row.tsx`
+- Modify: `web/app/components/recent-games-board.tsx`
+
+**Interfaces:**
+- Consumes: `BoardGameRow` type, `getStatusPresentation`, `formatFreshness`, `formatScheduledStart` (all from `web/lib/board.ts`, unchanged).
+- Produces: `<FeedTicket game={...} />` (new); `BoardGameRow`'s props gain optional `isSelected?: boolean` and `onSelect?: (gameId: number) => void` (additive, backward compatible — omitting them keeps today's non-selectable behavior).
+
+Scoping note: the original sidebar's "Season" field is dropped — `BoardGameRow` (the API's unified row shape, Task 9) has no `season`/`game_date` field for live/today rows (nba_stats's scoreboard doesn't carry it), and adding it would mean touching three already-reviewed, completed tasks' code (Task 3's extraction, Task 9's three serializers, Task 12's type) for a field only the historical/final path could ever populate. "Source" stays a fixed descriptive string ("balldontlie · nba_stats"), matching the ORIGINAL sidebar's behavior exactly — that field was already hardcoded, not derived from a real per-row value, even before Task 15's rewrite.
+
+- [ ] **Step 1: Update `BoardGameRow` to support selection**
+
+In `web/app/components/board-game-row.tsx`, change the exported component's signature and root element:
+
+```tsx
+export function BoardGameRow({
+  game,
+  isSelected,
+  onSelect,
+}: {
+  game: BoardGameRowData;
+  isSelected?: boolean;
+  onSelect?: (gameId: number) => void;
+}) {
+  const isGreyed = game.status === "final" || game.status === "postponed";
+  const showScore = game.status === "live" || game.status === "final";
+
+  return (
+    <div
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={onSelect ? () => onSelect(game.game_id) : undefined}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(game.game_id);
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "grid grid-cols-[80px_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-b-0",
+        isGreyed && "opacity-60",
+        onSelect && "cursor-pointer",
+        onSelect && FOCUS_RING,
+        isSelected && "border-l-2 border-l-amber-600 bg-muted/60 dark:border-l-amber-500"
+      )}
+    >
+```
+
+(everything inside the returned JSX below the opening `<div>` stays exactly as it is today — status/team/commentary blocks unchanged.) Wrap the "View Feed" button's container `div` with `onClick={(e) => e.stopPropagation()}` so clicking it navigates without also toggling row selection:
+
+```tsx
+      <div
+        className="flex flex-col items-end gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Button
+          render={<Link href={`/live/${game.game_id}`} />}
+          nativeButton={false}
+          size="sm"
+          variant="ghost"
+          aria-label={`View feed for ${abbr(game.away_team)} at ${abbr(game.home_team)}`}
+          className={cn("border border-border bg-transparent hover:bg-muted/60", FOCUS_RING)}
+        >
+          View Feed
+        </Button>
+        <span className="font-mono text-xs text-muted-foreground">
+          {formatFreshness(game.source_pulled_at)}
+        </span>
+      </div>
+```
+
+Using a `role="button"` `div` rather than a native `<button>` for the row is deliberate: the row must contain the "View Feed" `Button`/`Link`, and nesting interactive elements (`<button>` inside `<button>`, or `<a>` inside `<button>`) is invalid HTML — the established pattern from the pre-redesign board (which used a real `<button>` row with only a plain text hint, no nested interactive element) doesn't carry forward once the row needs a genuine nested link. `tabIndex`/`onKeyDown` (Enter/Space) keep it keyboard-operable, matching this codebase's `FOCUS_RING` convention for visible focus.
+
+- [ ] **Step 2: Create `FeedTicket`**
+
+Create `web/app/components/feed-ticket.tsx`:
+
+```tsx
+"use client";
+
+import Link from "next/link";
+
+import { Button } from "@/components/ui/button";
+import {
+  type BoardGameRow,
+  formatFreshness,
+  formatScheduledStart,
+  getStatusPresentation,
+} from "@/lib/board";
+import { displayScore, TEAM_NAME_TO_ABBREVIATION } from "@/lib/box-score";
+import { cn } from "@/lib/utils";
+
+function abbr(teamName: string | null): string {
+  if (!teamName) return "—";
+  return TEAM_NAME_TO_ABBREVIATION[teamName] ?? teamName;
+}
+
+/** "HH:MM:SS UTC" render of the exact pull timestamp -- only the sidebar
+ * shows this alongside the row list's relative "Ns ago" freshness,
+ * matching the pre-redesign board's "Last Pulled" field. */
+function formatExactPulledAt(iso: string | null): string {
+  if (iso === null) return "—";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return `${parsed.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "UTC",
+  })} UTC`;
+}
+
+const COMMENTARY_COLOR: Record<string, string> = {
+  conflict: "text-pink-600 dark:text-pink-400",
+  stale: "text-amber-600 dark:text-amber-500",
+  run: "text-amber-600 dark:text-amber-500",
+  leader: "text-muted-foreground",
+};
+
+/**
+ * The board's "Feed ticket" detail panel -- the currently-selected row's
+ * quick-glance detail, restoring the pre-redesign board's sidebar
+ * alongside the unified row list (Task 15 had dropped it; re-added at
+ * user request). Content varies by status: live shows running
+ * score/period/clock/commentary, scheduled shows tip-off time,
+ * final/postponed show the settled state. "Box score"/"View Feed"
+ * always links to `/live/<id>` -- the fuller live ticker + commentary
+ * log view -- so this panel stays a quick glance and that page stays
+ * the deep dive.
+ */
+export function FeedTicket({ game }: { game: BoardGameRow }) {
+  const presentation = getStatusPresentation(game.status);
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+      <div className="relative flex items-start justify-between gap-2 border-b border-dashed border-border px-4 py-3">
+        <div>
+          <h3 className="font-mono text-base font-semibold tracking-wide text-foreground uppercase">
+            {abbr(game.away_team)} · {abbr(game.home_team)}
+          </h3>
+          <p className="mt-0.5 font-mono text-xs text-muted-foreground uppercase">
+            Feed ticket · Game #{game.game_id}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "shrink-0 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tracking-wide uppercase",
+            presentation.kind === "live"
+              ? "bg-primary/15 text-primary"
+              : "bg-amber-600/15 text-amber-600 dark:text-amber-500"
+          )}
+        >
+          {presentation.label}
+        </span>
+        <div
+          aria-hidden="true"
+          className="absolute -bottom-2.5 -left-2.5 size-5 rounded-full bg-background"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute -right-2.5 -bottom-2.5 size-5 rounded-full bg-background"
+        />
+      </div>
+
+      <dl className="flex flex-col gap-3 px-4 py-3 font-mono text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <dt className="tracking-wide text-muted-foreground uppercase">Status</dt>
+          <dd className="text-foreground">{presentation.label}</dd>
+        </div>
+
+        {game.status === "live" && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="tracking-wide text-muted-foreground uppercase">Period / Clock</dt>
+            <dd className="text-foreground">
+              {game.period ? `Q${game.period}` : "—"}
+              {game.clock ? ` · ${game.clock}` : ""}
+            </dd>
+          </div>
+        )}
+
+        {game.status === "scheduled" && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="tracking-wide text-muted-foreground uppercase">Tips Off</dt>
+            <dd className="text-foreground">{formatScheduledStart(game.scheduled_start)}</dd>
+          </div>
+        )}
+
+        {(game.status === "live" || game.status === "final") && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="tracking-wide text-muted-foreground uppercase">Score</dt>
+            <dd className="text-amber-600 dark:text-amber-500">
+              {abbr(game.away_team)} {displayScore(game.away_score)} —{" "}
+              {abbr(game.home_team)} {displayScore(game.home_score)}
+            </dd>
+          </div>
+        )}
+
+        {game.status === "live" && game.commentary && (
+          <div className="flex items-center justify-between gap-2">
+            <dt className="tracking-wide text-muted-foreground uppercase">Commentary</dt>
+            <dd className={cn("text-right", COMMENTARY_COLOR[game.commentary.kind])}>
+              {game.commentary.text}
+            </dd>
+          </div>
+        )}
+
+        {/* Fixed descriptive string, not a per-row field -- the API
+            doesn't return a "source" value on a board row. Matches the
+            pre-redesign sidebar's identical hardcoded behavior. */}
+        <div className="flex items-center justify-between gap-2">
+          <dt className="tracking-wide text-muted-foreground uppercase">Source</dt>
+          <dd className="text-foreground">balldontlie · nba_stats</dd>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <dt className="tracking-wide text-muted-foreground uppercase">Last Pulled</dt>
+          <dd className="text-foreground">{formatExactPulledAt(game.source_pulled_at)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <dt className="tracking-wide text-muted-foreground uppercase">Freshness</dt>
+          <dd className="text-foreground">{formatFreshness(game.source_pulled_at)}</dd>
+        </div>
+      </dl>
+
+      <div className="relative flex items-center border-t border-dashed border-border px-4 py-5">
+        <Button
+          render={<Link href={`/live/${game.game_id}`} />}
+          nativeButton={false}
+          size="sm"
+          variant="ghost"
+          className="w-full cursor-pointer border border-border bg-transparent hover:bg-muted/60"
+        >
+          {game.status === "final" ? "Box score" : "View Feed"}
+        </Button>
+        <div
+          aria-hidden="true"
+          className="absolute -top-2.5 -left-2.5 size-5 rounded-full bg-background"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute -top-2.5 -right-2.5 size-5 rounded-full bg-background"
+        />
+      </div>
+    </div>
+  );
+}
+
+export default FeedTicket;
+```
+
+- [ ] **Step 3: Wire selection + the sidebar into `RecentGamesBoard`**
+
+Replace `web/app/components/recent-games-board.tsx`'s render section (state/effects stay exactly as Task 15 left them) with a two-column layout:
+
+```tsx
+import { BoardGameRow } from "./board-game-row";
+import { FeedTicket } from "./feed-ticket";
+```
+
+Add `selectedId` state alongside the existing `state`:
+
+```tsx
+const [selectedId, setSelectedId] = useState<number | null>(null);
+```
+
+In the initial-fetch `.then(...)`, after `setState({ status: "loaded", games })`, default-select the first row once games arrive (deferred one tick so it doesn't fight the same-render `setState`):
+
+```tsx
+if (games.length > 0) {
+  Promise.resolve().then(() => {
+    if (!cancelled) setSelectedId((prev) => prev ?? games[0].game_id);
+  });
+}
+```
+
+Replace the final render block (from `if (state.games.length === 0)` onward) with:
+
+```tsx
+  if (state.games.length === 0) {
+    return null;
+  }
+
+  const selected = state.games.find((g) => g.game_id === selectedId) ?? state.games[0];
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="font-heading text-lg font-bold tracking-wide text-foreground uppercase">
+        Recent games
+      </h2>
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+          {state.games.map((game) => (
+            <BoardGameRow
+              key={game.game_id}
+              game={game}
+              isSelected={game.game_id === selected.game_id}
+              onSelect={setSelectedId}
+            />
+          ))}
+        </div>
+        <FeedTicket game={selected} />
+      </div>
+    </div>
+  );
+}
+
+export default RecentGamesBoard;
+```
+
+- [ ] **Step 4: Type-check, lint, and manually verify**
+
+Run: `cd web && npx tsc --noEmit` — expect only the known pre-existing `app/layout.tsx(171,50)` `LayoutProps` error, nothing new.
+
+Run: `cd web && npm run lint` — expect clean.
+
+With `api` and `web` dev servers running (bring up `make up` infra if needed), open the homepage and confirm: clicking any row selects it (left-border highlight) and updates the sidebar; the sidebar's content changes appropriately for whatever statuses exist in local data (at minimum final/historical rows, which should have real data); clicking "View Feed" navigates to `/live/<id>` without also just re-selecting the row; keyboard navigation (Tab to a row, Enter/Space) also selects it.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/app/components/board-game-row.tsx web/app/components/feed-ticket.tsx web/app/components/recent-games-board.tsx
+git commit -m "web: restore the Feed ticket sidebar alongside the unified row list"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
