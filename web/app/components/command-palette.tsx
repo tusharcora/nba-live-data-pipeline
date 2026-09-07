@@ -6,7 +6,6 @@ import {
   Activity,
   BarChart3,
   Gauge,
-  Radio,
   Search,
   Settings as SettingsIcon,
   Sparkles,
@@ -45,7 +44,6 @@ type GamesFetchState =
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", icon: Activity },
-  { href: "/live", label: "Live Board", icon: Radio },
   { href: "/quality", label: "Data Quality Scorecard", icon: BarChart3 },
   { href: "/explorer", label: "Historical Explorer", icon: Search },
   { href: "/search", label: "Ask a Stats Question", icon: Sparkles },

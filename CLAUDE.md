@@ -20,14 +20,14 @@ Data flows Bronze (`raw_pulls`, append-only, written by `ingestion`) → Silver/
 
 ## Config pattern
 
-Every Python service defines its own `Settings(BaseSettings)` in a `config.py`, reading from env vars (`.env`, see root `.env.example` for the full set). `ingestion` and `api` each expose a `runtime_database_url` property that prefers a role-scoped DSN (`INGESTION_DATABASE_URL` / `API_DATABASE_URL`) and falls back to the admin `DATABASE_URL` — use `runtime_database_url`, not `database_url`, for any actual query/write path.
+Every Python service defines its own `Settings(BaseSettings)` in a `config.py`, reading from env vars (`.env`, see root `.env.example` for the full set). `ingestion` and `api` each expose a `runtime_database_url` property that prefers a role-scoped DSN (`INGESTION_DATABASE_URL` / `API_DATABASE_URL`) and falls back to the admin `DATABASE_URL` — use `runtime_database_url`, not `database_url`, for any actual query/write path. `ingestion/pyproject.toml` also has `quality` as an editable path dependency (`uv.sources`), mirroring the existing `db` one.
 
 ## Testing without live infrastructure
 
 The whole codebase is designed to be verified without a running Postgres or real external API calls, and most day-to-day work here should follow the same pattern:
 
 - **Prefect flows use `@runtime_checkable` Protocol-based dependency injection** (see `ingestion/src/ingestion/flows/backfill_flow.py`: `RawPullSink`, `CheckpointStore`, `GamesPageSource`). This isn't optional style — Prefect builds a Pydantic parameter schema from a flow's type hints at decoration time, so a bare (non-runtime-checkable) `Protocol` crashes at import, and a concrete-class annotation rejects duck-typed test fakes via `isinstance`. New flow parameters that need fakes in tests must follow the same pattern.
-- **HTTP clients are tested with mocked responses** (`unittest.mock.patch` on `httpx.get`), never real network calls.
+- **HTTP clients are tested with mocked responses** (`unittest.mock.patch` on `httpx.get`), never real network calls. One documented exception: `ingestion/src/ingestion/sources/nba_live.py` wraps `nba_api`'s live scoreboard, which makes its own HTTP calls internally rather than through `httpx` — its tests patch the wrapper object itself instead. See `docs/superpowers/specs/2026-09-06-recent-games-board-and-commentator-design.md` §4.1.
 - **Alembic migrations are verified offline**: `alembic upgrade head --sql` / `alembic downgrade base --sql` emit DDL without connecting to a database — read the emitted SQL, don't just check the exit code.
 - **dbt is verified with `dbt parse --no-partial-parse`** (safe, no connection needed). Plain `dbt compile` eagerly opens a live Postgres connection to warm its relation cache and will fail with "connection refused" if no DB is reachable — use `dbt compile --no-populate-cache` to get the rendered SQL in `target/compiled/` without a live connection.
 - `raw_pulls` is append-only, so staging models always de-duplicate via `row_number() over (partition by <id> order by pulled_at desc)` before anything downstream consumes them — follow this pattern for any new staging model.

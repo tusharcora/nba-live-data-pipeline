@@ -53,6 +53,7 @@ with `200`, not a `404` — the same "unfiltered/empty means empty" convention
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -108,6 +109,14 @@ class QualityReader(Protocol):
         """
         ...
 
+    def recent_conflicts_for_game(
+        self, game_id: str, window_seconds: int
+    ) -> Sequence[SourceConflict]:
+        """Every `source_conflicts` row for `game_id` detected within the
+        last `window_seconds`, any order — backs the board commentary
+        engine's per-game conflict check (`board_commentary.py`)."""
+        ...
+
 
 class SqlAlchemyQualityReader:
     """Real implementation — reads `api`'s own ORM models via a SQLAlchemy session."""
@@ -135,6 +144,16 @@ class SqlAlchemyQualityReader:
             select(QualityMetric)
             .where(QualityMetric.check_name == check_name)
             .order_by(QualityMetric.run_at.asc())
+        )
+        return self._session.execute(stmt).scalars().all()
+
+    def recent_conflicts_for_game(
+        self, game_id: str, window_seconds: int
+    ) -> Sequence[SourceConflict]:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        stmt = select(SourceConflict).where(
+            SourceConflict.game_id == game_id,
+            SourceConflict.detected_at >= cutoff,
         )
         return self._session.execute(stmt).scalars().all()
 

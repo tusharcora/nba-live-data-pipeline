@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/", label: "Home" },
-  { href: "/live", label: "Live" },
   { href: "/quality", label: "Quality" },
   { href: "/explorer", label: "Explorer" },
   { href: "/search", label: "Search" },
@@ -22,7 +21,7 @@ export type PageHref = (typeof LINKS)[number]["href"];
  * `current` renders as a filled, non-interactive button instead of a link
  * so a page never links to itself.
  */
-export function JumpLinks({ current }: { current: PageHref }) {
+export function JumpLinks({ current }: { current?: PageHref }) {
   return (
     <nav aria-label="Pages" className="flex flex-wrap items-center gap-2 text-sm">
       {LINKS.map(({ href, label }) =>

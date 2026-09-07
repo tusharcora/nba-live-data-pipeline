@@ -1,8 +1,14 @@
-from db.models import LiveGameState, QualityMetric, RawPull
+from db.models import LiveGameState, QualityMetric, RawPull, SourceConflict
 from ingestion.flows.live_game_flow import (
     extract_balldontlie_live_states,
+    extract_balldontlie_team_names,
+    extract_nba_stats_live_states,
     extract_public_feed_live_states,
+    extract_public_feed_team_names,
     live_game_flow,
+    match_game_ids_by_team_overlap,
+    reconcile_live_states,
+    remap_game_ids,
 )
 
 # --- Pure extraction function tests (no DB/network) -------------------------
@@ -145,6 +151,183 @@ def test_extract_public_feed_live_states_empty_events():
     assert extract_public_feed_live_states({"events": []}) == []
 
 
+def _nba_stats_scoreboard() -> dict:
+    return {
+        "scoreboard": {
+            "gameDate": "2026-09-06",
+            "games": [
+                {
+                    "gameId": "0022500123",
+                    "gameStatus": 2,
+                    "gameStatusText": "Qtr 3 4:12",
+                    "gameTimeUTC": "2026-09-06T23:30:00Z",
+                    "period": 3,
+                    "gameClock": "PT04M12.00S",
+                    "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
+                    "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
+                },
+                {
+                    "gameId": "0022500124",
+                    "gameStatus": 1,
+                    "gameStatusText": "7:30 pm ET",
+                    "gameTimeUTC": "2026-09-07T00:30:00Z",
+                    "period": 0,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Minnesota", "teamName": "Timberwolves", "score": 0},
+                    "awayTeam": {"teamCity": "Dallas", "teamName": "Mavericks", "score": 0},
+                },
+                {
+                    "gameId": "0022500125",
+                    "gameStatus": 3,
+                    "gameStatusText": "Final",
+                    "gameTimeUTC": "2026-09-06T19:00:00Z",
+                    "period": 4,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Golden State", "teamName": "Warriors", "score": 118},
+                    "awayTeam": {"teamCity": "Phoenix", "teamName": "Suns", "score": 109},
+                },
+                {
+                    "gameId": "0022500126",
+                    "gameStatus": 1,
+                    "gameStatusText": "Postponed",
+                    "gameTimeUTC": "2026-09-07T00:00:00Z",
+                    "period": 0,
+                    "gameClock": "",
+                    "homeTeam": {"teamCity": "Denver", "teamName": "Nuggets", "score": 0},
+                    "awayTeam": {"teamCity": "Utah", "teamName": "Jazz", "score": 0},
+                },
+            ],
+        }
+    }
+
+
+def test_extract_nba_stats_live_states_normalizes_team_names_and_scores():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    live = next(s for s in states if s.game_id == 22500123)
+    assert live.source == "nba_stats"
+    assert live.home_team == "Miami Heat"
+    assert live.away_team == "Boston Celtics"
+    assert live.home_score == 91
+    assert live.away_score == 88
+    assert live.period == 3
+    assert live.status == "in_progress"
+
+
+def test_extract_nba_stats_live_states_scheduled_game_has_start_time_no_score_yet():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    scheduled = next(s for s in states if s.game_id == 22500124)
+    assert scheduled.status == "scheduled"
+    assert scheduled.scheduled_start.isoformat() == "2026-09-07T00:30:00+00:00"
+    assert scheduled.home_score == 0
+
+
+def test_extract_nba_stats_live_states_final_game():
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    final = next(s for s in states if s.game_id == 22500125)
+    assert final.status == "final"
+    assert final.home_score == 118
+    assert final.away_score == 109
+
+
+def test_extract_nba_stats_live_states_postponed_regardless_of_game_status_code():
+    """gameStatus=1 alone would normally mean "scheduled" -- the postponement
+    keyword in gameStatusText overrides that, matching the substring-based
+    postponed/cancelled/suspended/delayed detection this codebase already
+    uses in `web/lib/live-status.ts`'s retiring `getStatusPresentation`.
+    """
+    states = extract_nba_stats_live_states(_nba_stats_scoreboard())
+
+    postponed = next(s for s in states if s.game_id == 22500126)
+    assert postponed.status == "postponed"
+
+
+def test_extract_nba_stats_live_states_empty_games():
+    assert extract_nba_stats_live_states({"scoreboard": {"games": []}}) == []
+
+
+# --- Team-name extraction and game_id matching tests -------------------------
+
+
+def test_extract_balldontlie_team_names():
+    page = {
+        "data": [
+            {
+                "id": 15908,
+                "home_team": {"full_name": "Miami Heat"},
+                "visitor_team": {"full_name": "Boston Celtics"},
+            }
+        ]
+    }
+
+    assert extract_balldontlie_team_names(page) == {
+        15908: {"Miami Heat", "Boston Celtics"}
+    }
+
+
+def test_extract_balldontlie_team_names_missing_team_data_is_skipped():
+    assert extract_balldontlie_team_names({"data": [{"id": 1}]}) == {1: set()}
+
+
+def test_extract_public_feed_team_names():
+    scoreboard = {
+        "events": [
+            {
+                "id": "401584793",
+                "competitions": [
+                    {
+                        "competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Miami Heat"}},
+                            {"homeAway": "away", "team": {"displayName": "Boston Celtics"}},
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    assert extract_public_feed_team_names(scoreboard) == {
+        401584793: {"Miami Heat", "Boston Celtics"}
+    }
+
+
+def test_match_game_ids_by_team_overlap_matches_on_shared_team_name():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}, 22500124: {"LA Lakers", "Denver Nuggets"}}
+    other = {15908: {"Miami Heat", "Boston Celtics"}}
+
+    assert match_game_ids_by_team_overlap(canonical, other) == {15908: 22500123}
+
+
+def test_match_game_ids_by_team_overlap_no_overlap_is_unmatched():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}}
+    other = {99: {"Some Other Team", "Another Team"}}
+
+    assert match_game_ids_by_team_overlap(canonical, other) == {}
+
+
+def test_match_game_ids_by_team_overlap_each_canonical_claimed_at_most_once():
+    canonical = {22500123: {"Miami Heat", "Boston Celtics"}}
+    other = {1: {"Miami Heat"}, 2: {"Miami Heat"}}
+
+    matches = match_game_ids_by_team_overlap(canonical, other)
+    assert len(matches) == 1
+    assert set(matches.values()) == {22500123}
+
+
+def test_remap_game_ids_rewrites_matched_ids_leaves_unmatched_alone():
+    states = [
+        LiveGameState(game_id=15908, source="balldontlie", status="in_progress"),
+        LiveGameState(game_id=999, source="balldontlie", status="in_progress"),
+    ]
+
+    remap_game_ids(states, {15908: 22500123})
+
+    assert states[0].game_id == 22500123
+    assert states[1].game_id == 999
+
+
 # --- Flow orchestration tests (fakes only, no DB/network) --------------------
 
 
@@ -183,6 +366,16 @@ class FakeScoreboardSource:
 
     def get_scoreboard(self, date: str) -> dict:
         self.requested_dates.append(date)
+        return self._scoreboard
+
+
+class FakeNbaLiveScoreboardClient:
+    def __init__(self, scoreboard: dict | None = None) -> None:
+        self._scoreboard = scoreboard or {"scoreboard": {"games": []}}
+        self.call_count = 0
+
+    def get_scoreboard(self) -> dict:
+        self.call_count += 1
         return self._scoreboard
 
 
@@ -237,13 +430,15 @@ def test_live_game_flow_writes_raw_pull_for_each_source():
         raw_pull_sink=raw_pull_sink,
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=quality_metric_sink,
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
-    assert len(raw_pull_sink.written) == 2
+    assert len(raw_pull_sink.written) == 3
     sources = {rp.source for rp in raw_pull_sink.written}
-    assert sources == {"balldontlie", "public_feed"}
+    assert sources == {"balldontlie", "public_feed", "nba_stats"}
 
     bdl_pull = next(rp for rp in raw_pull_sink.written if rp.source == "balldontlie")
     assert bdl_pull.endpoint == "games"
@@ -253,8 +448,11 @@ def test_live_game_flow_writes_raw_pull_for_each_source():
     assert pf_pull.endpoint == "scoreboard"
     assert pf_pull.payload == _public_feed_scoreboard()
 
+    ns_pull = next(rp for rp in raw_pull_sink.written if rp.source == "nba_stats")
+    assert ns_pull.endpoint == "scoreboard"
 
-def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
+
+def test_live_game_flow_extracts_live_game_state_rows_from_all_sources():
     live_game_state_sink = FakeRowSink()
 
     live_game_flow(
@@ -262,8 +460,10 @@ def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert len(live_game_state_sink.written) == 2
@@ -271,6 +471,136 @@ def test_live_game_flow_extracts_live_game_state_rows_from_both_sources():
     assert sources == {"balldontlie", "public_feed"}
     for row in live_game_state_sink.written:
         assert isinstance(row, LiveGameState)
+
+
+def test_live_game_flow_writes_nba_stats_rows_when_present():
+    live_game_state_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=live_game_state_sink,
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
+        balldontlie_client=FakeBallDontLieClient([]),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=FakeNbaLiveScoreboardClient(_nba_stats_scoreboard()),
+    )
+
+    sources = {row.source for row in live_game_state_sink.written}
+    assert sources == {"nba_stats"}
+    assert len(live_game_state_sink.written) == 4  # every game in _nba_stats_scoreboard()
+
+
+def _matching_balldontlie_client() -> FakeBallDontLieClient:
+    return FakeBallDontLieClient(
+        [
+            {
+                "data": [
+                    {
+                        "id": 15908,
+                        "status": "3rd Qtr",
+                        "home_team_score": 89,
+                        "visitor_team_score": 88,
+                        "home_team": {"full_name": "Miami Heat"},
+                        "visitor_team": {"full_name": "Boston Celtics"},
+                    }
+                ],
+                "meta": {"next_cursor": None},
+            }
+        ]
+    )
+
+
+def _matching_nba_stats_client(game_date: str) -> FakeNbaLiveScoreboardClient:
+    return FakeNbaLiveScoreboardClient(
+        {
+            "scoreboard": {
+                "gameDate": game_date,
+                "games": [
+                    {
+                        "gameId": "0022500123",
+                        "gameStatus": 2,
+                        "gameStatusText": "Qtr 3 4:12",
+                        "gameTimeUTC": "2026-09-06T23:30:00Z",
+                        "period": 3,
+                        "gameClock": "PT04M12.00S",
+                        "homeTeam": {"teamCity": "Miami", "teamName": "Heat", "score": 91},
+                        "awayTeam": {"teamCity": "Boston", "teamName": "Celtics", "score": 88},
+                    }
+                ],
+            }
+        }
+    )
+
+
+def test_live_game_flow_matches_and_writes_conflicts_across_sources():
+    conflict_sink = FakeRowSink()
+    live_game_state_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=live_game_state_sink,
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=conflict_sink,
+        balldontlie_client=_matching_balldontlie_client(),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=_matching_nba_stats_client(game_date="2026-09-01"),
+    )
+
+    assert len(conflict_sink.written) == 1
+    conflict = conflict_sink.written[0]
+    assert conflict.game_id == "22500123"
+    assert conflict.field_name == "home_score"
+    assert conflict.primary_source == "nba_stats"
+    assert conflict.secondary_source == "balldontlie"
+
+    # Regression guard: `remap_game_ids` mutates state objects in place, so a
+    # fake sink's stored references would still look "correct" even if the
+    # write loop ran BEFORE remapping (the mutation would just happen to the
+    # already-stored object afterward). Asserting on the actually-written
+    # game_id, not just on reconciliation output, is what actually pins the
+    # ordering: remap-then-write, not write-then-remap.
+    balldontlie_row = next(
+        row for row in live_game_state_sink.written if row.source == "balldontlie"
+    )
+    assert balldontlie_row.game_id == 22500123  # remapped onto nba_stats's canonical id
+    assert balldontlie_row.game_id != 15908  # not balldontlie's own native id
+
+
+def test_live_game_flow_skips_matching_when_date_does_not_match_nba_stats_game_date():
+    """nba_stats's live scoreboard is always "today" (ET) by construction --
+    it has no `date` parameter. If this flow is invoked with some other
+    `date` (e.g. a backfill-style historical poll), team-name-overlap
+    matching must NOT run: a same-team game from a different real date
+    could otherwise be silently remapped onto an unrelated game in today's
+    nba_stats slate. balldontlie's Miami Heat/Boston Celtics game here
+    WOULD match nba_stats's Miami Heat/Boston Celtics game if matching ran
+    -- proving the skip is deliberate, not incidental to a lack of overlap.
+    """
+    conflict_sink = FakeRowSink()
+    live_game_state_sink = FakeRowSink()
+
+    live_game_flow(
+        date="2026-09-01",
+        raw_pull_sink=FakeRawPullSink(),
+        live_game_state_sink=live_game_state_sink,
+        quality_metric_sink=FakeRowSink(),
+        conflict_sink=conflict_sink,
+        balldontlie_client=_matching_balldontlie_client(),
+        public_feed_client=FakeScoreboardSource({"events": []}),
+        # nba_stats's own gameDate ("2026-09-06") does not match the `date`
+        # this flow was invoked with ("2026-09-01").
+        nba_stats_client=_matching_nba_stats_client(game_date="2026-09-06"),
+    )
+
+    balldontlie_row = next(
+        row for row in live_game_state_sink.written if row.source == "balldontlie"
+    )
+    assert balldontlie_row.game_id == 15908  # kept its own native id, not remapped
+
+    assert conflict_sink.written == []  # no cross-date reconciliation either
 
 
 def test_live_game_flow_writes_poll_lag_metric_exactly_once():
@@ -281,8 +611,10 @@ def test_live_game_flow_writes_poll_lag_metric_exactly_once():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=FakeRowSink(),
         quality_metric_sink=quality_metric_sink,
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(_balldontlie_pages()),
         public_feed_client=FakeScoreboardSource(_public_feed_scoreboard()),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert len(quality_metric_sink.written) == 1
@@ -292,7 +624,7 @@ def test_live_game_flow_writes_poll_lag_metric_exactly_once():
     assert metric.metric_value >= 0
     assert metric.metadata_json == {"date": "2026-09-01"}
 
-    assert result["raw_pulls_written"] == 2
+    assert result["raw_pulls_written"] == 3
     assert result["live_game_states_written"] == 2
 
 
@@ -305,8 +637,10 @@ def test_live_game_flow_requests_both_sources_with_the_given_date():
         raw_pull_sink=FakeRawPullSink(),
         live_game_state_sink=FakeRowSink(),
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=balldontlie_client,
         public_feed_client=public_feed_client,
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     assert balldontlie_client.requested_dates == ["2026-09-01"]
@@ -332,13 +666,102 @@ def test_live_game_flow_handles_multiple_balldontlie_pages():
         raw_pull_sink=raw_pull_sink,
         live_game_state_sink=live_game_state_sink,
         quality_metric_sink=FakeRowSink(),
+        conflict_sink=FakeRowSink(),
         balldontlie_client=FakeBallDontLieClient(pages),
         public_feed_client=FakeScoreboardSource({"events": []}),
+        nba_stats_client=FakeNbaLiveScoreboardClient(),
     )
 
     bdl_pulls = [rp for rp in raw_pull_sink.written if rp.source == "balldontlie"]
     assert len(bdl_pulls) == 2
     bdl_states = [row for row in live_game_state_sink.written if row.source == "balldontlie"]
     assert len(bdl_states) == 2
-    assert result["raw_pulls_written"] == 3  # 2 balldontlie pages + 1 public_feed pull
+    assert result["raw_pulls_written"] == 4  # 2 balldontlie pages + 1 public_feed + 1 nba_stats
     assert result["live_game_states_written"] == 2
+
+
+# --- Score reconciliation tests -----------------------------------------------
+
+
+def test_reconcile_live_states_flags_disagreeing_scores():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=89, away_score=88, status="3rd Qtr")
+    ]
+
+    conflicts = reconcile_live_states(nba_stats_states, balldontlie_states, [])
+
+    assert len(conflicts) == 1
+    conflict = conflicts[0]
+    assert isinstance(conflict, SourceConflict)
+    assert conflict.game_id == "1"
+    assert conflict.field_name == "home_score"
+    assert conflict.primary_source == "nba_stats"
+    assert conflict.primary_value == "91"
+    assert conflict.secondary_source == "balldontlie"
+    assert conflict.secondary_value == "89"
+
+
+def test_reconcile_live_states_agreeing_scores_yield_no_conflicts():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=91, away_score=88, status="3rd Qtr")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []
+
+
+def test_reconcile_live_states_never_compares_status_field():
+    """status vocabularies differ by source design (nba_api's normalized
+    tokens vs. balldontlie's raw strings vs. ESPN's STATUS_* constants) —
+    comparing it would flag a "conflict" every single poll for reasons
+    that have nothing to do with real disagreement.
+    """
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=91, away_score=88, status="3rd Qtr")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []
+
+
+def test_reconcile_live_states_checks_both_secondary_sources_independently():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=89, away_score=88, status="3rd Qtr")
+    ]
+    public_feed_states = [
+        LiveGameState(game_id=1, source="public_feed", home_score=91, away_score=90, status="STATUS_IN_PROGRESS")
+    ]
+
+    conflicts = reconcile_live_states(nba_stats_states, balldontlie_states, public_feed_states)
+
+    fields_by_secondary = {c.secondary_source: c.field_name for c in conflicts}
+    assert fields_by_secondary == {"balldontlie": "home_score", "public_feed": "away_score"}
+
+
+def test_reconcile_live_states_skips_games_with_no_secondary_row():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=91, away_score=88, status="in_progress")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, [], []) == []
+
+
+def test_reconcile_live_states_skips_games_with_no_scores_yet():
+    nba_stats_states = [
+        LiveGameState(game_id=1, source="nba_stats", home_score=None, away_score=None, status="scheduled")
+    ]
+    balldontlie_states = [
+        LiveGameState(game_id=1, source="balldontlie", home_score=None, away_score=None, status="Scheduled")
+    ]
+
+    assert reconcile_live_states(nba_stats_states, balldontlie_states, []) == []

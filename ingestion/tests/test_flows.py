@@ -15,6 +15,11 @@ class _FakeScoreboardSource:
         return {"events": []}
 
 
+class _FakeLiveScoreboardSource:
+    def get_scoreboard(self) -> dict:
+        return {"scoreboard": {"games": []}}
+
+
 class _FakeSink:
     def write(self, raw_pull: RawPull) -> None:
         pass
@@ -55,7 +60,9 @@ def test_live_game_flow_runs():
         raw_pull_sink=_FakeSink(),
         live_game_state_sink=_FakeRowSink(),
         quality_metric_sink=_FakeRowSink(),
+        conflict_sink=_FakeRowSink(),
         balldontlie_client=_FakeClient(),
         public_feed_client=_FakeScoreboardSource(),
+        nba_stats_client=_FakeLiveScoreboardSource(),
     )
-    assert result == {"raw_pulls_written": 1, "live_game_states_written": 0}
+    assert result == {"raw_pulls_written": 2, "live_game_states_written": 0}
