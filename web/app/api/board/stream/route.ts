@@ -11,6 +11,12 @@
 // than buffer) once deployed to Vercel -- see docs/prd.md §04/§13:
 export const runtime = "nodejs";
 
+// api/board/stream's own generator now self-closes after ~20s (see
+// board.py's MAX_STREAM_DURATION_SECONDS) well before Vercel would force-kill
+// this function -- this ceiling exists so that stays true even if the
+// upstream fetch itself hangs, not because we expect to hit it.
+export const maxDuration = 60;
+
 const BASE_URL = process.env.FASTAPI_BASE_URL ?? "http://localhost:8000";
 const API_KEY = process.env.API_SERVICE_KEY ?? "";
 

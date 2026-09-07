@@ -34,12 +34,14 @@ API_KEY_HEADER = "X-API-Key"
 API_KEY_ENV_VAR = "API_SERVICE_KEY"
 
 # How many SSE `data:` events to read off `/board/stream` before
-# disconnecting. `/board/stream` is a long-lived stream (up to
-# `MAX_STREAM_DURATION_SECONDS` = 4h server-side) — fully simulating that
-# per simulated user would mean each Locust "user" pins one connection open
-# for hours, which defeats the point of a load test that's supposed to run
-# in a few minutes and measure p95 latency across many *requests*. Instead
-# this treats a `/board/stream` visit as
+# disconnecting. `/board/stream` now self-closes after
+# `MAX_STREAM_DURATION_SECONDS` = 20s server-side (a browser tab reconnects
+# every ~20s via EventSource's native retry, rather than holding one
+# connection open indefinitely -- see board.py for why). Simulating a full
+# watch session per Locust "user" would mean modeling that reconnect loop
+# for the test's whole duration, which defeats the point of a load test
+# that's supposed to run in a few minutes and measure p95 latency across
+# many *requests*. Instead this treats a `/board/stream` visit as
 # "connect, read a handful of events, disconnect" — enough to exercise the
 # connection-acceptance and first-few-poll-iterations path (the part that
 # actually touches the DB and the pool this PR tunes) without the test

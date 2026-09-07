@@ -377,10 +377,18 @@ def get_board(
 
 
 DEFAULT_STREAM_POLL_INTERVAL_SECONDS = 5.0
-# Same rationale as the retired `live.py`'s MAX_STREAM_DURATION_SECONDS —
-# bounds worst-case per-connection resource usage, not a real game-length
-# expectation.
-MAX_STREAM_DURATION_SECONDS = 4 * 60 * 60
+# Inherited `live.py`'s original 4-hour value until production logs showed
+# Vercel force-killing this function well before that (observed: 30s and
+# 300s "Task timed out" errors on /board/stream, never a clean close) —
+# a 4-hour in-process loop assumes a long-running server, which a Vercel
+# serverless function is not. 20s (4 polls at the default interval) closes
+# the stream on our own terms, safely under the tightest observed kill,
+# so `StreamingResponse` ends cleanly instead of being cut off mid-write.
+# The browser's `EventSource` auto-reconnects on any clean stream close
+# (default ~3s retry, no code needed), so this trades one long connection
+# for frequent short ones rather than losing live updates. See vercel.json's
+# `maxDuration` for the hard ceiling this stays well under.
+MAX_STREAM_DURATION_SECONDS = 20.0
 
 
 async def board_stream_generator(
