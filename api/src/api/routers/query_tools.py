@@ -1,8 +1,9 @@
 """LLM-callable query tools for the Statmuse-style NL stats search feature
 (SPEC-nl-stats-search, `query-tools.md`) -- `get_player_stats`,
-`get_team_games`, `get_leaders`, `get_game_result`.
+`get_team_games`, `get_leaders`, `get_game_result`, `get_player_stat_aggregate`,
+`get_player_streak`.
 
-These four read-only GET endpoints are the *entire* surface the BFF's LLM
+These six read-only GET endpoints are the *entire* surface the BFF's LLM
 loop is allowed to call against Gold Postgres: no raw/arbitrary SQL tool
 exists anywhere, and every route here is SELECT-only against the
 `api_reader`-scoped engine (`api.core.db.get_engine`), same as
@@ -823,7 +824,16 @@ class SQLAlchemyPlayerStatAggregateToolReader:
             value_stmt = _scoped(select(agg_fn(stat_col)))
             with self._engine.connect() as conn:
                 raw_value = conn.execute(value_stmt).scalar()
-            value = float(raw_value) if operation == "avg" else int(raw_value)
+            # A non-empty range (game_count_considered > 0) can still sum/avg
+            # to SQL NULL if every game in range has a NULL stat value (e.g.
+            # a run of DNP rows) -- func.sum/func.avg over an all-NULL column
+            # return NULL, not 0. Treated as a real `0`, not a crash or a
+            # no_match: same "real zero, not a gap" principle this tool
+            # already applies to threshold-counts.
+            if raw_value is None:
+                value = 0
+            else:
+                value = float(raw_value) if operation == "avg" else int(raw_value)
             return {
                 "game_count_considered": game_count_considered,
                 "value": value,
@@ -842,7 +852,14 @@ class SQLAlchemyPlayerStatAggregateToolReader:
         )
 
         if operation in ("max", "min"):
-            order = stat_col.desc() if operation == "max" else stat_col.asc()
+            # nulls_last() matches SQLAlchemyLeadersToolReader's own ordering
+            # convention (see its leaders_stmt above): without it, Postgres's
+            # default NULLS-FIRST-on-DESC behavior would let a NULL stat
+            # value (a real possibility for a DNP row) sort first and win
+            # `max`, returning value: None and citing the wrong game.
+            order = (
+                stat_col.desc().nulls_last() if operation == "max" else stat_col.asc().nulls_last()
+            )
             extreme_stmt = (
                 _scoped(row_columns).order_by(order, games.c.game_date.desc()).limit(1)
             )
@@ -1069,9 +1086,17 @@ class SQLAlchemyPlayerStreakToolReader:
 
         numbered = select(
             base_cte,
-            func.row_number().over(order_by=base_cte.c.game_date).label("rn_all"),
+            # Secondary sort key on game_id makes the two window functions'
+            # ordering deterministic when two rows share the same
+            # game_date -- otherwise rn_all and rn_hit could break ties
+            # inconsistently with each other, corrupting the grp
+            # computation below (same deterministic-ordering discipline
+            # get_leaders applies to its own tie-break).
             func.row_number()
-            .over(partition_by=base_cte.c.hit, order_by=base_cte.c.game_date)
+            .over(order_by=[base_cte.c.game_date, base_cte.c.game_id])
+            .label("rn_all"),
+            func.row_number()
+            .over(partition_by=base_cte.c.hit, order_by=[base_cte.c.game_date, base_cte.c.game_id])
             .label("rn_hit"),
         ).cte("numbered")
 
@@ -1082,7 +1107,11 @@ class SQLAlchemyPlayerStreakToolReader:
         with self._engine.connect() as conn:
             overall = conn.execute(
                 select(
-                    func.count().label("game_count"),
+                    # count(distinct game_id), not a bare count() -- matches
+                    # SQLAlchemyPlayerStatAggregateToolReader's own
+                    # game_count_considered convention (consistency between
+                    # the two aggregate-style tools).
+                    func.count(func.distinct(base_cte.c.game_id)).label("game_count"),
                     func.min(base_cte.c.game_date).label("min_date"),
                     func.max(base_cte.c.game_date).label("max_date"),
                 ).select_from(base_cte)
@@ -1228,6 +1257,7 @@ def get_player_streak(
             "streak_date_range": result["streak_date_range"],
             "is_active": result["is_active"],
             "games": result["games"],
+            "game_count_considered": result["game_count_considered"],
             "date_range": result["date_range"],
         }
     )

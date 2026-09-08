@@ -965,8 +965,19 @@ class FakePlayerStatAggregateToolReader:
             return out
 
         if operation in ("sum", "avg"):
-            total = sum(row[stat_column] for row in matching)
-            value = total / game_count_considered if operation == "avg" else total
+            # SQL's SUM/AVG skip NULL rows entirely (AVG divides by the
+            # count of *non-null* values, not the row count) and only
+            # produce NULL themselves when every row is NULL -- Python's
+            # sum() would raise TypeError on a mix of int/None, so filter
+            # None values out here the same way SQL implicitly does, and
+            # mirror the route's own all-null-is-a-real-0 guard (Important #3)
+            # when nothing is left to aggregate.
+            non_null_values = [row[stat_column] for row in matching if row[stat_column] is not None]
+            if not non_null_values:
+                value = 0
+            else:
+                total = sum(non_null_values)
+                value = total / len(non_null_values) if operation == "avg" else total
             return {
                 "game_count_considered": game_count_considered,
                 "value": value,
@@ -976,12 +987,24 @@ class FakePlayerStatAggregateToolReader:
             }
 
         if operation in ("max", "min"):
-            best_value = (
-                max(row[stat_column] for row in matching)
-                if operation == "max"
-                else min(row[stat_column] for row in matching)
-            )
-            tied = [row for row in matching if row[stat_column] == best_value]
+            # Filter out None stat values before computing the extreme --
+            # Python's max()/min() raise/misbehave on a mix of int/None, and
+            # a NULL stat value (a real possibility for a DNP row) must
+            # never win over a real value. Mirrors the real query's
+            # `.nulls_last()` fix (Critical #2): NULL loses to any real
+            # value and only "wins" (as an unavoidable None) if every
+            # candidate row is NULL.
+            non_null_rows = [row for row in matching if row[stat_column] is not None]
+            if non_null_rows:
+                best_value = (
+                    max(row[stat_column] for row in non_null_rows)
+                    if operation == "max"
+                    else min(row[stat_column] for row in non_null_rows)
+                )
+                tied = [row for row in non_null_rows if row[stat_column] == best_value]
+            else:
+                best_value = None
+                tied = matching
             tied.sort(key=lambda row: row["game_date"], reverse=True)  # most recent wins ties
             return {
                 "game_count_considered": game_count_considered,
@@ -1125,6 +1148,118 @@ def test_get_player_stat_aggregate_max_tie_break_most_recent(client):
     data = resp.json()["data"]
     assert data["value"] == 10
     assert data["extreme_game"]["game_id"] == 6
+
+
+def test_get_player_stat_aggregate_max_ignores_null_stat_value(client):
+    # Critical #2: a NULL rebounds value (a real possibility for a DNP row)
+    # must never win `max` over a real value. Postgres's default
+    # NULLS-FIRST-on-DESC ordering would otherwise put this NULL row first
+    # and return value: None with the wrong extreme_game -- the route's
+    # `.nulls_last()` fix (and this fake reader's matching None-filtering
+    # logic) must still surface the real high value (10) and its game.
+    null_row = {
+        "stat_id": 7,
+        "game_id": 7,
+        "player_id": 11,
+        "player_first_name": "LeBron",
+        "player_last_name": "James",
+        "team": "Lakers",
+        "points": 0,
+        "rebounds": None,
+        "assists": None,
+        "steals": None,
+        "blocks": None,
+        "turnovers": None,
+        "minutes_played": None,
+    }
+    games_by_id = dict(GAMES_BY_ID)
+    games_by_id[7] = {
+        "game_id": 7,
+        "game_date": date(2024, 1, 11),  # most recent -- would win a naive DESC sort
+        "season": 2023,
+        "status": "Final",
+        "postseason": False,
+        "home_team": "Los Angeles Lakers",
+        "away_team": "Denver Nuggets",
+        "home_score": 110,
+        "away_score": 104,
+        "source_pulled_at": "2024-01-11T23:00:00",
+    }
+    reader = FakePlayerStatAggregateToolReader(
+        player_rows=FAKE_PLAYER_STATS + [null_row], games_by_id=games_by_id
+    )
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={"player_name": "LeBron James", "stat": "rebounds", "operation": "max"}
+        ),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    # LeBron's real (non-null) rebounds values in the fixture are 8 and 10.
+    assert data["value"] == 10
+    assert data["extreme_game"]["game_id"] == 2
+    assert data["game_count_considered"] == 3
+
+
+def test_get_player_stat_aggregate_all_null_sum_and_avg_is_zero(client):
+    # Important #3: every game in a non-empty range has a NULL stat value
+    # (all DNP rows) -- SQL's SUM/AVG both return NULL in that case, which
+    # must be surfaced as a real `0`, not an unhandled 500 from int(None)/
+    # float(None). game_count_considered > 0 the whole time (real games
+    # exist), so this must be "ok", never "no_match".
+    all_null_rows = [
+        {
+            "stat_id": 50 + i,
+            "game_id": 50 + i,
+            "player_id": 99,
+            "player_first_name": "Null",
+            "player_last_name": "Stats",
+            "team": "Lakers",
+            "points": None,
+            "rebounds": 5,
+            "assists": 5,
+            "steals": 1,
+            "blocks": 0,
+            "turnovers": 1,
+            "minutes_played": None,
+        }
+        for i in range(2)
+    ]
+    games_by_id = {
+        50 + i: {
+            "game_id": 50 + i,
+            "game_date": date(2024, 2, 1 + i),
+            "season": 2023,
+            "status": "Final",
+            "postseason": False,
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "home_score": 110,
+            "away_score": 104,
+            "source_pulled_at": "2024-02-01T23:00:00",
+        }
+        for i in range(2)
+    }
+    reader = FakePlayerStatAggregateToolReader(player_rows=all_null_rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    for operation in ("sum", "avg"):
+        resp = client.get(
+            "/tools/player-stat-aggregate",
+            **_auth(
+                params={"player_name": "Null Stats", "stat": "points", "operation": operation}
+            ),
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["data"]["value"] == 0
+        assert body["data"]["game_count_considered"] == 2
 
 
 def test_get_player_stat_aggregate_matching_games_truncated_flag(client):
@@ -1441,6 +1576,11 @@ def test_get_player_streak_active_streak_includes_most_recent_game(client):
     data = resp.json()["data"]
     assert data["longest_streak"] == 3
     assert data["is_active"] is True
+    # Important #5: the route must surface game_count_considered so
+    # "longest_streak: 0" (or any streak length) can be told apart from "0
+    # out of 3 games" vs. "0 out of 500 games" -- same disclosure principle
+    # get_player_stat_aggregate already follows.
+    assert data["game_count_considered"] == 3
 
 
 def test_get_player_streak_equal_length_ties_resolve_to_more_recent(client):
@@ -1510,6 +1650,9 @@ def test_get_player_streak_zero_result_is_ok_not_no_match(client):
     assert body["status"] == "ok"
     assert body["data"]["longest_streak"] == 0
     assert body["data"]["is_active"] is False
+    # Important #5: real games exist (2) even though longest_streak is 0 --
+    # game_count_considered must disclose that, not be omitted.
+    assert body["data"]["game_count_considered"] == 2
 
 
 def test_get_player_streak_no_games_in_range_is_no_match(client):

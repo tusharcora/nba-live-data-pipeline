@@ -233,9 +233,10 @@ function formatDateRange(start: string | null, end: string | null): string | nul
 // Every tool's real shape (per api/tests/test_query_tools.py's fixtures) is
 // handled explicitly rather than guessed at generically, since each one
 // nests dates differently:
-//   get_player_stats / get_team_games -> data.games[].game_date (min..max)
-//   get_leaders                       -> data.date_range.{start_date,end_date} (already a range)
-//   get_game_result                   -> data.game.game_date (a single date)
+//   get_player_stats / get_team_games                     -> data.games[].game_date (min..max)
+//   get_leaders / get_player_stat_aggregate / get_player_streak
+//                                                           -> data.date_range.{start_date,end_date} (already a range)
+//   get_game_result                                        -> data.game.game_date (a single date)
 function deriveDateRange(name: ToolName, data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const payload = data as Record<string, unknown>;

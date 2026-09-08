@@ -166,6 +166,37 @@ describe("readSearchStream", () => {
     });
   });
 
+  it("parses a stat_aggregate resultData from a done payload, surviving the live client path (Critical #1 regression)", async () => {
+    // Regression coverage for VALID_RESULT_TYPES silently dropping the two
+    // newest tool result types -- get_player_stat_aggregate's own
+    // "stat_aggregate" type must round-trip through parseDonePayload just
+    // like the original four, not fall through to `resultData: null`.
+    const resultData: SearchResultData = {
+      type: "stat_aggregate",
+      payload: {
+        playerName: "LeBron James",
+        stat: "points",
+        operation: "sum",
+        threshold: null,
+        value: 812,
+        extremeGame: null,
+        matchingGames: null,
+        matchingGamesTruncated: false,
+        gameCountConsidered: 30,
+      },
+    };
+    const response = responseFromChunks([
+      `event: done\ndata: ${JSON.stringify({ citation: null, noData: false, candidates: null, resultData })}\n\n`,
+    ]);
+
+    const events = await collect(response);
+
+    expect(events[events.length - 1]).toEqual({
+      kind: "done",
+      payload: { citation: null, noData: false, candidates: null, resultData },
+    });
+  });
+
   it("drops a malformed resultData (wrong type discriminant) rather than failing the whole done parse", async () => {
     const response = responseFromChunks([
       `event: done\ndata: ${JSON.stringify({
