@@ -37,7 +37,7 @@
 
 import { fetchFromApi } from "@/lib/fastapi-client";
 import type { ToolDefinition } from "@/lib/llm/types";
-import type { SearchResultData, LeaderRow } from "@/lib/search-result-types";
+import type { SearchResultData, LeaderRow, StatAggregateResultData } from "@/lib/search-result-types";
 import type { GameRow, PlayerStatRow } from "@/lib/team-names";
 
 export interface ToolResultEnvelope {
@@ -81,13 +81,21 @@ function appendDateParams(params: URLSearchParams, input: DateAwareInput): void 
   }
 }
 
-type ToolName = "get_player_stats" | "get_team_games" | "get_leaders" | "get_game_result";
+type ToolName =
+  | "get_player_stats"
+  | "get_team_games"
+  | "get_leaders"
+  | "get_game_result"
+  | "get_player_stat_aggregate"
+  | "get_player_streak";
 
 const TOOL_PATHS: Record<ToolName, string> = {
   get_player_stats: "/tools/player-stats",
   get_team_games: "/tools/team-games",
   get_leaders: "/tools/leaders",
   get_game_result: "/tools/game-result",
+  get_player_stat_aggregate: "/tools/player-stat-aggregate",
+  get_player_streak: "/tools/player-streak",
 };
 
 // The Gold table each tool's "ok" data is grounded in — the real envelope
@@ -95,11 +103,14 @@ const TOOL_PATHS: Record<ToolName, string> = {
 // table each tool call ultimately reads (api/src/api/routers/query_tools.py's
 // module docstring: get_player_stats/get_leaders read `player_game_stats`,
 // get_team_games/get_game_result read `games`).
+// Both new tools read player_game_stats, same as get_player_stats/get_leaders.
 const TOOL_TABLE_MAP: Record<ToolName, string> = {
   get_player_stats: "player_game_stats",
   get_team_games: "games",
   get_leaders: "player_game_stats",
   get_game_result: "games",
+  get_player_stat_aggregate: "player_game_stats",
+  get_player_streak: "player_game_stats",
 };
 
 function buildQuery(name: ToolName, input: Record<string, unknown>): string {
@@ -128,6 +139,21 @@ function buildQuery(name: ToolName, input: Record<string, unknown>): string {
       if (typeof input.date === "string") params.set("date", input.date);
       break;
     }
+    case "get_player_stat_aggregate": {
+      if (typeof input.player_name === "string") params.set("player_name", input.player_name);
+      if (typeof input.stat === "string") params.set("stat", input.stat);
+      if (typeof input.operation === "string") params.set("operation", input.operation);
+      if (typeof input.threshold === "number") params.set("threshold", String(input.threshold));
+      appendDateParams(params, input);
+      break;
+    }
+    case "get_player_streak": {
+      if (typeof input.player_name === "string") params.set("player_name", input.player_name);
+      if (typeof input.stat === "string") params.set("stat", input.stat);
+      if (typeof input.threshold === "number") params.set("threshold", String(input.threshold));
+      appendDateParams(params, input);
+      break;
+    }
   }
 
   const query = params.toString();
@@ -140,6 +166,10 @@ function isToolName(name: string): name is ToolName {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function hasDateRange(input: Record<string, unknown>): boolean {
@@ -167,6 +197,18 @@ function hasRequiredFields(name: ToolName, input: Record<string, unknown>): bool
         isNonEmptyString(input.team_a) &&
         isNonEmptyString(input.team_b) &&
         isNonEmptyString(input.date)
+      );
+    case "get_player_stat_aggregate":
+      return (
+        isNonEmptyString(input.player_name) &&
+        isNonEmptyString(input.stat) &&
+        isNonEmptyString(input.operation)
+      );
+    case "get_player_streak":
+      return (
+        isNonEmptyString(input.player_name) &&
+        isNonEmptyString(input.stat) &&
+        isFiniteNumber(input.threshold)
       );
   }
 }
@@ -198,7 +240,7 @@ function deriveDateRange(name: ToolName, data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const payload = data as Record<string, unknown>;
 
-  if (name === "get_leaders") {
+  if (name === "get_leaders" || name === "get_player_stat_aggregate" || name === "get_player_streak") {
     const range = payload.date_range;
     if (range && typeof range === "object") {
       const { start_date, end_date } = range as { start_date?: unknown; end_date?: unknown };
@@ -313,6 +355,41 @@ function deriveResultData(name: ToolName, data: unknown): SearchResultData | nul
       return {
         type: "game_result",
         payload: { game: gameRow, boxScore: enrichedBoxScore },
+      };
+    }
+    case "get_player_stat_aggregate": {
+      const value = payload.value;
+      if (typeof value !== "number") return null;
+      return {
+        type: "stat_aggregate",
+        payload: {
+          playerName: String(payload.player_name ?? ""),
+          stat: String(payload.stat ?? ""),
+          operation: payload.operation as StatAggregateResultData["operation"],
+          threshold: typeof payload.threshold === "number" ? payload.threshold : null,
+          value,
+          extremeGame: (payload.extreme_game as PlayerStatRow | null) ?? null,
+          matchingGames: (payload.matching_games as PlayerStatRow[] | null) ?? null,
+          matchingGamesTruncated: payload.matching_games_truncated === true,
+          gameCountConsidered:
+            typeof payload.game_count_considered === "number" ? payload.game_count_considered : 0,
+        },
+      };
+    }
+    case "get_player_streak": {
+      const games = payload.games;
+      if (!Array.isArray(games)) return null;
+      return {
+        type: "player_streak",
+        payload: {
+          playerName: String(payload.player_name ?? ""),
+          stat: String(payload.stat ?? ""),
+          threshold: typeof payload.threshold === "number" ? payload.threshold : 0,
+          longestStreak:
+            typeof payload.longest_streak === "number" ? payload.longest_streak : 0,
+          isActive: payload.is_active === true,
+          games: games as PlayerStatRow[],
+        },
       };
     }
   }
@@ -454,6 +531,54 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         date: { type: "string", description: "The game date (YYYY-MM-DD)." },
       },
       required: ["team_a", "team_b", "date"],
+    },
+  },
+  {
+    name: "get_player_stat_aggregate",
+    description:
+      "Compute a single player's threshold-count, sum, average, max, or min for one stat over a date range (default: full ingested history if omitted). Use for questions like \"how many 30-point games does X have\" (operation: count_over_threshold, threshold: 30) or \"X's scoring average\" (operation: avg). threshold is required for count_over_threshold/count_under_threshold and must be omitted for sum/avg/max/min. For a comparison between two subjects, call this tool once per subject with the same stat/operation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        player_name: { type: "string", description: "The player's full or partial name." },
+        stat: {
+          type: "string",
+          description: "The stat to aggregate, e.g. points, rebounds, assists.",
+        },
+        operation: {
+          type: "string",
+          enum: ["count_over_threshold", "count_under_threshold", "sum", "avg", "max", "min"],
+          description: "The aggregate to compute.",
+        },
+        threshold: {
+          type: "number",
+          description: "Required for count_over_threshold/count_under_threshold; omit for sum/avg/max/min.",
+        },
+        date: { type: "string", description: "A single ISO date (YYYY-MM-DD)." },
+        date_range: dateRangeSchema,
+      },
+      required: ["player_name", "stat", "operation"],
+    },
+  },
+  {
+    name: "get_player_streak",
+    description:
+      "Find a player's longest consecutive run of games meeting a stat threshold over a date range (default: full ingested history if omitted). Use for questions like \"X's longest streak of 20+ point games.\" is_active in the result means the streak is still ongoing as of the most recent game in range.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        player_name: { type: "string", description: "The player's full or partial name." },
+        stat: {
+          type: "string",
+          description: "The stat to track, e.g. points, rebounds, assists.",
+        },
+        threshold: {
+          type: "number",
+          description: "A game counts toward the streak if stat >= threshold.",
+        },
+        date_range: dateRangeSchema,
+      },
+      required: ["player_name", "stat", "threshold"],
     },
   },
 ];
