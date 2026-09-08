@@ -7,22 +7,22 @@ posts on Instagram, that post (image + caption) should appear on the
 site's news page and also be ingested as a source the NL search feature
 (`web/lib/search-tools.ts`/`search-loop.ts`) can answer questions from.
 
-Researching Meta's official APIs first (done directly, not assumed):
+Meta's official APIs were researched first, directly, not assumed.
 Instagram Basic Display API is deprecated and only ever worked for an
-app's own authorized account; the Instagram Graph API's Business
+app's own authorized account. The Instagram Graph API's Business
 Discovery endpoint — the one feature that can query another public
-Business/Creator account without their permission — was checked directly
-against Meta's own developer docs and only returns profile-level stats
-(follower/media counts) plus, per post, a bare ID and engagement counts.
-Meta's own docs state a `GET` on that returned media ID fails with
-insufficient permissions. **There is no free, official path to another
-account's actual post content (image + caption).** Real content would
-require an unofficial scraper, an RSS-bridge, or a paid third-party
+Business/Creator account without its owner's permission — was checked
+directly against Meta's own developer docs; it only returns profile-level
+stats (follower/media counts) plus, per post, a bare ID and engagement
+counts. Meta's own docs state a `GET` on that returned media ID fails
+with insufficient permissions. **There is no free, official path to
+another account's actual post content (image + caption).** Real content
+would require an unofficial scraper, an RSS-bridge, or a paid third-party
 monitoring API (Apify, Bright Data, etc.) — a materially different, more
-fragile and more ToS-risky undertaking than anything else in this
+fragile, and more ToS-risky undertaking than anything else in this
 project.
 
-Given that, this spec covers **Phase 1 only**: a general NBA news feed
+Given that gap, this spec covers **Phase 1 only**: a general NBA news feed
 sourced from ESPN's public news API, extended with a real reporter/byline
 filter (see below) that gets a legitimate "Shams feed" capability without
 touching Instagram at all. **Phase 2** — an actual Instagram-capture
@@ -35,9 +35,9 @@ building Statmuse search on top of it.
 
 - A real `GET https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news`
   returned **HTTP 200 with real JSON**, verified directly from this
-  environment on 2026-09-07 — no cloud-IP blocking observed. (An earlier
-  design pass assumed a 403 here; that assumption was wrong and is
-  corrected by this direct check — see "ToS / bot-detection note" below.)
+  environment on 2026-09-07 — no cloud-IP blocking observed (see "ToS /
+  bot-detection note" below for the correction this makes to an earlier
+  design pass).
 - Real per-article fields (verified against the live response, not
   guessed): `id` (a stable numeric article ID), `headline`, `description`
   (a short dek/summary — **not** the full article body, which this
@@ -193,9 +193,7 @@ under a reporter's byline. It does not catch a scoop broken first on that
 reporter's own Instagram/X — which is often minutes to hours ahead of an
 ESPN-bylined write-up, and is the actual behavior the original "Shams post
 bot" ask described. Closing that gap is exactly what a real Phase 2
-(monitoring his own social channels directly) would do. This spec gets a
-legitimate, ToS-clean subset of the original ask into Phase 1; it does not
-claim to fully replace it.
+(monitoring his own social channels directly) would do.
 
 ## Freshness: 15-minute polling vs. "breaking news" framing
 
@@ -204,8 +202,7 @@ trade-off for this feature. News does not need the live game board's 30s
 freshness SLA (PRD §9) — a slower cadence also reduces load on an
 unauthenticated public endpoint with no documented rate limit. This is a
 deliberate difference in freshness bar between two features that will sit
-on the same homepage, stated here explicitly so it reads as an intentional
-choice rather than an inconsistency noticed later.
+on the same homepage.
 
 ## Search tool-routing: avoiding `get_recent_news` ambiguity
 
@@ -222,7 +219,7 @@ asking for a specific stat, score, or ranking; use the matching stats tool
 for those."* This stays consistent with the project's existing
 prompt-based tool discipline rather than introducing a separate routing
 mechanism (a classifier, a keyword router) the architecture doesn't
-otherwise use anywhere.
+otherwise use.
 
 ## ToS / bot-detection note
 
@@ -258,4 +255,5 @@ section):
   on a later poll — asserting the mart keeps exactly one row (the latest)
   per `id`, never two.
 - `get_recent_news` and `route.ts`'s wiring are unit-tested the same way
-  as the other four tools: DI'd tool dispatch, no real FastAPI or LLM call.
+  as the other four tools: dependency-injected tool dispatch, no real
+  FastAPI or LLM call.
