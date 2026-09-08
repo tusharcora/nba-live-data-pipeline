@@ -807,6 +807,49 @@ top of both employees' merged work, open awaiting human sign-off.
     rewriting those fixtures' `given` blocks to `format: sql` with an
     explicit `'{"...": ...}'::jsonb` string literal instead of a YAML dict,
     bypassing dbt's buffered dict-to-SQL serialization entirely.
+- **NL search comparison turns can render a stale single-subject card in one
+  specific, narrow sequence** (`worktree-nl-search-aggregate-queries-plan`,
+  final-review adjudication, 2026-09-08): `search-loop.ts`'s `finalize()`
+  suppresses `resultData` when the *most recent* tool-dispatching turn
+  produced 2+ `ok`/`no_match`/`ambiguous` results (the comparison pattern),
+  since `lastToolResult` only ever holds the last one dispatched and would
+  otherwise misrepresent one subject's card as the whole answer. The
+  suppression is keyed off the *last* turn's count, not the whole
+  conversation's — so the exact trigger is: a comparison turn dispatches
+  2+ results, then a **later** turn in the same loop iteration dispatches
+  only `error`-status calls (which don't increment the per-turn result
+  count), and the loop then ends on a subsequent text-only turn. In that
+  sequence, `finalize()` sees a last-turn count of 0 (not 2+) and renders
+  `lastToolResult`'s stale card from the earlier comparison turn as if it
+  were a fresh single-subject answer. Narrow and not exercised by anything
+  in this feature's own test suite — parked rather than fixed, since a
+  correct fix needs turn-level state that survives across turns, not a
+  single `resultCountInLastTurn` variable. Also note for any future fix:
+  the current suppression only hides the *rendering* of the second
+  subject's data — `lastToolResult` is a single variable, not an
+  accumulator, so the earlier subject's `ToolResultEnvelope`/`resultData`
+  is genuinely discarded, not retained-but-hidden. A real multi-card
+  comparison feature needs new data-plumbing (accumulating every ok result
+  per turn through `SearchResult` → the SSE payload → `search-stream.ts` →
+  the UI), not just a UI addition on top of what exists today.
+- **The two NL search aggregate tools' `game_count_considered` is computed
+  as `count(distinct game_id)`, which silently assumes no duplicate
+  `(player_id, game_id)` rows in Gold `player_game_stats`** (same
+  worktree/date as above). Verified this holds by construction rather than
+  assumed: both staging models dedupe before reaching Gold —
+  `stg_player_game_stats.sql` and `stg_player_game_stats_nba.sql` both
+  `row_number() over (partition by stat_id order by pulled_at desc)` before
+  their `deduped` CTE, matching this project's general "`raw_pulls` is
+  append-only, staging always de-dupes" convention. Also checked and
+  rejected an alternative fix a review suggested (using `stat_id` instead
+  of `game_id` as the streak query's window-function tiebreaker): for
+  `nba_stats`-sourced rows, `stat_id = game_id * 10000000 + player_id`
+  (`stg_player_game_stats_nba.sql`) is a deterministic function of
+  `game_id` alone once a query is already scoped to one resolved player, so
+  it would have been a no-op there. No code change made; would only
+  surface as a real bug given an upstream dedup failure, which this
+  project's own quality/drift-observatory tooling is independently
+  positioned to catch.
 
 ## What's Next
 
