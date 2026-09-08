@@ -274,12 +274,34 @@ game list.
 
 Same fail-open, honest-gap conventions as the v1 tools — no new pattern:
 
-- Zero games matching the player/date range at all → `no_match` (CAP-5),
-  never a `value: 0` masquerading as a real answer to "how many."
+- **`no_match` fires on zero games in range, never on a zero *result*.**
+  These are different conditions and must not be conflated:
+  - `game_count_considered == 0` (no games exist for this player over the
+    requested range at all — wrong name resolved to a real player with no
+    games there, or a range with no games played) → `no_match` (CAP-5).
+    There is nothing to aggregate: `avg`/`max`/`min` have no rows to pick
+    from, and a count would be meaningless.
+  - `game_count_considered > 0` but the aggregate result is `0` — e.g.
+    "how many 50-point games does LeBron have" over a range where he had
+    real games but none hit 50 — is a **valid `ok` response**, `value: 0`.
+    This is the real, correct answer to the question, not a gap to hide
+    behind `no_match`. The same distinction applies to `get_player_streak`:
+    `longest_streak: 0` with `game_count_considered > 0` (games exist, none
+    ever cleared the threshold) is a real `ok` answer, not `no_match`.
+  - The implementation must branch on `game_count_considered`, never on
+    whether the computed `value`/`longest_streak` happens to be `0` — a
+    "some rows have zero as a legitimate value" bug is the well-known
+    failure mode this guards against.
 - Ambiguous player name → `ambiguous` with candidates, same
   `_resolve_name` path the v1 tools already share.
 - A `stat` outside the allowed set → 400 (caller error), same as
   `get_leaders` today — not a tool-result envelope.
+- **An extraneous `threshold` on a non-count operation is a 400 caller
+  error**, not silently ignored — `threshold` is only meaningful for
+  `count_over_threshold`/`count_under_threshold`, so a `sum`/`avg`/`max`/`min`
+  call that also supplies `threshold` gets the same caller-error treatment
+  as an invalid `stat`, rather than leaving "ignored vs. rejected" to
+  whatever the implementation happens to do.
 
 ## Known limitation: data coverage
 
@@ -302,6 +324,14 @@ through a fake `PlayerStatsReader`-style DI seam, no live Postgres):
 - **Threshold boundary**: `count_over_threshold` at exactly `threshold`
   is inclusive (`>=`, not `>`) — a fixture game scoring exactly 30 points
   must count toward "30-point games."
+- **Zero-result is not `no_match`**: a fixture player with real games in
+  range but none meeting the threshold asserts `status: "ok"`, `value: 0`,
+  and `game_count_considered > 0` — guarding specifically against a future
+  "fix" that collapses a falsy `0` result into a false `no_match`. A
+  parallel fixture for `get_player_streak` asserts `status: "ok"`,
+  `longest_streak: 0` under the same condition. A separate fixture with
+  `game_count_considered == 0` (no games in range at all) asserts the
+  actual `no_match` path, so both branches of the distinction are covered.
 - **`extreme_game` tie-break**: a fixture with two games tied for the max
   value must resolve to the more recent one, deterministically across
   repeated runs.
