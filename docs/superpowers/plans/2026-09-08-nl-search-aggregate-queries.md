@@ -1213,9 +1213,9 @@ class SQLAlchemyPlayerStreakToolReader:
                 }
 
             streak_games_stmt = (
-                select(numbered)
-                .where(numbered.c.grp == streak_row["grp"], numbered.c.hit.is_(True))
-                .order_by(numbered.c.game_date)
+                select(grouped)
+                .where(grouped.c.grp == streak_row["grp"], grouped.c.hit.is_(True))
+                .order_by(grouped.c.game_date)
             )
             streak_rows = [dict(r) for r in conn.execute(streak_games_stmt).mappings().all()]
 
