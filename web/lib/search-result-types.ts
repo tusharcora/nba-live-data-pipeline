@@ -13,7 +13,13 @@
 
 import type { GameRow, PlayerStatRow } from "@/lib/team-names";
 
-export type SearchResultType = "player_stats" | "team_games" | "leaders" | "game_result";
+export type SearchResultType =
+  | "player_stats"
+  | "team_games"
+  | "leaders"
+  | "game_result"
+  | "stat_aggregate"
+  | "player_streak";
 
 export interface LeaderRow {
   player_id: number;
@@ -42,8 +48,33 @@ export interface GameResultResultData {
   boxScore: PlayerStatRow[];
 }
 
+export type AggregateOperation = "count_over_threshold" | "count_under_threshold" | "sum" | "avg" | "max" | "min";
+
+export interface StatAggregateResultData {
+  playerName: string;
+  stat: string;
+  operation: AggregateOperation;
+  threshold: number | null;
+  value: number;
+  extremeGame: PlayerStatRow | null;
+  matchingGames: PlayerStatRow[] | null;
+  matchingGamesTruncated: boolean;
+  gameCountConsidered: number;
+}
+
+export interface PlayerStreakResultData {
+  playerName: string;
+  stat: string;
+  threshold: number;
+  longestStreak: number;
+  isActive: boolean;
+  games: PlayerStatRow[];
+}
+
 export type SearchResultData =
   | { type: "player_stats"; payload: PlayerStatsResultData }
   | { type: "team_games"; payload: TeamGamesResultData }
   | { type: "leaders"; payload: LeadersResultData }
-  | { type: "game_result"; payload: GameResultResultData };
+  | { type: "game_result"; payload: GameResultResultData }
+  | { type: "stat_aggregate"; payload: StatAggregateResultData }
+  | { type: "player_streak"; payload: PlayerStreakResultData };
