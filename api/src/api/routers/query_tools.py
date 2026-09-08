@@ -76,6 +76,23 @@ DEFAULT_LEADERS_LIMIT = 10
 FUZZY_CUTOFF = 0.6
 MAX_FUZZY_CANDIDATES = 10
 
+# get_player_stat_aggregate's allowed `operation` values -- count_* need a
+# threshold, sum/avg/max/min never do (see the route's own validation).
+ALLOWED_AGGREGATE_OPERATIONS = {
+    "count_over_threshold",
+    "count_under_threshold",
+    "sum",
+    "avg",
+    "max",
+    "min",
+}
+COUNT_AGGREGATE_OPERATIONS = {"count_over_threshold", "count_under_threshold"}
+
+# Row-count cap on the `matching_games` drill-down list for a count
+# operation -- `value` itself is never affected by this cap (see
+# nl-search-aggregate-queries-design.md's "Truncation contract").
+MAX_AGGREGATE_MATCHING_GAMES = 20
+
 # Row-count cap for get_player_stats/get_team_games -- unlike get_leaders
 # (which is inherently bounded by its own `limit` param), these two return
 # every matching row with no cap by default, so a wide/unbounded date range
@@ -705,6 +722,272 @@ def get_leaders(
             },
             "game_count": result["game_count"],
             "leaders": leaders,
+        }
+    )
+
+
+# --------------------------------------------------------------------------
+# get_player_stat_aggregate
+# --------------------------------------------------------------------------
+
+
+@runtime_checkable
+class PlayerStatAggregateToolReader(Protocol):
+    def distinct_player_names(self) -> list[str]: ...
+
+    def get_aggregate(
+        self,
+        player_name: str,
+        stat_column: str,
+        operation: str,
+        threshold: int | None,
+        start_date: date_type | None,
+        end_date: date_type | None,
+    ) -> dict: ...
+
+
+class SQLAlchemyPlayerStatAggregateToolReader:
+    """Production `PlayerStatAggregateToolReader`. `sum`/`avg` compute a
+    single SQL aggregate; `max`/`min` order by the aggregated value then
+    `game_date DESC` and take one row, which gives both the extreme value
+    and its deterministic tie-break (most recent of ties) from a single
+    query; `count_over_threshold`/`count_under_threshold` run a `COUNT(*)`
+    for the true `value` and a separate, capped `LIMIT`ed query for the
+    `matching_games` drill-down list, so the cap never affects the count.
+    """
+
+    def __init__(self, engine: Engine | None = None) -> None:
+        self._engine = engine or get_engine()
+
+    def distinct_player_names(self) -> list[str]:
+        metadata = MetaData()
+        player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
+        full_name = _player_full_name_expr(player_game_stats)
+        stmt = select(full_name.label("name")).distinct()
+        with self._engine.connect() as conn:
+            return sorted({row.name for row in conn.execute(stmt) if row.name is not None})
+
+    def get_aggregate(
+        self,
+        player_name: str,
+        stat_column: str,
+        operation: str,
+        threshold: int | None,
+        start_date: date_type | None,
+        end_date: date_type | None,
+    ) -> dict:
+        metadata = MetaData()
+        player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
+        games = Table("games", metadata, autoload_with=self._engine)
+        full_name = _player_full_name_expr(player_game_stats)
+        stat_col = player_game_stats.c[stat_column]
+        joined = player_game_stats.join(games, player_game_stats.c.game_id == games.c.game_id)
+
+        def _scoped(stmt):
+            stmt = stmt.select_from(joined).where(func.lower(full_name) == player_name.lower())
+            if start_date is not None:
+                stmt = stmt.where(games.c.game_date >= start_date)
+            if end_date is not None:
+                stmt = stmt.where(games.c.game_date <= end_date)
+            return stmt
+
+        summary_stmt = _scoped(
+            select(
+                func.min(games.c.game_date).label("min_date"),
+                func.max(games.c.game_date).label("max_date"),
+                func.count(func.distinct(player_game_stats.c.game_id)).label("game_count"),
+            )
+        )
+        with self._engine.connect() as conn:
+            summary = conn.execute(summary_stmt).mappings().one()
+
+        game_count_considered = summary["game_count"] or 0
+        if game_count_considered == 0:
+            return {
+                "game_count_considered": 0,
+                "value": None,
+                "matching_games": None,
+                "extreme_game": None,
+                "date_range": None,
+            }
+
+        date_range = {"start_date": summary["min_date"], "end_date": summary["max_date"]}
+
+        def _row_dict(row: dict) -> dict:
+            out = dict(row)
+            out["stat_id"] = str(out["stat_id"])
+            return out
+
+        if operation in ("sum", "avg"):
+            agg_fn = func.sum if operation == "sum" else func.avg
+            value_stmt = _scoped(select(agg_fn(stat_col)))
+            with self._engine.connect() as conn:
+                raw_value = conn.execute(value_stmt).scalar()
+            value = float(raw_value) if operation == "avg" else int(raw_value)
+            return {
+                "game_count_considered": game_count_considered,
+                "value": value,
+                "matching_games": None,
+                "extreme_game": None,
+                "date_range": date_range,
+            }
+
+        row_columns = select(
+            player_game_stats,
+            games.c.game_date,
+            games.c.home_team,
+            games.c.away_team,
+            games.c.home_score,
+            games.c.away_score,
+        )
+
+        if operation in ("max", "min"):
+            order = stat_col.desc() if operation == "max" else stat_col.asc()
+            extreme_stmt = (
+                _scoped(row_columns).order_by(order, games.c.game_date.desc()).limit(1)
+            )
+            with self._engine.connect() as conn:
+                row = conn.execute(extreme_stmt).mappings().one()
+            return {
+                "game_count_considered": game_count_considered,
+                "value": row[stat_column],
+                "matching_games": None,
+                "extreme_game": _row_dict(dict(row)),
+                "date_range": date_range,
+            }
+
+        # count_over_threshold / count_under_threshold
+        comparator = (
+            stat_col >= threshold if operation == "count_over_threshold" else stat_col <= threshold
+        )
+        count_stmt = _scoped(select(func.count())).where(comparator)
+        with self._engine.connect() as conn:
+            value = conn.execute(count_stmt).scalar() or 0
+
+            matching_stmt = (
+                _scoped(row_columns)
+                .where(comparator)
+                .order_by(games.c.game_date.desc())
+                .limit(MAX_AGGREGATE_MATCHING_GAMES)
+            )
+            matching_rows = [_row_dict(dict(r)) for r in conn.execute(matching_stmt).mappings().all()]
+
+        return {
+            "game_count_considered": game_count_considered,
+            "value": value,
+            "matching_games": matching_rows,
+            "extreme_game": None,
+            "date_range": date_range,
+        }
+
+
+def get_player_stat_aggregate_tool_reader() -> PlayerStatAggregateToolReader:
+    return SQLAlchemyPlayerStatAggregateToolReader()
+
+
+@router.get("/player-stat-aggregate")
+@limiter.limit(DEFAULT_RATE_LIMIT)
+def get_player_stat_aggregate(
+    request: Request,
+    player_name: str = Query(..., description="Player name -- exact or fuzzy match."),
+    stat: str = Query(
+        ..., description="Stat to aggregate -- one of: " + ", ".join(sorted(ALLOWED_LEADER_STATS))
+    ),
+    operation: str = Query(
+        ...,
+        description="One of: " + ", ".join(sorted(ALLOWED_AGGREGATE_OPERATIONS)),
+    ),
+    threshold: int | None = Query(
+        default=None,
+        description="Required for count_over_threshold/count_under_threshold; "
+        "must not be supplied for sum/avg/max/min.",
+    ),
+    date: str | None = Query(default=None, description="Filter to a single date, YYYY-MM-DD."),
+    start_date: str | None = Query(
+        default=None,
+        description="Filter to games on or after this date, YYYY-MM-DD. "
+        "Omitted along with end_date/date means full ingested history.",
+    ),
+    end_date: str | None = Query(
+        default=None, description="Filter to games on or before this date, YYYY-MM-DD."
+    ),
+    reader: PlayerStatAggregateToolReader = Depends(get_player_stat_aggregate_tool_reader),
+) -> dict:
+    """A single player's threshold-count, sum, avg, max, or min over a date
+    range (default: full ingested history).
+
+    `no_match` fires only when the player has zero games in the requested
+    range at all (`game_count_considered == 0`) -- a computed `value` of
+    `0` with real games present (e.g. "how many 50-point games" for a
+    player who never hit 50) is a valid `ok` response, not a gap. See this
+    tool's design doc for why that distinction matters.
+    """
+    stat_key = stat.strip().lower()
+    if stat_key not in ALLOWED_LEADER_STATS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"stat must be one of: {', '.join(sorted(ALLOWED_LEADER_STATS))}",
+        )
+
+    operation_key = operation.strip().lower()
+    if operation_key not in ALLOWED_AGGREGATE_OPERATIONS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"operation must be one of: {', '.join(sorted(ALLOWED_AGGREGATE_OPERATIONS))}",
+        )
+
+    is_count_operation = operation_key in COUNT_AGGREGATE_OPERATIONS
+    if is_count_operation and threshold is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"threshold is required for operation '{operation_key}'"
+        )
+    if not is_count_operation and threshold is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"threshold must not be supplied for operation '{operation_key}'",
+        )
+
+    filter_date = _parse_query_date(date, "date")
+    parsed_start_date = _parse_query_date(start_date, "start_date")
+    parsed_end_date = _parse_query_date(end_date, "end_date")
+    _reject_date_and_range_combo(filter_date, parsed_start_date, parsed_end_date)
+    effective_start = filter_date or parsed_start_date
+    effective_end = filter_date or parsed_end_date
+
+    names = reader.distinct_player_names()
+    resolved = _resolve_name(names, player_name)
+    if resolved.status == "ambiguous":
+        return _ambiguous(
+            _name_candidates(resolved.candidates or []),
+            f"Multiple players match '{player_name}' -- please clarify which one.",
+        )
+    if resolved.status == "no_match":
+        return _no_match(f"No player found matching '{player_name}'.")
+
+    result = reader.get_aggregate(
+        resolved.name, stat_key, operation_key, threshold, effective_start, effective_end
+    )
+
+    if result["game_count_considered"] == 0:
+        return _no_match(f"No games found for {resolved.name} in the given date range.")
+
+    matching_games = result["matching_games"]
+    matching_games_truncated = (
+        matching_games is not None and len(matching_games) < result["value"]
+    )
+
+    return _ok(
+        {
+            "player_name": resolved.name,
+            "stat": stat_key,
+            "operation": operation_key,
+            "threshold": threshold,
+            "value": result["value"],
+            "extreme_game": result["extreme_game"],
+            "matching_games": matching_games,
+            "matching_games_truncated": matching_games_truncated,
+            "game_count_considered": result["game_count_considered"],
+            "date_range": result["date_range"],
         }
     )
 

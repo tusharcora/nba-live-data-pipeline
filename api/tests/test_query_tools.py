@@ -7,6 +7,7 @@ from api.main import app
 from api.routers.query_tools import (
     get_game_result_tool_reader,
     get_leaders_tool_reader,
+    get_player_stat_aggregate_tool_reader,
     get_player_stats_tool_reader,
     get_team_games_tool_reader,
 )
@@ -302,6 +303,7 @@ def client(monkeypatch):
     app.dependency_overrides.pop(get_player_stats_tool_reader, None)
     app.dependency_overrides.pop(get_team_games_tool_reader, None)
     app.dependency_overrides.pop(get_leaders_tool_reader, None)
+    app.dependency_overrides.pop(get_player_stat_aggregate_tool_reader, None)
     app.dependency_overrides.pop(get_game_result_tool_reader, None)
 
 
@@ -894,6 +896,392 @@ def test_get_leaders_requires_api_key(client):
     app.dependency_overrides[get_leaders_tool_reader] = lambda: reader
 
     resp = client.get("/tools/leaders", params={"stat": "assists"})
+
+    assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# get_player_stat_aggregate
+# --------------------------------------------------------------------------
+
+
+class FakePlayerStatAggregateToolReader:
+    """Applies the same filtering/aggregation a real SQL query would (see
+    SQLAlchemyPlayerStatAggregateToolReader), rather than pre-computing the
+    answer, so tests exercise real route behavior."""
+
+    def __init__(self, player_rows=None, games_by_id=None):
+        self.player_rows = FAKE_PLAYER_STATS if player_rows is None else player_rows
+        self.games_by_id = GAMES_BY_ID if games_by_id is None else games_by_id
+        self.call_count = 0
+
+    def distinct_player_names(self):
+        return sorted(
+            {f"{r['player_first_name']} {r['player_last_name']}" for r in self.player_rows}
+        )
+
+    def get_aggregate(self, player_name, stat_column, operation, threshold, start_date, end_date):
+        self.call_count += 1
+        matching = []
+        for r in self.player_rows:
+            full_name = f"{r['player_first_name']} {r['player_last_name']}"
+            if full_name.lower() != player_name.lower():
+                continue
+            game = self.games_by_id[r["game_id"]]
+            if start_date is not None and game["game_date"] < start_date:
+                continue
+            if end_date is not None and game["game_date"] > end_date:
+                continue
+            row = dict(r)
+            row.update(
+                {
+                    "game_date": game["game_date"],
+                    "home_team": game["home_team"],
+                    "away_team": game["away_team"],
+                    "home_score": game["home_score"],
+                    "away_score": game["away_score"],
+                }
+            )
+            matching.append(row)
+
+        game_count_considered = len(matching)
+        if game_count_considered == 0:
+            return {
+                "game_count_considered": 0,
+                "value": None,
+                "matching_games": None,
+                "extreme_game": None,
+                "date_range": None,
+            }
+
+        dates = [row["game_date"] for row in matching]
+        date_range = {"start_date": min(dates), "end_date": max(dates)}
+
+        def _stringify(row):
+            out = dict(row)
+            out["stat_id"] = str(out["stat_id"])
+            return out
+
+        if operation in ("sum", "avg"):
+            total = sum(row[stat_column] for row in matching)
+            value = total / game_count_considered if operation == "avg" else total
+            return {
+                "game_count_considered": game_count_considered,
+                "value": value,
+                "matching_games": None,
+                "extreme_game": None,
+                "date_range": date_range,
+            }
+
+        if operation in ("max", "min"):
+            best_value = (
+                max(row[stat_column] for row in matching)
+                if operation == "max"
+                else min(row[stat_column] for row in matching)
+            )
+            tied = [row for row in matching if row[stat_column] == best_value]
+            tied.sort(key=lambda row: row["game_date"], reverse=True)  # most recent wins ties
+            return {
+                "game_count_considered": game_count_considered,
+                "value": best_value,
+                "matching_games": None,
+                "extreme_game": _stringify(tied[0]),
+                "date_range": date_range,
+            }
+
+        # count_over_threshold / count_under_threshold
+        if operation == "count_over_threshold":
+            hits = [row for row in matching if row[stat_column] >= threshold]
+        else:
+            hits = [row for row in matching if row[stat_column] <= threshold]
+        hits.sort(key=lambda row: row["game_date"], reverse=True)
+        return {
+            "game_count_considered": game_count_considered,
+            "value": len(hits),
+            "matching_games": [_stringify(row) for row in hits[:20]],
+            "extreme_game": None,
+            "date_range": date_range,
+        }
+
+
+def test_get_player_stat_aggregate_count_over_threshold_boundary_inclusive(client):
+    # LeBron scores exactly 22 and 28 in the fixture -- >= 22 must include both.
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "count_over_threshold",
+                "threshold": 22,
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["value"] == 2
+    assert body["data"]["game_count_considered"] == 2
+    assert body["data"]["matching_games_truncated"] is False
+
+
+def test_get_player_stat_aggregate_zero_result_is_ok_not_no_match(client):
+    # LeBron never scores 50+ in the fixture, but he has real games in
+    # range -- this must be a real "ok" answer of 0, never no_match. This
+    # is the exact correctness risk this design flagged: a future "fix"
+    # collapsing a falsy 0 into no_match must fail this test.
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "count_over_threshold",
+                "threshold": 50,
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["value"] == 0
+    assert body["data"]["game_count_considered"] == 2
+
+
+def test_get_player_stat_aggregate_no_games_in_range_is_no_match(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "sum",
+                "start_date": "2099-01-01",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "no_match"
+
+
+def test_get_player_stat_aggregate_max_tie_break_most_recent(client):
+    # Two fabricated games tied for LeBron's max rebounds (10) -- the more
+    # recent one (game_id 6, 2024-01-09) must be cited, not game_id 3.
+    tied_rows = FAKE_PLAYER_STATS + [
+        {
+            "stat_id": 6,
+            "game_id": 6,
+            "player_id": 11,
+            "player_first_name": "LeBron",
+            "player_last_name": "James",
+            "team": "Lakers",
+            "points": 20,
+            "rebounds": 10,
+            "assists": 5,
+            "steals": 1,
+            "blocks": 0,
+            "turnovers": 2,
+            "minutes_played": "33:00",
+        }
+    ]
+    games_by_id = dict(GAMES_BY_ID)
+    games_by_id[6] = {
+        "game_id": 6,
+        "game_date": date(2024, 1, 9),
+        "season": 2023,
+        "status": "Final",
+        "postseason": False,
+        "home_team": "Los Angeles Lakers",
+        "away_team": "Denver Nuggets",
+        "home_score": 110,
+        "away_score": 104,
+        "source_pulled_at": "2024-01-09T23:00:00",
+    }
+    reader = FakePlayerStatAggregateToolReader(player_rows=tied_rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={"player_name": "LeBron James", "stat": "rebounds", "operation": "max"}
+        ),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["value"] == 10
+    assert data["extreme_game"]["game_id"] == 6
+
+
+def test_get_player_stat_aggregate_matching_games_truncated_flag(client):
+    # 25 games all scoring 30+ -- value must be the true 25, matching_games
+    # capped at 20, and matching_games_truncated must be True.
+    many_rows = []
+    games_by_id = {}
+    for i in range(25):
+        game_id = 100 + i
+        many_rows.append(
+            {
+                "stat_id": game_id,
+                "game_id": game_id,
+                "player_id": 11,
+                "player_first_name": "LeBron",
+                "player_last_name": "James",
+                "team": "Lakers",
+                "points": 30,
+                "rebounds": 8,
+                "assists": 7,
+                "steals": 1,
+                "blocks": 0,
+                "turnovers": 2,
+                "minutes_played": "35:00",
+            }
+        )
+        games_by_id[game_id] = {
+            "game_id": game_id,
+            "game_date": date(2024, 1, 1 + i),
+            "season": 2023,
+            "status": "Final",
+            "postseason": False,
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "home_score": 110,
+            "away_score": 104,
+            "source_pulled_at": "2024-01-01T23:00:00",
+        }
+    reader = FakePlayerStatAggregateToolReader(player_rows=many_rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "count_over_threshold",
+                "threshold": 30,
+            }
+        ),
+    )
+
+    data = resp.json()["data"]
+    assert data["value"] == 25
+    assert len(data["matching_games"]) == 20
+    assert data["matching_games_truncated"] is True
+
+
+def test_get_player_stat_aggregate_default_date_range_is_full_history(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(params={"player_name": "LeBron James", "stat": "points", "operation": "avg"}),
+    )
+
+    data = resp.json()["data"]
+    # LeBron's two fixture games are 2024-01-03 and 2024-01-05 -- omitting
+    # date/date_range must return that full span, not a guessed narrower one.
+    assert data["date_range"] == {"start_date": "2024-01-03", "end_date": "2024-01-05"}
+
+
+def test_get_player_stat_aggregate_rejects_threshold_with_non_count_operation(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "avg",
+                "threshold": 20,
+            }
+        ),
+    )
+
+    assert resp.status_code == 400
+    assert reader.call_count == 0
+
+
+def test_get_player_stat_aggregate_requires_threshold_for_count_operation(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "operation": "count_over_threshold",
+            }
+        ),
+    )
+
+    assert resp.status_code == 400
+    assert reader.call_count == 0
+
+
+def test_get_player_stat_aggregate_rejects_unknown_operation(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(
+            params={"player_name": "LeBron James", "stat": "points", "operation": "median"}
+        ),
+    )
+
+    assert resp.status_code == 400
+    assert reader.call_count == 0
+
+
+def test_get_player_stat_aggregate_ambiguous_name(client):
+    # "Jordan" fuzzy-matches both "Michael Jordan" and "Jordan Poole" in the
+    # shared FAKE_PLAYER_STATS fixture -- same query and same two candidates
+    # api/tests/test_query_tools.py's existing
+    # test_get_player_stats_ambiguous_name_returns_candidates already
+    # exercises for get_player_stats, reused here since it's a real
+    # ambiguous case (neither name is an exact match for "Jordan", so
+    # _resolve_name's exact-match-first branch never short-circuits it).
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        **_auth(params={"player_name": "Jordan", "stat": "points", "operation": "sum"}),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ambiguous"
+    candidate_names = {c["name"] for c in body["candidates"]}
+    assert candidate_names == {"Michael Jordan", "Jordan Poole"}
+
+
+def test_get_player_stat_aggregate_requires_api_key(client):
+    reader = FakePlayerStatAggregateToolReader()
+    app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stat-aggregate",
+        params={"player_name": "LeBron James", "stat": "points", "operation": "sum"},
+    )
 
     assert resp.status_code == 401
 
