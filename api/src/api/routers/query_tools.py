@@ -993,6 +993,247 @@ def get_player_stat_aggregate(
 
 
 # --------------------------------------------------------------------------
+# get_player_streak
+# --------------------------------------------------------------------------
+
+
+@runtime_checkable
+class PlayerStreakToolReader(Protocol):
+    def distinct_player_names(self) -> list[str]: ...
+
+    def get_streak(
+        self,
+        player_name: str,
+        stat_column: str,
+        threshold: int,
+        start_date: date_type | None,
+        end_date: date_type | None,
+    ) -> dict: ...
+
+
+class SQLAlchemyPlayerStreakToolReader:
+    """Production `PlayerStreakToolReader`. Classic gaps-and-islands over
+    date-ordered rows: `rn_all - rn_hit` (two `ROW_NUMBER()` window
+    functions, one over every row, one partitioned by whether the row
+    clears `threshold`) is constant within one consecutive run of the same
+    hit/miss state -- grouping by that difference isolates each run, and
+    the longest `hit` run (ties broken by the most recent end date) is the
+    reported streak. `is_active` compares the winning streak's end date to
+    the player's actual most recent game in range.
+    """
+
+    def __init__(self, engine: Engine | None = None) -> None:
+        self._engine = engine or get_engine()
+
+    def distinct_player_names(self) -> list[str]:
+        metadata = MetaData()
+        player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
+        full_name = _player_full_name_expr(player_game_stats)
+        stmt = select(full_name.label("name")).distinct()
+        with self._engine.connect() as conn:
+            return sorted({row.name for row in conn.execute(stmt) if row.name is not None})
+
+    def get_streak(
+        self,
+        player_name: str,
+        stat_column: str,
+        threshold: int,
+        start_date: date_type | None,
+        end_date: date_type | None,
+    ) -> dict:
+        metadata = MetaData()
+        player_game_stats = Table("player_game_stats", metadata, autoload_with=self._engine)
+        games = Table("games", metadata, autoload_with=self._engine)
+        full_name = _player_full_name_expr(player_game_stats)
+        stat_col = player_game_stats.c[stat_column]
+        joined = player_game_stats.join(games, player_game_stats.c.game_id == games.c.game_id)
+
+        base = (
+            select(
+                player_game_stats,
+                games.c.game_date,
+                games.c.home_team,
+                games.c.away_team,
+                games.c.home_score,
+                games.c.away_score,
+                (stat_col >= threshold).label("hit"),
+            )
+            .select_from(joined)
+            .where(func.lower(full_name) == player_name.lower())
+        )
+        if start_date is not None:
+            base = base.where(games.c.game_date >= start_date)
+        if end_date is not None:
+            base = base.where(games.c.game_date <= end_date)
+        base_cte = base.cte("base")
+
+        numbered = select(
+            base_cte,
+            func.row_number().over(order_by=base_cte.c.game_date).label("rn_all"),
+            func.row_number()
+            .over(partition_by=base_cte.c.hit, order_by=base_cte.c.game_date)
+            .label("rn_hit"),
+        ).cte("numbered")
+
+        grouped = select(
+            numbered, (numbered.c.rn_all - numbered.c.rn_hit).label("grp")
+        ).cte("grouped")
+
+        with self._engine.connect() as conn:
+            overall = conn.execute(
+                select(
+                    func.count().label("game_count"),
+                    func.min(base_cte.c.game_date).label("min_date"),
+                    func.max(base_cte.c.game_date).label("max_date"),
+                ).select_from(base_cte)
+            ).mappings().one()
+
+            game_count_considered = overall["game_count"] or 0
+            if game_count_considered == 0:
+                return {
+                    "game_count_considered": 0,
+                    "longest_streak": None,
+                    "streak_date_range": None,
+                    "is_active": None,
+                    "games": None,
+                    "date_range": None,
+                }
+
+            date_range = {"start_date": overall["min_date"], "end_date": overall["max_date"]}
+
+            streak_summary = (
+                select(
+                    grouped.c.grp,
+                    func.count().label("streak_length"),
+                    func.min(grouped.c.game_date).label("streak_start"),
+                    func.max(grouped.c.game_date).label("streak_end"),
+                )
+                .where(grouped.c.hit.is_(True))
+                .group_by(grouped.c.grp)
+                # Longest streak first; ties broken by the more recent end
+                # date (this tool's tie-break rule, matching
+                # get_player_stat_aggregate's extreme_game rule).
+                .order_by(func.count().desc(), func.max(grouped.c.game_date).desc())
+                .limit(1)
+            )
+            streak_row = conn.execute(streak_summary).mappings().first()
+
+            if streak_row is None:
+                return {
+                    "game_count_considered": game_count_considered,
+                    "longest_streak": 0,
+                    "streak_date_range": None,
+                    "is_active": False,
+                    "games": [],
+                    "date_range": date_range,
+                }
+
+            streak_games_stmt = (
+                select(numbered)
+                .where(numbered.c.grp == streak_row["grp"], numbered.c.hit.is_(True))
+                .order_by(numbered.c.game_date)
+            )
+            streak_rows = [dict(r) for r in conn.execute(streak_games_stmt).mappings().all()]
+
+        for row in streak_rows:
+            row["stat_id"] = str(row["stat_id"])
+            row.pop("hit", None)
+            row.pop("rn_all", None)
+            row.pop("rn_hit", None)
+            row.pop("grp", None)
+
+        is_active = streak_row["streak_end"] == overall["max_date"]
+
+        return {
+            "game_count_considered": game_count_considered,
+            "longest_streak": streak_row["streak_length"],
+            "streak_date_range": {
+                "start_date": streak_row["streak_start"],
+                "end_date": streak_row["streak_end"],
+            },
+            "is_active": is_active,
+            "games": streak_rows,
+            "date_range": date_range,
+        }
+
+
+def get_player_streak_tool_reader() -> PlayerStreakToolReader:
+    return SQLAlchemyPlayerStreakToolReader()
+
+
+@router.get("/player-streak")
+@limiter.limit(DEFAULT_RATE_LIMIT)
+def get_player_streak(
+    request: Request,
+    player_name: str = Query(..., description="Player name -- exact or fuzzy match."),
+    stat: str = Query(
+        ..., description="Stat to track -- one of: " + ", ".join(sorted(ALLOWED_LEADER_STATS))
+    ),
+    threshold: int = Query(..., description="A game counts toward the streak if stat >= threshold."),
+    start_date: str | None = Query(
+        default=None,
+        description="Filter to games on or after this date, YYYY-MM-DD. "
+        "Omitted along with end_date means full ingested history.",
+    ),
+    end_date: str | None = Query(
+        default=None, description="Filter to games on or before this date, YYYY-MM-DD."
+    ),
+    reader: PlayerStreakToolReader = Depends(get_player_streak_tool_reader),
+) -> dict:
+    """A player's longest consecutive run of games meeting a stat threshold
+    over a date range (default: full ingested history).
+
+    `no_match` fires only when the player has zero games in the requested
+    range at all -- `longest_streak: 0` with real games present (none of
+    which ever cleared the threshold) is a valid `ok` response, same
+    correctness distinction as `get_player_stat_aggregate`. Ties between
+    equal-length streaks resolve to the more recent one, and `is_active`
+    is true only when the reported streak's last game is also the most
+    recent game in range.
+    """
+    stat_key = stat.strip().lower()
+    if stat_key not in ALLOWED_LEADER_STATS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"stat must be one of: {', '.join(sorted(ALLOWED_LEADER_STATS))}",
+        )
+
+    parsed_start_date = _parse_query_date(start_date, "start_date")
+    parsed_end_date = _parse_query_date(end_date, "end_date")
+    _reject_reversed_range(parsed_start_date, parsed_end_date)
+
+    names = reader.distinct_player_names()
+    resolved = _resolve_name(names, player_name)
+    if resolved.status == "ambiguous":
+        return _ambiguous(
+            _name_candidates(resolved.candidates or []),
+            f"Multiple players match '{player_name}' -- please clarify which one.",
+        )
+    if resolved.status == "no_match":
+        return _no_match(f"No player found matching '{player_name}'.")
+
+    result = reader.get_streak(
+        resolved.name, stat_key, threshold, parsed_start_date, parsed_end_date
+    )
+
+    if result["game_count_considered"] == 0:
+        return _no_match(f"No games found for {resolved.name} in the given date range.")
+
+    return _ok(
+        {
+            "player_name": resolved.name,
+            "stat": stat_key,
+            "threshold": threshold,
+            "longest_streak": result["longest_streak"],
+            "streak_date_range": result["streak_date_range"],
+            "is_active": result["is_active"],
+            "games": result["games"],
+            "date_range": result["date_range"],
+        }
+    )
+
+
+# --------------------------------------------------------------------------
 # get_game_result
 # --------------------------------------------------------------------------
 

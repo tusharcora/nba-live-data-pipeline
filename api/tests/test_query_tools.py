@@ -9,6 +9,7 @@ from api.routers.query_tools import (
     get_leaders_tool_reader,
     get_player_stat_aggregate_tool_reader,
     get_player_stats_tool_reader,
+    get_player_streak_tool_reader,
     get_team_games_tool_reader,
 )
 
@@ -304,6 +305,7 @@ def client(monkeypatch):
     app.dependency_overrides.pop(get_team_games_tool_reader, None)
     app.dependency_overrides.pop(get_leaders_tool_reader, None)
     app.dependency_overrides.pop(get_player_stat_aggregate_tool_reader, None)
+    app.dependency_overrides.pop(get_player_streak_tool_reader, None)
     app.dependency_overrides.pop(get_game_result_tool_reader, None)
 
 
@@ -1281,6 +1283,262 @@ def test_get_player_stat_aggregate_requires_api_key(client):
     resp = client.get(
         "/tools/player-stat-aggregate",
         params={"player_name": "LeBron James", "stat": "points", "operation": "sum"},
+    )
+
+    assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# get_player_streak
+# --------------------------------------------------------------------------
+
+
+class FakePlayerStreakToolReader:
+    """Applies the same gaps-and-islands logic a real SQL query would (see
+    SQLAlchemyPlayerStreakToolReader) over date-ordered rows."""
+
+    def __init__(self, player_rows=None, games_by_id=None):
+        self.player_rows = FAKE_PLAYER_STATS if player_rows is None else player_rows
+        self.games_by_id = GAMES_BY_ID if games_by_id is None else games_by_id
+        self.call_count = 0
+
+    def distinct_player_names(self):
+        return sorted(
+            {f"{r['player_first_name']} {r['player_last_name']}" for r in self.player_rows}
+        )
+
+    def get_streak(self, player_name, stat_column, threshold, start_date, end_date):
+        self.call_count += 1
+        matching = []
+        for r in self.player_rows:
+            full_name = f"{r['player_first_name']} {r['player_last_name']}"
+            if full_name.lower() != player_name.lower():
+                continue
+            game = self.games_by_id[r["game_id"]]
+            if start_date is not None and game["game_date"] < start_date:
+                continue
+            if end_date is not None and game["game_date"] > end_date:
+                continue
+            row = dict(r)
+            row.update(
+                {
+                    "game_date": game["game_date"],
+                    "home_team": game["home_team"],
+                    "away_team": game["away_team"],
+                    "home_score": game["home_score"],
+                    "away_score": game["away_score"],
+                }
+            )
+            matching.append(row)
+
+        game_count_considered = len(matching)
+        if game_count_considered == 0:
+            return {
+                "game_count_considered": 0,
+                "longest_streak": None,
+                "streak_date_range": None,
+                "is_active": None,
+                "games": None,
+                "date_range": None,
+            }
+
+        matching.sort(key=lambda row: row["game_date"])
+        dates = [row["game_date"] for row in matching]
+        date_range = {"start_date": dates[0], "end_date": dates[-1]}
+
+        # Gaps-and-islands: walk in date order, track consecutive hit runs.
+        runs: list[list[dict]] = []
+        current: list[dict] = []
+        for row in matching:
+            if row[stat_column] >= threshold:
+                current.append(row)
+            else:
+                if current:
+                    runs.append(current)
+                current = []
+        if current:
+            runs.append(current)
+
+        if not runs:
+            return {
+                "game_count_considered": game_count_considered,
+                "longest_streak": 0,
+                "streak_date_range": None,
+                "is_active": False,
+                "games": [],
+                "date_range": date_range,
+            }
+
+        # Longest streak wins; ties broken by the more recent end date.
+        best = max(runs, key=lambda run: (len(run), run[-1]["game_date"]))
+        is_active = best[-1]["game_date"] == dates[-1]
+
+        def _stringify(row):
+            out = dict(row)
+            out["stat_id"] = str(out["stat_id"])
+            return out
+
+        return {
+            "game_count_considered": game_count_considered,
+            "longest_streak": len(best),
+            "streak_date_range": {
+                "start_date": best[0]["game_date"],
+                "end_date": best[-1]["game_date"],
+            },
+            "is_active": is_active,
+            "games": [_stringify(row) for row in best],
+            "date_range": date_range,
+        }
+
+
+def test_get_player_streak_active_streak_includes_most_recent_game(client):
+    # All 3 of a fabricated player's games clear the threshold, including
+    # the most recent one -- the streak must be reported as active.
+    rows = [
+        {
+            "stat_id": 10 + i,
+            "game_id": 10 + i,
+            "player_id": 55,
+            "player_first_name": "Active",
+            "player_last_name": "Streaker",
+            "team": "Lakers",
+            "points": 25,
+            "rebounds": 5,
+            "assists": 5,
+            "steals": 1,
+            "blocks": 0,
+            "turnovers": 1,
+            "minutes_played": "30:00",
+        }
+        for i in range(3)
+    ]
+    games_by_id = {
+        10 + i: {
+            "game_id": 10 + i,
+            "game_date": date(2024, 1, 1 + i),
+            "season": 2023,
+            "status": "Final",
+            "postseason": False,
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "home_score": 110,
+            "away_score": 104,
+            "source_pulled_at": "2024-01-01T23:00:00",
+        }
+        for i in range(3)
+    }
+    reader = FakePlayerStreakToolReader(player_rows=rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        **_auth(
+            params={"player_name": "Active Streaker", "stat": "points", "threshold": 20}
+        ),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["longest_streak"] == 3
+    assert data["is_active"] is True
+
+
+def test_get_player_streak_equal_length_ties_resolve_to_more_recent(client):
+    # Two separate, non-overlapping 2-game streaks of equal length -- the
+    # more recent one (games 3-4) must be reported, not the earlier one
+    # (games 0-1). Game 2 breaks the streak (below threshold).
+    def _row(i, points):
+        return {
+            "stat_id": 20 + i,
+            "game_id": 20 + i,
+            "player_id": 66,
+            "player_first_name": "Tie",
+            "player_last_name": "Breaker",
+            "team": "Lakers",
+            "points": points,
+            "rebounds": 5,
+            "assists": 5,
+            "steals": 1,
+            "blocks": 0,
+            "turnovers": 1,
+            "minutes_played": "30:00",
+        }
+
+    rows = [_row(0, 25), _row(1, 25), _row(2, 10), _row(3, 25), _row(4, 25)]
+    games_by_id = {
+        20 + i: {
+            "game_id": 20 + i,
+            "game_date": date(2024, 1, 1 + i),
+            "season": 2023,
+            "status": "Final",
+            "postseason": False,
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "home_score": 110,
+            "away_score": 104,
+            "source_pulled_at": "2024-01-01T23:00:00",
+        }
+        for i in range(5)
+    }
+    reader = FakePlayerStreakToolReader(player_rows=rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        **_auth(params={"player_name": "Tie Breaker", "stat": "points", "threshold": 20}),
+    )
+
+    data = resp.json()["data"]
+    assert data["longest_streak"] == 2
+    assert data["streak_date_range"] == {"start_date": "2024-01-04", "end_date": "2024-01-05"}
+    assert data["is_active"] is True
+
+
+def test_get_player_streak_zero_result_is_ok_not_no_match(client):
+    # LeBron never scores 100+ in the fixture, but he has real games in
+    # range -- longest_streak: 0 must be a valid ok answer, not no_match.
+    reader = FakePlayerStreakToolReader()
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        **_auth(params={"player_name": "LeBron James", "stat": "points", "threshold": 100}),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["longest_streak"] == 0
+    assert body["data"]["is_active"] is False
+
+
+def test_get_player_streak_no_games_in_range_is_no_match(client):
+    reader = FakePlayerStreakToolReader()
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        **_auth(
+            params={
+                "player_name": "LeBron James",
+                "stat": "points",
+                "threshold": 20,
+                "start_date": "2099-01-01",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "no_match"
+
+
+def test_get_player_streak_requires_api_key(client):
+    reader = FakePlayerStreakToolReader()
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        params={"player_name": "LeBron James", "stat": "points", "threshold": 20},
     )
 
     assert resp.status_code == 401
