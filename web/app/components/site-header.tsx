@@ -29,7 +29,7 @@ function abbr(teamName: string): string {
 
 /** One `AWY 91 · HME 103` fragment per game, three-letter codes. */
 function tickerLabel(game: GameRow): string {
-  return `${abbr(game.away_team)} ${displayScore(game.away_score)} · ${abbr(game.home_team)} ${displayScore(game.home_score)}`;
+  return `${abbr(game.away_team)} ${displayScore(game.away_score)} @ ${abbr(game.home_team)} ${displayScore(game.home_score)}`;
 }
 
 /**
