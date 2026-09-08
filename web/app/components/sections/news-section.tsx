@@ -65,7 +65,12 @@ export function NewsSection() {
     const query = params.toString();
 
     fetch(`/api/news${query ? `?${query}` : ""}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`/api/news responded ${res.status}`);
+        }
+        return res.json();
+      })
       .then((data: ApiList<NewsArticle> | null) => {
         if (!cancelled) setState({ status: "loaded", articles: data?.data ?? [] });
       })
