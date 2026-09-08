@@ -71,7 +71,15 @@ class SQLAlchemyNewsReader:
             stmt = stmt.where(func.coalesce(news_articles.c.byline, "").ilike(f"%{reporter}%"))
 
         with self._engine.connect() as conn:
-            return [dict(row) for row in conn.execute(stmt).mappings().all()]
+            rows = conn.execute(stmt).mappings().all()
+            return [
+                {
+                    **row,
+                    "published_at": row["published_at"].isoformat(),
+                    "ingested_at": row["ingested_at"].isoformat(),
+                }
+                for row in rows
+            ]
 
 
 def get_news_reader() -> NewsReader:
