@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: stg_news_articles
+    description: >
+      Silver staging model. One row per NBA news article, parsed and typed
+      out of the Bronze `raw_pulls.payload` JSONB for source='public_feed',
+      endpoint='news' (docs/superpowers/specs/2026-09-07-nba-news-feed-design.md).
+      `raw_pulls` is append-only, so the same article can recur across many
+      polls -- this model de-duplicates to the single most-recently-pulled
+      row per `article_id` via
+      `row_number() over (partition by article_id order by pulled_at desc, raw_pull_id desc)`.
+
+      Payload shape is confirmed against a real live response (2026-09-07),
+      not an assumption -- see the design spec's Findings section.
+    columns:
+      - name: article_id
+        description: ESPN's `id` for the article. Natural key of this model.
+        data_tests:
+          - not_null
+          - unique
+      - name: headline
+        description: Article headline.
+        data_tests:
+          - not_null
+      - name: summary
+        description: >
+          ESPN's own short dek/summary text (`description` field) -- never
+          the full article body, which this endpoint does not return.
+      - name: byline
+        description: >
+          Reporter attribution, e.g. "Marc J. Spears". Populated at the
+          individual-reporter level on real data, but can be a generic
+          value ("ESPN", "NBA Insiders") or absent -- no `not_null` test.
+      - name: published_at
+        description: Article publish timestamp (ESPN's `published` field).
+        data_tests:
+          - not_null
+      - name: article_url
+        description: Canonical ESPN article URL (`links.web.href`). Can be null if ESPN omits it.
+      - name: source
+        description: >
+          Hardcoded `'public_feed'` today (this model's only source). A
+          reserved discriminator column so a real Phase 2 source (e.g.
+          Instagram) can arrive as an additive UNION ALL later rather than
+          a breaking schema change -- see `news_articles.sql`'s header.
+        data_tests:
+          - not_null
+      - name: ingested_at
+        description: >
+          `pulled_at` of the `raw_pulls` row this record was sourced from --
+          specifically, the most recent pull for this `article_id`. Carried
+          through for lineage/freshness, and is the ordering key used for
+          de-duplication.
