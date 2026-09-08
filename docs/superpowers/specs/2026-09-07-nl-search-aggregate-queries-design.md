@@ -178,7 +178,8 @@ GET /tools/player-streak
   "longest_streak": 9,
   "streak_date_range": {"start": "2025-11-02", "end": "2025-11-20"},
   "is_active": false,
-  "games": [ /* the streak's own games, chronological, uncapped — a streak is bounded by construction */ ]
+  "games": [ /* the streak's own games, chronological, uncapped — a streak is bounded by construction */ ],
+  "game_count_considered": 1611
 }
 ```
 

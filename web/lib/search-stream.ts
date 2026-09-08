@@ -157,17 +157,41 @@ function parseDonePayload(raw: string): SearchDonePayload | null {
 }
 
 // Defensive, drift-tolerant, same style as the citation block above: only
-// checks the discriminant `type` is one of the four known values and
-// `payload` is present as an object -- does not deep-validate every nested
-// field (that's the FastAPI/search-tools.ts layer's job; a payload that
-// reaches this far already passed through deriveResultData()). An unknown
-// `type` (or a missing/non-object `payload`) is dropped to null rather
-// than thrown on, consistent with every other field in this function.
+// checks the discriminant `type` is one of the known SearchResultData
+// variants and `payload` is present as an object -- does not deep-validate
+// every nested field (that's the FastAPI/search-tools.ts layer's job; a
+// payload that reaches this far already passed through deriveResultData()).
+// An unknown `type` (or a missing/non-object `payload`) is dropped to null
+// rather than thrown on, consistent with every other field in this function.
+//
+// VALID_RESULT_TYPES is typed against `SearchResultData["type"]` (not a
+// bare `string[]`) so a *misspelled* entry is a compile error -- this does
+// NOT make an *omitted* entry a compile error (TypeScript allows a
+// same-or-narrower array literal against this annotation), so adding a new
+// variant to search-result-types.ts's union still requires manually adding
+// it here too. This list once fell out of sync exactly that way: two new
+// tool result types (stat_aggregate, player_streak) landed in the union
+// while this array still only listed the original four, so every real
+// answer from either new tool was silently dropped to `resultData: null`
+// on this live client path. When adding a new SearchResultData variant,
+// add it here in the same change -- there is no compiler backstop for
+// forgetting to.
+const VALID_RESULT_TYPES: readonly SearchResultData["type"][] = [
+  "player_stats",
+  "team_games",
+  "leaders",
+  "game_result",
+  "stat_aggregate",
+  "player_streak",
+];
+
 function parseResultData(raw: unknown): SearchResultData | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
-  const validTypes = ["player_stats", "team_games", "leaders", "game_result"];
-  if (typeof obj.type !== "string" || !validTypes.includes(obj.type)) {
+  if (
+    typeof obj.type !== "string" ||
+    !(VALID_RESULT_TYPES as readonly string[]).includes(obj.type)
+  ) {
     console.warn("/api/search done payload: unrecognized resultData.type, dropped", obj.type);
     return null;
   }

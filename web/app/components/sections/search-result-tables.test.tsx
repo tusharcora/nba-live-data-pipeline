@@ -113,3 +113,109 @@ describe("SearchResultDataView", () => {
     expect(images[1].getAttribute("src")).toContain("1630162");
   });
 });
+
+describe("SearchResultDataView -- stat_aggregate", () => {
+  it("renders the headline value and a truncation note for a truncated count", () => {
+    const resultData: SearchResultData = {
+      type: "stat_aggregate",
+      payload: {
+        playerName: "LeBron James",
+        stat: "points",
+        operation: "count_over_threshold",
+        threshold: 30,
+        value: 47,
+        extremeGame: null,
+        matchingGames: [SAMPLE_STAT_ROW],
+        matchingGamesTruncated: true,
+        gameCountConsidered: 1600,
+      },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    // "47" alone also appears inside "Showing 1 of 47" below, so match the
+    // full headline phrase to pin this assertion to the headline element.
+    expect(screen.getByText(/47 games at or above 30 points/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1 of 47/)).toBeInTheDocument();
+  });
+
+  it("renders the extreme game for a max operation without a truncation note", () => {
+    const resultData: SearchResultData = {
+      type: "stat_aggregate",
+      payload: {
+        playerName: "Luka Dončić",
+        stat: "rebounds",
+        operation: "max",
+        threshold: null,
+        value: 6,
+        extremeGame: SAMPLE_STAT_ROW,
+        matchingGames: null,
+        matchingGamesTruncated: false,
+        gameCountConsidered: 5,
+      },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    // Bare "6" also appears inside the extreme game's own box score row
+    // (e.g. its rebounds cell) -- match the full headline phrase instead.
+    expect(screen.getByText(/high rebounds: 6/)).toBeInTheDocument();
+    // "Dončić" legitimately renders twice here: once in the headline
+    // (playerName) and once in the extreme game's box score row.
+    expect(screen.getAllByText(/Dončić/)).toHaveLength(2);
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it("renders a bare headline for a sum/avg operation with no per-game rows", () => {
+    const resultData: SearchResultData = {
+      type: "stat_aggregate",
+      payload: {
+        playerName: "LeBron James",
+        stat: "points",
+        operation: "avg",
+        threshold: null,
+        value: 27.3,
+        extremeGame: null,
+        matchingGames: null,
+        matchingGamesTruncated: false,
+        gameCountConsidered: 30,
+      },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    expect(screen.getByText(/27.3/)).toBeInTheDocument();
+  });
+});
+
+describe("SearchResultDataView -- player_streak", () => {
+  it("renders the streak length, an Active badge when isActive, and the streak's games", () => {
+    const resultData: SearchResultData = {
+      type: "player_streak",
+      payload: {
+        playerName: "LeBron James",
+        stat: "points",
+        threshold: 20,
+        longestStreak: 9,
+        isActive: true,
+        games: [SAMPLE_STAT_ROW],
+      },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    // Bare "9" also appears inside SAMPLE_STAT_ROW's own box score row (the
+    // away score is 97) -- match the full headline phrase instead.
+    expect(screen.getByText(/9-game streak/)).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText(/Dončić/)).toBeInTheDocument();
+  });
+
+  it("does not render an Active badge when isActive is false", () => {
+    const resultData: SearchResultData = {
+      type: "player_streak",
+      payload: {
+        playerName: "LeBron James",
+        stat: "points",
+        threshold: 20,
+        longestStreak: 5,
+        isActive: false,
+        games: [SAMPLE_STAT_ROW],
+      },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    expect(screen.queryByText("Active")).not.toBeInTheDocument();
+  });
+});

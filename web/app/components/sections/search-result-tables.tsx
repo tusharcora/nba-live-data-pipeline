@@ -25,7 +25,12 @@ import {
   TEAM_NAME_TO_ABBREVIATION,
   type GameRow,
 } from "@/lib/box-score";
-import type { LeadersResultData, SearchResultData } from "@/lib/search-result-types";
+import type {
+  LeadersResultData,
+  PlayerStreakResultData,
+  SearchResultData,
+  StatAggregateResultData,
+} from "@/lib/search-result-types";
 import { cn } from "@/lib/utils";
 
 /** Max `GameMatchupCard`s rendered for a `team_games` result -- see the
@@ -146,6 +151,77 @@ function LeadersTable({ stat, gameCount, leaders }: LeadersResultData) {
   );
 }
 
+const OPERATION_LABELS: Record<StatAggregateResultData["operation"], string> = {
+  count_over_threshold: "games at or above",
+  count_under_threshold: "games at or below",
+  sum: "total",
+  avg: "average",
+  max: "career/season high",
+  min: "career/season low",
+};
+
+/** A single aggregate headline (count/sum/avg/max/min), plus whichever
+ * per-game evidence the operation carries: a capped, possibly-truncated
+ * game list for a count operation, or the single extreme game for
+ * max/min. sum/avg carry no per-game list -- there's nothing to drill
+ * into beyond the headline number itself. */
+function StatAggregateResultView({
+  playerName,
+  stat,
+  operation,
+  threshold,
+  value,
+  extremeGame,
+  matchingGames,
+  matchingGamesTruncated,
+}: StatAggregateResultData) {
+  const isCountOperation =
+    operation === "count_over_threshold" || operation === "count_under_threshold";
+  const headline = isCountOperation
+    ? `${playerName} — ${value} ${OPERATION_LABELS[operation]} ${threshold} ${stat}`
+    : `${playerName} — ${OPERATION_LABELS[operation]} ${stat}: ${value}`;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm font-medium text-foreground">{headline}</p>
+      {extremeGame && <BoxScoreTable rows={[extremeGame]} showGameContext />}
+      {matchingGames && matchingGames.length > 0 && (
+        <>
+          <BoxScoreTable rows={matchingGames} showGameContext />
+          {matchingGamesTruncated && (
+            <p className="text-xs text-muted-foreground">
+              Showing {matchingGames.length} of {value}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A streak's headline (length + active state) plus the streak's own
+ * games -- uncapped, since a streak is bounded by construction. */
+function PlayerStreakResultView({
+  playerName,
+  stat,
+  threshold,
+  longestStreak,
+  isActive,
+  games,
+}: PlayerStreakResultData) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-medium text-foreground">
+          {playerName} — {longestStreak}-game streak of {threshold}+ {stat}
+        </p>
+        {isActive && <Badge variant="secondary">Active</Badge>}
+      </div>
+      {games.length > 0 && <BoxScoreTable rows={games} showGameContext />}
+    </div>
+  );
+}
+
 /** Dispatches on `resultData.type` to the right table/card for whichever
  * tool actually answered the question. Renders nothing for `null` (a
  * genuine no-data/ambiguous/error answer never carries resultData -- see
@@ -188,6 +264,12 @@ export function SearchResultDataView({ resultData }: { resultData: SearchResultD
 
     case "leaders":
       return <LeadersTable {...resultData.payload} />;
+
+    case "stat_aggregate":
+      return <StatAggregateResultView {...resultData.payload} />;
+
+    case "player_streak":
+      return <PlayerStreakResultView {...resultData.payload} />;
 
     default: {
       // Exhaustiveness check: a new SearchResultData variant that isn't

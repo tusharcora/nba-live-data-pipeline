@@ -355,4 +355,191 @@ describe("runSearchLoop", () => {
     // the client's tables.
     expect(result.resultData).toEqual(SAMPLE_RESULT_DATA);
   });
+
+  it("comparison: one turn requesting two get_player_stat_aggregate calls with different date_range dispatches both and cites the last one", async () => {
+    const AGGREGATE_A: ToolResultEnvelope = {
+      status: "ok",
+      table: "player_game_stats",
+      date_range: "2026-09-01 to 2026-09-30",
+      data: { player_name: "LeBron James", value: 812 },
+      resultData: {
+        type: "stat_aggregate",
+        payload: {
+          playerName: "LeBron James", stat: "points", operation: "sum", threshold: null,
+          value: 812, extremeGame: null, matchingGames: null, matchingGamesTruncated: false,
+          gameCountConsidered: 30,
+        },
+      },
+      candidates: null,
+      message: null,
+    };
+    const AGGREGATE_B: ToolResultEnvelope = {
+      status: "ok",
+      table: "player_game_stats",
+      date_range: "2025-10-01 to 2026-09-30",
+      data: { player_name: "Stephen Curry", value: 2400 },
+      resultData: {
+        type: "stat_aggregate",
+        payload: {
+          playerName: "Stephen Curry", stat: "points", operation: "sum", threshold: null,
+          value: 2400, extremeGame: null, matchingGames: null, matchingGamesTruncated: false,
+          gameCountConsidered: 60,
+        },
+      },
+      candidates: null,
+      message: null,
+    };
+
+    const llmClient = fakeLlmClient(
+      {
+        text: "",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "get_player_stat_aggregate",
+            input: {
+              player_name: "LeBron James",
+              stat: "points",
+              operation: "sum",
+              date_range: { start: "2026-09-01", end: "2026-09-30" },
+            },
+          },
+          {
+            id: "call_2",
+            name: "get_player_stat_aggregate",
+            input: {
+              player_name: "Stephen Curry",
+              stat: "points",
+              operation: "sum",
+              date_range: { start: "2025-10-01", end: "2026-09-30" },
+            },
+          },
+        ],
+      },
+      finalResponse("Stephen Curry scored more (2400 vs. 812)."),
+    );
+    const callTool = vi
+      .fn()
+      .mockResolvedValueOnce(AGGREGATE_A)
+      .mockResolvedValueOnce(AGGREGATE_B);
+
+    const result = await runSearchLoop({
+      question: "Who scored more, LeBron this month or Steph this season?",
+      llmClient,
+      callTool,
+    });
+
+    expect(callTool).toHaveBeenCalledTimes(2);
+    expect(callTool).toHaveBeenNthCalledWith(1, "get_player_stat_aggregate", {
+      player_name: "LeBron James",
+      stat: "points",
+      operation: "sum",
+      date_range: { start: "2026-09-01", end: "2026-09-30" },
+    });
+    expect(callTool).toHaveBeenNthCalledWith(2, "get_player_stat_aggregate", {
+      player_name: "Stephen Curry",
+      stat: "points",
+      operation: "sum",
+      date_range: { start: "2025-10-01", end: "2026-09-30" },
+    });
+    expect(result.noData).toBe(false);
+    expect(result.answerText).toContain("2400");
+  });
+
+  it("suppresses resultData on a comparison turn dispatching 2 ok results, but keeps the prose answer (Important #4)", async () => {
+    // Same shape as the comparison test above, but asserting the specific
+    // regression this fix targets: finalize() must not let lastToolResult's
+    // single-subject resultData through when the turn that produced it
+    // dispatched more than one ok/no_match/ambiguous result -- that would
+    // misleadingly render only the *second* subject's stat card as if it
+    // were "the" answer. The prose answerText is untouched since the model
+    // saw both tool results.
+    const AGGREGATE_A: ToolResultEnvelope = {
+      status: "ok",
+      table: "player_game_stats",
+      date_range: "2026-09-01 to 2026-09-30",
+      data: { player_name: "LeBron James", value: 812 },
+      resultData: {
+        type: "stat_aggregate",
+        payload: {
+          playerName: "LeBron James", stat: "points", operation: "sum", threshold: null,
+          value: 812, extremeGame: null, matchingGames: null, matchingGamesTruncated: false,
+          gameCountConsidered: 30,
+        },
+      },
+      candidates: null,
+      message: null,
+    };
+    const AGGREGATE_B: ToolResultEnvelope = {
+      status: "ok",
+      table: "player_game_stats",
+      date_range: "2025-10-01 to 2026-09-30",
+      data: { player_name: "Stephen Curry", value: 2400 },
+      resultData: {
+        type: "stat_aggregate",
+        payload: {
+          playerName: "Stephen Curry", stat: "points", operation: "sum", threshold: null,
+          value: 2400, extremeGame: null, matchingGames: null, matchingGamesTruncated: false,
+          gameCountConsidered: 60,
+        },
+      },
+      candidates: null,
+      message: null,
+    };
+
+    const llmClient = fakeLlmClient(
+      {
+        text: "",
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "get_player_stat_aggregate",
+            input: {
+              player_name: "LeBron James",
+              stat: "points",
+              operation: "sum",
+              date_range: { start: "2026-09-01", end: "2026-09-30" },
+            },
+          },
+          {
+            id: "call_2",
+            name: "get_player_stat_aggregate",
+            input: {
+              player_name: "Stephen Curry",
+              stat: "points",
+              operation: "sum",
+              date_range: { start: "2025-10-01", end: "2026-09-30" },
+            },
+          },
+        ],
+      },
+      finalResponse("Stephen Curry scored more (2400 vs. 812)."),
+    );
+    const callTool = vi
+      .fn()
+      .mockResolvedValueOnce(AGGREGATE_A)
+      .mockResolvedValueOnce(AGGREGATE_B);
+
+    const result = await runSearchLoop({
+      question: "Who scored more, LeBron this month or Steph this season?",
+      llmClient,
+      callTool,
+    });
+
+    expect(result.resultData).toBeNull();
+    expect(result.answerText.length).toBeGreaterThan(0);
+    expect(result.answerText).toContain("2400");
+  });
+
+  it("still populates resultData for a turn with exactly one ok result (no regression from the comparison-turn fix)", async () => {
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_player_stats", { player_name: "LeBron James" }),
+      finalResponse("LeBron James scored 30 points on 2024-10-22."),
+    );
+    const callTool = vi.fn().mockResolvedValueOnce(OK_RESULT);
+
+    const result = await runSearchLoop({ question: "How many points did LeBron score?", llmClient, callTool });
+
+    expect(result.resultData).toEqual(SAMPLE_RESULT_DATA);
+  });
 });
