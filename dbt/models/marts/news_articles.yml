@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: news_articles
+    description: >
+      Gold `news_articles` table (Phase 1 of
+      docs/superpowers/specs/2026-09-07-nba-news-feed-design.md). One row
+      per NBA news article. Straight passthrough of `stg_news_articles`,
+      filtered to articles with a real link-out URL.
+    config:
+      # `api/src/api/routers/news.py`'s default listing orders by
+      # `published_at desc` (same hot-query-index posture as
+      # `games.yml`'s `game_date` index).
+      indexes:
+        - columns: ["published_at"]
+          unique: false
+    columns:
+      - name: article_id
+        description: ESPN's `id` for the article. Primary key of this table.
+        data_tests:
+          - not_null
+          - unique
+      - name: headline
+        description: Article headline.
+        data_tests:
+          - not_null
+      - name: summary
+        description: ESPN's own short dek/summary text -- never the full article body.
+      - name: byline
+        description: Reporter attribution. See stg_news_articles.yml for the generic/absent-value caveat.
+      - name: published_at
+        description: Article publish timestamp.
+        data_tests:
+          - not_null
+      - name: article_url
+        description: Canonical ESPN article URL -- never null in this table (filtered in news_articles.sql).
+        data_tests:
+          - not_null
+      - name: source
+        description: >
+          Hardcoded `'public_feed'` today. Reserved for a real Phase 2
+          source to UNION ALL onto this mart additively -- see this
+          model's header comment.
+        data_tests:
+          - not_null
+      - name: ingested_at
+        description: Lineage/freshness -- `pulled_at` of the source `raw_pulls` row.

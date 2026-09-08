@@ -28,8 +28,10 @@ export interface SequentialShortcut {
 
 /** Single source of truth for both the routing table and the help overlay. */
 export const SEQUENTIAL_SHORTCUTS: SequentialShortcut[] = [
+  { key: "l", href: "/live", label: "Live Board" },
   { key: "q", href: "/quality", label: "Data Quality Scorecard" },
   { key: "e", href: "/explorer", label: "Historical Explorer" },
+  { key: "n", href: "/news", label: "NBA News" },
   { key: "s", href: "/settings", label: "Settings" },
   { key: "h", href: "/", label: "Home" },
 ];
