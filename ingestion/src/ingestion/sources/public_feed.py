@@ -59,3 +59,41 @@ class PublicFeedClient:
         pagination to follow.
         """
         return self._get("/scoreboard", {"dates": date})
+
+    def get_news(self) -> dict:
+        """Fetch the current rolling window of NBA news articles.
+
+        Real payload shape, verified directly against a live response
+        2026-09-07 (docs/superpowers/specs/2026-09-07-nba-news-feed-design.md's
+        Findings section) — unlike `get_scoreboard`'s assumed shape, this one
+        is confirmed, not guessed:
+
+        GET https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news
+
+        {
+          "header": "NBA News",
+          "articles": [
+            {
+              "id": 49824980,
+              "type": "Story",
+              "headline": "...",
+              "description": "...",
+              "byline": "Marc J. Spears",
+              "published": "2026-09-06T18:30:00Z",
+              "lastModified": "2026-09-06T18:30:00Z",
+              "links": {"web": {"href": "https://www.espn.com/nba/story/..."}}
+            }
+          ]
+        }
+
+        A rolling window of the most recent articles (~6 observed in one
+        real pull), not a paginated archive — no `dates`/pagination params,
+        unlike `get_scoreboard`.
+
+        No retry/backoff on a non-2xx response or timeout: `_get()` raises
+        via `raise_for_status()`, same as every other HTTP client in this
+        codebase (`BallDontLieClient`, `get_scoreboard` itself) — a failed
+        flow run is Prefect's own concern, not something wrapped here. This
+        is a deliberate consistency choice, not a gap.
+        """
+        return self._get("/news", {})
