@@ -102,6 +102,9 @@ def test_live_game_state_table():
         "period",
         "clock",
         "status",
+        "home_team",
+        "away_team",
+        "scheduled_start",
     }
 
 
@@ -115,6 +118,9 @@ def test_live_game_state_nullability_and_types():
     assert columns["away_score"].nullable is True
     assert columns["period"].nullable is True
     assert columns["clock"].nullable is True
+    assert columns["home_team"].nullable is True
+    assert columns["away_team"].nullable is True
+    assert columns["scheduled_start"].nullable is True
     # game_id is a bigint per the plan (large external game ids), not a
     # plain 32-bit int.
     assert type(columns["game_id"].type).__name__ == "BigInteger"
@@ -194,12 +200,21 @@ def test_schema_change_log_has_detected_at_index():
     assert str(expr) == "detected_at DESC"
 
 
-def test_source_conflicts_has_detected_at_index():
-    indexes = list(SourceConflict.__table__.indexes)
-    assert len(indexes) == 1
-    index = indexes[0]
-    assert index.name == "ix_source_conflicts_detected_at"
-    # Same descending-index shape as schema_change_log, matching
-    # `recent_conflicts`'s `ORDER BY detected_at DESC LIMIT N`.
-    (expr,) = index.expressions
+def test_source_conflicts_has_detected_at_indexes():
+    index_names = {index.name for index in SourceConflict.__table__.indexes}
+    assert index_names == {
+        "ix_source_conflicts_detected_at",
+        "ix_source_conflicts_game_id_detected_at",
+    }
+
+    by_name = {index.name: index for index in SourceConflict.__table__.indexes}
+
+    (expr,) = by_name["ix_source_conflicts_detected_at"].expressions
     assert str(expr) == "detected_at DESC"
+
+    game_id_index = by_name["ix_source_conflicts_game_id_detected_at"]
+    column_names = [col.name for col in game_id_index.columns]
+    assert column_names == ["game_id"]
+    # Second key is the DESC expression, not a plain column.
+    assert len(game_id_index.expressions) == 2
+    assert str(game_id_index.expressions[1]) == "detected_at DESC"

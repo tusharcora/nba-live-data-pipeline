@@ -4,11 +4,11 @@
 at whatever `REDIS_URL` resolves to (default `redis://localhost:6379/0`). If
 a real Redis happens to be reachable in the environment running these tests
 (e.g. `make up`'s docker-compose Redis, or any other local Redis on the
-default port), route tests that hit `/games` or `/quality` would otherwise
-read/write real cache entries and leak state across test cases — exactly
-the kind of "invisible until it isn't" bug this cache is meant to avoid
-elsewhere. Flush the keys these routes use before and after every test so
-the suite behaves identically whether or not a live Redis is present.
+default port), route tests that hit `/games`, `/quality`, or `/board` would
+otherwise read/write real cache entries and leak state across test cases —
+exactly the kind of "invisible until it isn't" bug this cache is meant to
+avoid elsewhere. Flush the keys these routes use before and after every test
+so the suite behaves identically whether or not a live Redis is present.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 
 from api.core.cache import get_cache_client
 
-_CACHE_KEY_PATTERNS = ("games:*", "quality:scorecard")
+_CACHE_KEY_PATTERNS = ("games:*", "quality:scorecard", "board:today")
 
 
 def _flush_route_cache_keys() -> None:

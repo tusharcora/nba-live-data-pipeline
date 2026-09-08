@@ -36,19 +36,23 @@ function tickerLabel(game: GameRow): string {
  * The app's shared chrome: a slim brand+nav header row, followed
  * immediately by a full-bleed scrolling ticker of recent games -- both
  * rendered identically at the top of every page (`/`, `/live`, `/quality`,
- * `/explorer`, `/settings`), matching the reference "Four Dark Neutrals"
- * mockup's own topbar-then-ticker layout. The ticker has no border of its
- * own header to sit against; the header row has none either, so the
- * ticker itself is the only divider between the header and whatever page
- * content follows -- deliberately, per the site owner's "let the banner
- * act as a divider" direction.
+ * `/explorer`, `/news`, `/search`, `/settings`), matching the reference
+ * "Four Dark Neutrals" mockup's own topbar-then-ticker layout. The ticker
+ * has no border of its own header to sit against; the header row has none
+ * either, so the ticker itself is the only divider between the header and
+ * whatever page content follows -- deliberately, per the site owner's "let
+ * the banner act as a divider" direction.
  *
  * Fetches `/api/games` independently on every page (same BFF route
  * `RecentGamesBoard` and the command palette already call) -- this is a
  * page-level banner now, not something owned by the homepage's board, so
  * it needs its own data regardless of which page it's mounted on.
+ *
+ * `current` is optional: a page with no fixed `PageHref` of its own (e.g.
+ * a dynamic `/live/[gameId]` detail page) renders the header with none of
+ * the jump-links marked current.
  */
-export function SiteHeader({ current }: { current: PageHref }) {
+export function SiteHeader({ current }: { current?: PageHref }) {
   const [state, setState] = useState<FetchState>({ status: "loading" });
 
   useEffect(() => {

@@ -9,20 +9,23 @@ const LINKS = [
   { href: "/quality", label: "Quality" },
   { href: "/explorer", label: "Explorer" },
   { href: "/news", label: "News" },
+  { href: "/search", label: "Search" },
   { href: "/settings", label: "Settings" },
 ] as const;
 
 export type PageHref = (typeof LINKS)[number]["href"];
 
 /**
- * Clear (transparent-fill, bordered) buttons between the app's five pages
+ * Clear (transparent-fill, bordered) buttons between the app's pages
  * -- not a nav bar (not sticky/fixed, no persistent chrome), just a
  * lightweight way to get from one page to another now that there's no top
  * bar. Rendered at the top of every page. Each one hover-highlights amber;
  * `current` renders as a filled, non-interactive button instead of a link
- * so a page never links to itself.
+ * so a page never links to itself. Optional: a page with no fixed
+ * `PageHref` of its own (e.g. a dynamic `/live/[gameId]` detail page)
+ * renders the header with none of the links marked current.
  */
-export function JumpLinks({ current }: { current: PageHref }) {
+export function JumpLinks({ current }: { current?: PageHref }) {
   return (
     <nav aria-label="Pages" className="flex flex-wrap items-center gap-2 text-sm">
       {LINKS.map(({ href, label }) =>
