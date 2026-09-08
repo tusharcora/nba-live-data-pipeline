@@ -1,10 +1,13 @@
+import datetime as dt
+
 import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, create_engine, insert
 
 from api.core import cache as cache_module
 from api.main import app
-from api.routers.news import get_news_reader
+from api.routers.news import SQLAlchemyNewsReader, get_news_reader
 
 API_KEY = "test-service-key"
 
@@ -162,13 +165,22 @@ def test_list_news_second_request_is_served_from_cache(client, monkeypatch):
 
 
 def test_list_news_cached_and_uncached_responses_are_byte_identical(client):
-    """Regression test: `cached_json` round-trips the response through
-    `json.dumps(..., default=str)`. If `list_news` ever returned raw
-    `datetime` objects again, the cache miss (FastAPI's own encoder, which
-    produces ISO-8601) and the cache hit (`str(datetime)`, space-separated,
-    not ISO-8601) would silently disagree on timestamp format. Comparing
-    full response bodies -- not just `reader.call_count` -- is what would
-    actually catch that.
+    """Covers the route + `cached_json` round-trip: `cached_json` stores the
+    computed result via `json.dumps(..., default=str)`, so *if* a reader
+    ever handed the route raw `datetime` objects again, a cache miss
+    (FastAPI's own encoder, which produces ISO-8601) and a cache hit
+    (`str(datetime)`, space-separated, not ISO-8601) would silently
+    disagree on timestamp format. Comparing full response bodies -- not
+    just `reader.call_count` -- is what would catch that divergence at
+    this layer.
+
+    NOTE: this only proves the route/cache layer is well-behaved *given* a
+    reader that already returns isoformat strings (`FakeNewsReader`, per
+    its docstring, mirrors that contract) -- it does not exercise
+    `SQLAlchemyNewsReader.list_news`'s own `.isoformat()` conversion, since
+    that class is never called here. See
+    `test_sqlalchemy_news_reader_list_news_returns_isoformat_strings`
+    below for a test that calls the real reader directly.
     """
     reader = FakeNewsReader(FAKE_ROWS)
     app.dependency_overrides[get_news_reader] = lambda: reader
@@ -183,6 +195,77 @@ def test_list_news_cached_and_uncached_responses_are_byte_identical(client):
     # Pin the exact ISO-8601 format so a regression to `str(datetime)`
     # ("2026-09-06 18:30:00+00:00", space-separated) would fail loudly.
     assert first.json()["data"][0]["published_at"] == "2026-09-06T18:30:00+00:00"
+
+
+def _sqlite_news_engine(rows: list[dict]):
+    """A real (but throwaway, in-memory) SQLite engine standing in for the
+    Postgres `news_articles` table, so `SQLAlchemyNewsReader.list_news` --
+    which reflects a live table via `autoload_with` -- can be exercised
+    directly, the same way `alembic --sql`/`dbt parse` verify this project's
+    other SQL-touching code without a live Postgres. Mocking `Engine` for
+    this specific method isn't practical: `autoload_with` needs something
+    genuinely inspectable to reflect column types from.
+    """
+    engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    news_articles = Table(
+        "news_articles",
+        metadata,
+        Column("article_id", Integer, primary_key=True),
+        Column("headline", String),
+        Column("summary", String),
+        Column("byline", String),
+        Column("published_at", DateTime()),
+        Column("article_url", String),
+        Column("source", String),
+        Column("ingested_at", DateTime()),
+    )
+    metadata.create_all(engine)
+    if rows:
+        with engine.begin() as conn:
+            conn.execute(insert(news_articles), rows)
+    return engine
+
+
+def test_sqlalchemy_news_reader_list_news_returns_isoformat_strings():
+    """Exercises `SQLAlchemyNewsReader.list_news` directly -- not through
+    `FakeNewsReader`/the FastAPI DI seam -- against a real reflected table,
+    so it actually covers the `.isoformat()` conversion the router fix
+    added. If that conversion were reverted back to a bare `dict(row)`,
+    `published_at`/`ingested_at` below would come back as `datetime`
+    objects, which fail an `== <isoformat string>` comparison and fail
+    `isinstance(..., str)` -- so this test would fail.
+
+    Uses naive (no-tzinfo) datetimes: SQLite's `DATETIME` affinity doesn't
+    round-trip a `tzinfo` the way Postgres's `TIMESTAMPTZ` does, and that
+    round-trip fidelity isn't what this test is about -- only that
+    `list_news` calls `.isoformat()` on whatever `datetime` the row comes
+    back with, whether tz-aware or naive.
+    """
+    published = dt.datetime(2026, 9, 6, 18, 30)
+    ingested = dt.datetime(2026, 9, 6, 18, 45)
+    engine = _sqlite_news_engine(
+        [
+            {
+                "article_id": 1,
+                "headline": "Ben Simmons returning to NBA",
+                "summary": "...",
+                "byline": "Marc J. Spears",
+                "published_at": published,
+                "article_url": "https://www.espn.com/nba/story/_/id/1",
+                "source": "espn",
+                "ingested_at": ingested,
+            }
+        ]
+    )
+
+    rows = SQLAlchemyNewsReader(engine=engine).list_news(reporter=None, limit=20)
+
+    assert len(rows) == 1
+    assert rows[0]["published_at"] == published.isoformat()
+    assert rows[0]["ingested_at"] == ingested.isoformat()
+    assert isinstance(rows[0]["published_at"], str)
+    assert isinstance(rows[0]["ingested_at"], str)
 
 
 def test_list_news_falls_open_when_redis_is_unreachable(client, monkeypatch):
