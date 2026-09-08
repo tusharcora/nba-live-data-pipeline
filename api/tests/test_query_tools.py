@@ -1532,6 +1532,61 @@ def test_get_player_streak_no_games_in_range_is_no_match(client):
     assert resp.json()["status"] == "no_match"
 
 
+def test_get_player_streak_broken_by_later_subthreshold_game_is_not_active(client):
+    # A real streak exists but is broken by a later game below threshold.
+    # The streak is the longest, but is_active must be False because the
+    # most recent game in range does not clear the threshold and thus breaks
+    # the streak. This tests the critical query path: later games must be
+    # considered even after a streak is found.
+    def _row(i, points):
+        return {
+            "stat_id": 30 + i,
+            "game_id": 30 + i,
+            "player_id": 77,
+            "player_first_name": "Broken",
+            "player_last_name": "Streak",
+            "team": "Lakers",
+            "points": points,
+            "rebounds": 5,
+            "assists": 5,
+            "steals": 1,
+            "blocks": 0,
+            "turnovers": 1,
+            "minutes_played": "30:00",
+        }
+
+    # Games 0-2 clear threshold (25pts), game 3 (most recent) breaks it (10pts)
+    rows = [_row(0, 25), _row(1, 25), _row(2, 25), _row(3, 10)]
+    games_by_id = {
+        30 + i: {
+            "game_id": 30 + i,
+            "game_date": date(2024, 1, 1 + i),
+            "season": 2023,
+            "status": "Final",
+            "postseason": False,
+            "home_team": "Los Angeles Lakers",
+            "away_team": "Denver Nuggets",
+            "home_score": 110,
+            "away_score": 104,
+            "source_pulled_at": "2024-01-01T23:00:00",
+        }
+        for i in range(4)
+    }
+    reader = FakePlayerStreakToolReader(player_rows=rows, games_by_id=games_by_id)
+    app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-streak",
+        **_auth(params={"player_name": "Broken Streak", "stat": "points", "threshold": 20}),
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["longest_streak"] == 3
+    assert data["streak_date_range"] == {"start_date": "2024-01-01", "end_date": "2024-01-03"}
+    assert data["is_active"] is False  # Most recent game (2024-01-04) breaks the streak
+
+
 def test_get_player_streak_requires_api_key(client):
     reader = FakePlayerStreakToolReader()
     app.dependency_overrides[get_player_streak_tool_reader] = lambda: reader
