@@ -6,6 +6,7 @@ import {
   Activity,
   BarChart3,
   Gauge,
+  Newspaper,
   Radio,
   Search,
   Settings as SettingsIcon,
@@ -47,6 +48,7 @@ const NAV_ITEMS = [
   { href: "/live", label: "Live Board", icon: Radio },
   { href: "/quality", label: "Data Quality Scorecard", icon: BarChart3 },
   { href: "/explorer", label: "Historical Explorer", icon: Search },
+  { href: "/news", label: "NBA News", icon: Newspaper },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 
