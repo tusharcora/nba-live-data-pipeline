@@ -165,13 +165,17 @@ function parseDonePayload(raw: string): SearchDonePayload | null {
 // rather than thrown on, consistent with every other field in this function.
 //
 // VALID_RESULT_TYPES is typed against `SearchResultData["type"]` (not a
-// bare `string[]`) specifically so that adding a new variant to that union
-// in search-result-types.ts without adding it here is a compile error, not
-// a silent runtime drop -- a real regression this list once had: two new
+// bare `string[]`) so a *misspelled* entry is a compile error -- this does
+// NOT make an *omitted* entry a compile error (TypeScript allows a
+// same-or-narrower array literal against this annotation), so adding a new
+// variant to search-result-types.ts's union still requires manually adding
+// it here too. This list once fell out of sync exactly that way: two new
 // tool result types (stat_aggregate, player_streak) landed in the union
 // while this array still only listed the original four, so every real
 // answer from either new tool was silently dropped to `resultData: null`
-// on this live client path.
+// on this live client path. When adding a new SearchResultData variant,
+// add it here in the same change -- there is no compiler backstop for
+// forgetting to.
 const VALID_RESULT_TYPES: readonly SearchResultData["type"][] = [
   "player_stats",
   "team_games",
