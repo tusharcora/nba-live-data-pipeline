@@ -410,21 +410,26 @@ def test_get_player_stat_aggregate_rejects_unknown_operation(client):
 
 
 def test_get_player_stat_aggregate_ambiguous_name(client):
-    rows = FAKE_PLAYER_STATS + [
-        {**FAKE_PLAYER_STATS[0], "stat_id": 7, "player_id": 99, "player_last_name": "Jamesy"}
-    ]
-    reader = FakePlayerStatAggregateToolReader(player_rows=rows)
+    # "Jordan" fuzzy-matches both "Michael Jordan" and "Jordan Poole" in the
+    # shared FAKE_PLAYER_STATS fixture -- same query and same two candidates
+    # api/tests/test_query_tools.py's existing
+    # test_get_player_stats_ambiguous_name_returns_candidates already
+    # exercises for get_player_stats, reused here since it's a real
+    # ambiguous case (neither name is an exact match for "Jordan", so
+    # _resolve_name's exact-match-first branch never short-circuits it).
+    reader = FakePlayerStatAggregateToolReader()
     app.dependency_overrides[get_player_stat_aggregate_tool_reader] = lambda: reader
 
     resp = client.get(
         "/tools/player-stat-aggregate",
-        **_auth(params={"player_name": "LeBron James", "stat": "points", "operation": "sum"}),
+        **_auth(params={"player_name": "Jordan", "stat": "points", "operation": "sum"}),
     )
 
-    # "LeBron James" vs "LeBron Jamesy" is within difflib's default fuzzy
-    # cutoff of an exact query for either -- same ambiguity mechanism the
-    # existing get_player_stats ambiguous-name test already exercises.
-    assert resp.json()["status"] in ("ok", "ambiguous")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ambiguous"
+    candidate_names = {c["name"] for c in body["candidates"]}
+    assert candidate_names == {"Michael Jordan", "Jordan Poole"}
 
 
 def test_get_player_stat_aggregate_requires_api_key(client):
