@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "db",
+    "quality",
     "fastapi>=0.141.1",
     "psycopg[binary]>=3.3.5",
     "pydantic-settings>=2.15.0",
@@ -35,6 +36,7 @@ dev = [
 
 [tool.uv.sources]
 db = { path = "../db", editable = true }
+quality = { path = "../quality", editable = true }
 
 [tool.vercel]
 entrypoint = "src.api.main:app"
