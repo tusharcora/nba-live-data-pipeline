@@ -7,6 +7,7 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { isTrustCenterLive } from "@/lib/feature-flags";
 
 import {
   AgreementGaugeChart,
@@ -153,19 +154,18 @@ export async function QualitySection() {
 
   return (
     <div className="flex flex-1 flex-col gap-8 font-sans">
-      {/* NOT YET LIVE-VERIFIED (spec docs/superpowers/specs/2026-09-08-bettor-trust-pivot-design.md
-          §9, docs/PROGRESS.md "Bettor-trust pivot Phase A follow-up") --
-          same caveat as web/app/page.tsx's hero: source_conflicts/
+      {/* Gated by TRUST_CENTER_LIVE (web/lib/feature-flags.ts) -- same
+          caveat as web/app/page.tsx's hero: source_conflicts/
           schema_change_log/quality_metrics are all still empty in
-          production. Do NOT deploy or publicize this copy before the
-          October real-data verification pass. */}
+          production. Defaults to the safe, forward-looking copy below. */}
       <div className="flex flex-col gap-2">
         <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
           Trust Center
         </h1>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Every score comes from two independent sources. When they don&apos;t
-          match, you see it here — not a quietly-picked number.
+          {isTrustCenterLive()
+            ? "Every score comes from two independent sources. When they don't match, you see it here — not a quietly-picked number."
+            : "Every score comes from two independent sources. Disagreement detection is built into the pipeline and shown below as it runs."}
         </p>
       </div>
 
