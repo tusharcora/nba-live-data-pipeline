@@ -1,14 +1,12 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-import pytest
-
 from api.routers.game_conflict import (
     NBA_GAME_ID_OFFSET,
     DataConfidence,
     et_day_bounds,
-    find_score_conflict,
     resolve_nba_stats_game_id,
+    select_score_conflict,
 )
 
 
@@ -62,7 +60,8 @@ def test_resolve_nba_stats_game_id_balldontlie_no_match_returns_none():
 
 def test_resolve_nba_stats_game_id_balldontlie_shared_team_name_picks_first_match():
     gold_id = 987654
-    # Two candidates on the same day sharing a team name -- can't safely pick one.
+    # Two candidates on the same day sharing a team name -- the matcher
+    # doesn't attempt true ambiguity detection, it just claims in order.
     candidates = [
         FakeCandidate(game_id=1, home_team="Lakers", away_team="Nets"),
         FakeCandidate(game_id=2, home_team="Lakers", away_team="Bulls"),
@@ -79,28 +78,83 @@ def test_resolve_nba_stats_game_id_ignores_candidates_missing_team_names():
     assert resolve_nba_stats_game_id(gold_id, "Lakers", "Nets", candidates) is None
 
 
-def test_find_score_conflict_returns_first_score_field_match():
+def test_select_score_conflict_returns_first_score_field_match():
+    # Production-realistic shape: `reconcile_live_states` always hardcodes
+    # primary_source="nba_stats" -- a `primary_source="balldontlie"` row (as
+    # this test previously used) can never occur in production. See
+    # ingestion/flows/live_game_flow.py::reconcile_live_states.
     conflicts = [
         FakeConflict(
             field_name="home_score",
-            primary_source="balldontlie",
-            primary_value="103",
-            secondary_source="nba_stats",
-            secondary_value="101",
+            primary_source="nba_stats",
+            primary_value="101",
+            secondary_source="balldontlie",
+            secondary_value="103",
         )
     ]
-    result = find_score_conflict(conflicts)
+    result = select_score_conflict(conflicts)
     assert result == DataConfidence(
         field="home_score",
-        note="balldontlie and nba_stats disagree on home score; showing balldontlie's number.",
-        primary_source="balldontlie",
-        primary_value="103",
-        secondary_source="nba_stats",
-        secondary_value="101",
+        note=(
+            "nba_stats and balldontlie disagreed on home score during live "
+            "play (nba_stats: 101, balldontlie: 103)."
+        ),
+        primary_source="nba_stats",
+        primary_value="101",
+        secondary_source="balldontlie",
+        secondary_value="103",
     )
 
 
-def test_find_score_conflict_ignores_non_score_fields():
+def test_select_score_conflict_note_never_claims_which_number_is_shown():
+    # The critical invariant this test pins: the note must never assert
+    # which source's value is actually displayed on a historical/Gold
+    # answer -- `primary_source` only reflects live reconciliation, not
+    # what get_game_result/get_player_stats actually serve for a
+    # balldontlie-sourced Gold game. See select_score_conflict's docstring.
+    conflicts = [
+        FakeConflict(
+            field_name="away_score",
+            primary_source="nba_stats",
+            primary_value="90",
+            secondary_source="balldontlie",
+            secondary_value="92",
+        )
+    ]
+    result = select_score_conflict(conflicts)
+    assert result is not None
+    assert "showing" not in result.note
+
+
+def test_select_score_conflict_most_recent_wins_when_multiple_conflicts_exist():
+    # `load_score_conflict`'s query is ordered by detected_at DESC, so by
+    # the time conflicts reach this pure function they're already
+    # newest-first -- this pins the "most recent wins" contract at the
+    # pure-function level (the DB ordering itself isn't unit-testable
+    # without a live database).
+    conflicts = [
+        FakeConflict(
+            field_name="home_score",
+            primary_source="nba_stats",
+            primary_value="101",
+            secondary_source="balldontlie",
+            secondary_value="103",
+        ),
+        FakeConflict(
+            field_name="home_score",
+            primary_source="nba_stats",
+            primary_value="99",
+            secondary_source="balldontlie",
+            secondary_value="98",
+        ),
+    ]
+    result = select_score_conflict(conflicts)
+    assert result is not None
+    assert result.primary_value == "101"
+    assert result.secondary_value == "103"
+
+
+def test_select_score_conflict_ignores_non_score_fields():
     # Documents the Global Constraints invariant: this should never happen
     # in production, but the function must not misbehave if it did.
     conflicts = [
@@ -112,27 +166,27 @@ def test_find_score_conflict_ignores_non_score_fields():
             secondary_value="4",
         )
     ]
-    assert find_score_conflict(conflicts) is None
+    assert select_score_conflict(conflicts) is None
 
 
-def test_find_score_conflict_empty_returns_none():
-    assert find_score_conflict([]) is None
+def test_select_score_conflict_empty_returns_none():
+    assert select_score_conflict([]) is None
 
 
 def test_data_confidence_to_dict_shape():
     dc = DataConfidence(
         field="away_score",
         note="x",
-        primary_source="balldontlie",
+        primary_source="nba_stats",
         primary_value="1",
-        secondary_source="nba_stats",
+        secondary_source="balldontlie",
         secondary_value="2",
     )
     assert dc.to_dict() == {
         "field": "away_score",
         "note": "x",
-        "primary_source": "balldontlie",
+        "primary_source": "nba_stats",
         "primary_value": "1",
-        "secondary_source": "nba_stats",
+        "secondary_source": "balldontlie",
         "secondary_value": "2",
     }

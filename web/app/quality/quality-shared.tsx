@@ -146,6 +146,16 @@ const SEVERITY_DOT: Record<RecentCatch["severity"], string> = {
   critical: "bg-destructive",
 };
 
+// `detected_at` is a full ISO timestamp (e.g. "2026-01-04T00:00:00+00:00")
+// -- this feed is explicitly framed as human-readable, so render it via
+// the viewer's own locale rather than the raw ISO string.
+// `formatGameDate` (lib/team-names.ts) only accepts a plain "YYYY-MM-DD"
+// date and would return this string unchanged, so it doesn't fit here.
+function formatCatchTimestamp(detectedAt: string): string {
+  const parsed = new Date(detectedAt);
+  return Number.isNaN(parsed.getTime()) ? detectedAt : parsed.toLocaleString();
+}
+
 export function RecentCatchesFeed({ catches }: { catches: RecentCatch[] }) {
   if (catches.length === 0) {
     return (
@@ -165,7 +175,9 @@ export function RecentCatchesFeed({ catches }: { catches: RecentCatch[] }) {
           />
           <div className="flex flex-col gap-1">
             <p className="text-sm text-foreground">{item.message}</p>
-            <p className="text-xs text-muted-foreground">{item.detected_at}</p>
+            <p className="text-xs text-muted-foreground">
+              {formatCatchTimestamp(item.detected_at)}
+            </p>
           </div>
         </li>
       ))}

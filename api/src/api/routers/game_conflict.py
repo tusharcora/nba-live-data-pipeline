@@ -31,13 +31,8 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from api.routers.board import NBA_GAME_ID_OFFSET
 from quality.reconciliation import match_games_by_team_overlap
-
-# Matches ingestion/src/ingestion/sources/nba_stats.py's NBA_GAME_ID_OFFSET
-# and api/src/api/routers/board.py's own copy of the same constant --
-# duplicated rather than imported since `api` has no dependency on
-# `ingestion`, same rationale board.py already documents for its own copy.
-NBA_GAME_ID_OFFSET = 100_000_000_000
 
 ET_ZONE = ZoneInfo("America/New_York")
 
@@ -122,12 +117,25 @@ def resolve_nba_stats_game_id(
     return secondary_fields["game_id"]
 
 
-def find_score_conflict(conflicts: Sequence[_ConflictLike]) -> DataConfidence | None:
+def select_score_conflict(conflicts: Sequence[_ConflictLike]) -> DataConfidence | None:
     """The first conflict in `conflicts` scoped to a real score field, or
     `None`. `conflicts` is expected to already be scoped to one resolved
-    nba_stats `game_id` by the caller -- this stays a pure, DB-free
-    function so the display-copy logic is unit-testable without a
-    database (see Task 1's tests)."""
+    nba_stats `game_id` by the caller, ordered most-recent-first (see
+    `load_score_conflict`) -- this stays a pure, DB-free function so the
+    display-copy logic is unit-testable without a database (see Task 1's
+    tests).
+
+    The note deliberately does NOT claim which source's number is
+    currently displayed: `conflict.primary_source` only records which
+    source was "primary" during *live* reconciliation
+    (`ingestion/flows/live_game_flow.py::reconcile_live_states` always
+    hardcodes `primary_source="nba_stats"`), but the value actually shown
+    on a historical/Gold-derived answer can come from a different source
+    entirely (e.g. balldontlie, for a balldontlie-sourced Gold game). This
+    module has no way to verify which source's number is actually being
+    displayed, so it states only the disagreement itself and both values,
+    which the data does support.
+    """
     for conflict in conflicts:
         if conflict.field_name not in SCORE_FIELDS:
             continue
@@ -136,8 +144,9 @@ def find_score_conflict(conflicts: Sequence[_ConflictLike]) -> DataConfidence | 
             field=conflict.field_name,
             note=(
                 f"{conflict.primary_source} and {conflict.secondary_source} "
-                f"disagree on {readable_field}; showing "
-                f"{conflict.primary_source}'s number."
+                f"disagreed on {readable_field} during live play "
+                f"({conflict.primary_source}: {conflict.primary_value}, "
+                f"{conflict.secondary_source}: {conflict.secondary_value})."
             ),
             primary_source=conflict.primary_source,
             primary_value=conflict.primary_value,
@@ -166,7 +175,7 @@ def load_score_conflict(
 
     Not directly unit-tested here (no live-DB unit tests exist anywhere
     in this codebase per CLAUDE.md's testing philosophy) -- the tricky
-    logic it calls (`resolve_nba_stats_game_id`, `find_score_conflict`)
+    logic it calls (`resolve_nba_stats_game_id`, `select_score_conflict`)
     is covered by Task 1's pure-function tests; this function's own thin
     SQLAlchemy glue is exercised at the route level via
     `GameResultToolReader`/`PlayerStatsToolReader` fakes (Task 2) and,
@@ -177,21 +186,33 @@ def load_score_conflict(
     # import-time dependency on `db` for callers that only need the pure
     # functions above (e.g. Task 1's tests).
 
-    start_utc, end_utc = et_day_bounds(game_date)
-    with Session(engine) as session:
-        candidates = session.scalars(
-            select(LiveGameState).where(
-                LiveGameState.source == "nba_stats",
-                LiveGameState.pulled_at >= start_utc,
-                LiveGameState.pulled_at < end_utc,
-            )
-        ).all()
+    # The nba_api-offset branch is pure arithmetic and needs no query at
+    # all -- short-circuit before ever touching `LiveGameState`. Without
+    # this, every nba_api-sourced game call (the majority of them) paid
+    # for a real DB round-trip it never uses the result of, and
+    # get_player_stats calls this once per row (up to 500 rows/call).
+    if game_id >= NBA_GAME_ID_OFFSET:
+        nba_stats_id: int | None = game_id - NBA_GAME_ID_OFFSET
+    else:
+        start_utc, end_utc = et_day_bounds(game_date)
+        with Session(engine) as session:
+            candidates = session.scalars(
+                select(LiveGameState).where(
+                    LiveGameState.source == "nba_stats",
+                    LiveGameState.pulled_at >= start_utc,
+                    LiveGameState.pulled_at < end_utc,
+                )
+            ).all()
         nba_stats_id = resolve_nba_stats_game_id(game_id, home_team, away_team, candidates)
         if nba_stats_id is None:
             return None
+
+    with Session(engine) as session:
         conflicts = session.scalars(
-            select(SourceConflict).where(SourceConflict.game_id == str(nba_stats_id))
+            select(SourceConflict)
+            .where(SourceConflict.game_id == str(nba_stats_id))
+            .order_by(SourceConflict.detected_at.desc())
         ).all()
 
-    result = find_score_conflict(conflicts)
+    result = select_score_conflict(conflicts)
     return result.to_dict() if result is not None else None

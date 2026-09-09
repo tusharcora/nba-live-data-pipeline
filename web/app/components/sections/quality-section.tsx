@@ -153,18 +153,20 @@ export async function QualitySection() {
 
   return (
     <div className="flex flex-1 flex-col gap-8 font-sans">
-      <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
-        Trust Center
-      </h1>
-      <p className="max-w-2xl text-sm text-muted-foreground">
-        Every score comes from two independent sources. When they don&apos;t
-        match, you see it here — not a quietly-picked number.
-      </p>
+      <div className="flex flex-col gap-2">
+        <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
+          Trust Center
+        </h1>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Every score comes from two independent sources. When they don&apos;t
+          match, you see it here — not a quietly-picked number.
+        </p>
+      </div>
 
       {!result.ok && (
         <Alert variant="destructive">
           <TriangleAlert aria-hidden="true" />
-          <AlertTitle>Quality data is unavailable</AlertTitle>
+          <AlertTitle>Trust Center data is unavailable</AlertTitle>
           <AlertDescription>{result.message}</AlertDescription>
         </Alert>
       )}
