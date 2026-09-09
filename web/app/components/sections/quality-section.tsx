@@ -21,6 +21,7 @@ import {
   type QualityResponse,
 } from "@/app/quality/quality-shared";
 import { SortableConflictsTable, SortableSchemaChangesTable } from "@/app/quality/quality-tables";
+import { StatTile } from "@/app/components/stat-tile";
 
 async function getBaseUrl(): Promise<string> {
   const h = await headers();
@@ -174,21 +175,12 @@ export async function QualitySection() {
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {result.data.quality.metrics.map((metric) => (
-                  <Card key={metric.check_name} size="sm">
-                    <CardHeader>
-                      <p className="truncate text-xs font-medium text-muted-foreground">
-                        {metric.check_name}
-                      </p>
-                    </CardHeader>
-                    <CardContent className="flex flex-col gap-1">
-                      <p className="font-mono text-2xl font-semibold tabular-nums text-foreground">
-                        {formatValue(metric.value)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {metric.run_at}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <StatTile
+                    key={metric.check_name}
+                    label={metric.check_name}
+                    value={formatValue(metric.value)}
+                    caption={metric.run_at}
+                  />
                 ))}
               </div>
             )}
@@ -267,18 +259,12 @@ export async function QualitySection() {
             <h3 className="text-lg font-medium text-foreground">
               Source conflicts
             </h3>
-            <Card size="sm" className="w-fit min-w-40">
-              <CardHeader>
-                <p className="text-xs font-medium text-muted-foreground">
-                  Total conflicts
-                </p>
-              </CardHeader>
-              <CardContent>
-                <p className="font-mono text-2xl font-semibold tabular-nums text-foreground">
-                  {result.data.quality.conflicts.total.toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
+            <div className="w-fit min-w-40">
+              <StatTile
+                label="Total conflicts"
+                value={result.data.quality.conflicts.total.toLocaleString()}
+              />
+            </div>
 
             {result.data.quality.conflicts.recent.length === 0 ? (
               <EmptySectionState message="No source conflicts recorded. Field-level disagreements between sources will be listed here as they're detected." />
