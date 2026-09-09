@@ -46,9 +46,13 @@ re-build things that exist.
   distinct color (`COMMENTARY_COLOR`, pink for conflict, amber for stale).
 - **The Quality page's conflicts table** (`web/app/quality/quality-tables.tsx`'s
   `SortableConflictsTable`, backed by `GET /quality`'s `conflicts.recent`
-  array). Already exposes every recent `source_conflicts` row with
-  `field_name`, both sources' values, and the applied `resolution` —
-  real, structured, sortable.
+  array). Structurally real and sortable, **but has a live bug**: the API
+  serializes the key as `field_name` (`quality.py::_serialize_conflict`),
+  while the frontend's `Conflict` type (`quality-shared.tsx`) and
+  `SortableConflictsTable` both read `conflict.field` — so the Field
+  column always renders "–" in production today. Fix this as part of
+  Phase A (§6 reuses this same data for the new recent-catches feed, and
+  must not copy the same key mismatch into it).
 - **The NL search feature itself** (`/search`, `search-section.tsx`,
   `search-loop.ts`, `search-tools.ts`, the `/tools/*` FastAPI router in
   `query_tools.py`). Live, wired into nav, previously verified end-to-end
@@ -148,8 +152,15 @@ row):
   instead. Add it as its own method on a new/extended reader rather than
   overloading the existing one with an optional window param that only
   one caller ever omits.
-- Response gains an optional `data_confidence` field, present only when a
-  relevant conflict exists:
+- `data_confidence` lives **inside the tool's existing `data` object**,
+  not as a new top-level sibling of `status`/`data`/`candidates`/`message`
+  — `query_tools.py`'s shared `_ok()` builder documents every route as
+  returning exactly one of a fixed set of top-level shapes, and other
+  optional extras (`date_range`, `matching_games_truncated`) already live
+  inside `data` rather than as new top-level keys. This is a deliberate
+  choice, not left to the implementer.
+- Response gains an optional `data_confidence` field on `data`, present
+  only when a relevant conflict exists:
   ```json
   "data_confidence": {
     "field": "home_score",
@@ -173,9 +184,23 @@ row):
 
 ### 4.3 Frontend change (`web/lib/search-tools.ts`, `search-loop.ts`, `search-result-tables.tsx`)
 
-- `search-tools.ts`'s envelope normalization passes `data_confidence`
-  through untouched into `ToolResultEnvelope` (additive field, no
-  existing type needs to change shape beyond adding the new optional key).
+- `search-tools.ts`'s `deriveResultData()` must be updated to copy
+  `data_confidence` from the raw tool payload into `GameResultResultData`/
+  `PlayerStatsResultData` (`web/lib/search-result-types.ts`, where both
+  types also need the new optional field added). `SearchResultDataView`
+  (`search-result-tables.tsx`) renders strictly off these typed
+  `SearchResultData` shapes with no generic envelope passthrough, so
+  without this step the badge cannot appear on a result card no matter
+  what the backend returns — this touches three files
+  (`search-result-types.ts`, `search-tools.ts`, `search-result-tables.tsx`),
+  not the two originally implied.
+- **Known limitation, not fixed in this phase**: `search-loop.ts::finalize()`
+  suppresses `resultData` entirely whenever a turn dispatches 2+ tool
+  results (its documented multi-subject-comparison boundary). A
+  comparison question that happens to trigger this still gets a prose
+  answer that can mention the disagreement (the model sees `data`
+  either way), but the visual badge won't render on that turn. Accepted
+  as-is; revisit only if this turns out to matter in practice.
 - `search-loop.ts`'s system prompt gains one explicit instruction: when a
   tool result includes `data_confidence`, the answer must state the
   disagreement plainly (mirroring board commentary's existing tone,
@@ -193,10 +218,16 @@ row):
 Follows this project's existing pattern exactly (see `search-tools.test.ts`,
 `search-loop.test.ts` for the shape to extend):
 
-- `query_tools.py`: a fake `GameResultToolReader`/`PlayerStatsToolReader`
-  test double returning a conflict row, asserting `data_confidence`
-  appears with correct field mapping; a no-conflict case asserting the
-  field is absent (not `null`, not an empty object).
+- `query_tools.py`: `GameResultToolReader`/`PlayerStatsToolReader` are
+  `@runtime_checkable` Protocols with existing fakes in
+  `api/tests/test_query_tools.py` — adding a new conflict-lookup method to
+  either Protocol means updating every existing fake to implement it too,
+  or any existing test path that now reaches the new call breaks. Do this
+  update first, before writing new tests, not as a side effect discovered
+  by a failing test run.
+- Then: a fake test double returning a conflict row, asserting
+  `data_confidence` appears with correct field mapping; a no-conflict case
+  asserting the field is absent (not `null`, not an empty object).
 - `search-tools.test.ts`: envelope normalization passes `data_confidence`
   through unchanged.
 - `search-loop.test.ts`: a fake tool result carrying `data_confidence`
@@ -239,13 +270,24 @@ Changes:
   trust today's data" in plain language before showing any raw metric.
 - **New "recent catches" feed**, placed above the existing detailed
   tables: merges `schema_changes` and `conflicts.recent` (both already
-  returned by `GET /quality`) into one reverse-chronological list,
-  each entry a short human-readable line ("Detected a scoring
-  disagreement between balldontlie and nba_stats on the Lakers @ Celtics
-  game, 2m ago — resolved using balldontlie" / "nba_stats added a new
-  field to its live feed, 3h ago — no action needed"). This is a new
-  frontend-only merge/format function over data both endpoints already
-  return — no new API endpoint needed.
+  returned by `GET /quality`) into one reverse-chronological list. This
+  is a new frontend-only merge/format function over data both endpoints
+  already return — no new API endpoint needed — but the format function
+  needs to handle real cases the obvious example doesn't cover:
+  - **Conflict entries**: the copy must be built from `primary_source`
+    (e.g. "resolved using balldontlie") — `resolution` is **not** a
+    source label, it's the winning *value* itself
+    (`quality/reconciliation.py` sets `resolution = primary_value`).
+    Using `resolution` where a source name is expected would render the
+    winning number instead of who won.
+  - **Schema-change entries, all three `change_type`s**, not just
+    `added`: `SchemaChangeLog.change_type` is `added` / `removed` /
+    `type_changed` (`quality/fingerprint.py`), and the app already treats
+    these with different severity elsewhere (`schemaChangeBadgeVisual`:
+    added=secondary, removed=destructive, type_changed=outline). A
+    `removed` field is materially more concerning than an `added` one (it
+    can silently break downstream parsing) and the copy should say so,
+    not use one generic "no action needed" line for all three.
 - The existing `SortableConflictsTable`, schema-change table, and PSI/
   agreement-rate charts stay exactly as they are, below the new feed, for
   anyone who wants the raw detail — this is additive, not a replacement.
@@ -273,17 +315,64 @@ homepage/Trust Center work (3-4) — safe to build as two parallel tracks.
 - Odds/lines as a data source (explicitly rejected in brainstorming).
 - API productization (public keys, billing, docs portal, usage tiers).
 
-## 9. Open questions for review
+## 9. Blocking finding: §4's premise needs a decision before implementation
+
+An adversarial subagent review of this spec (2026-09-08) plus a direct
+check against the real local database surfaced a problem serious enough
+to resolve before writing code for §4, not during implementation:
+
+**The id-space mismatch is real and broader than originally scoped.**
+`source_conflicts.game_id` is written by exactly one production path —
+`ingestion/flows/live_game_flow.py::reconcile_live_states` — as
+**nba_stats's own unoffset id** (e.g. `"22500123"`). Gold `games.game_id`
+(what `get_game_result`/`get_player_stats` actually key off) is a union of
+two disjoint id spaces with no `source` column to tell them apart:
+balldontlie's native (unoffset) id, and nba_api-backfilled games offset by
+`NBA_GAME_ID_OFFSET` (100,000,000,000). So the join needs an
+undocumented "subtract the offset" step for nba_api-sourced Gold games —
+and for a **balldontlie-sourced** Gold game, there is no persisted mapping
+back to nba_stats's id space at all; nothing this codebase writes today
+recovers it. This affects `get_game_result` (the tool that returns the
+literal score this whole pitch is about) exactly as much as it affects
+`get_player_stats`, not just the latter as originally flagged.
+
+**Worse: as of this review, the relevant tables are empty in the real
+database**, independent of the id-space question —
+`SELECT count(*) FROM source_conflicts` returns **0**, and so do
+`schema_change_log`, `quality_metrics`, and `live_game_state` (checked
+directly against the local Postgres instance, not inferred). `games` has
+38,002 real rows (backfills work), but nothing that generates a trust
+signal currently has any real rows to generate from. This matches this
+project's own recurring, previously-documented pattern (see project
+memory: `quality_metrics`/schema-drift checks have never had a
+meaningful volume of real dual-source live-polling data to work from) —
+it isn't a new problem, but it means **§4 as designed will ship
+correct, tested code that has nothing real to surface in production
+today**, and §6's "recent catches" feed will render empty for the same
+reason.
+
+For a portfolio piece, "correctly built, dormant until real data
+accumulates" was this project's established and accepted pattern (see
+`player_game_stats`' months-long empty period, the shelved win-probability
+model). **For a real product aimed at bettors, a trust feature that never
+visibly fires is a much bigger problem** — it's the one thing meant to
+make a first-time user believe the pitch, and it would currently show
+nothing.
+
+**This needs a decision, not an assumption, before §4 is implemented:**
+does Phase A also need "get real dual-source live polling running
+consistently enough to produce real `source_conflicts`/`schema_change_log`
+rows" as an explicit prerequisite (a data-operations task, not a code
+task) — or does Phase A ship as designed and accept it will look inert
+until that data exists, same as this project has always handled data
+gaps? This also determines whether it's worth fixing the id-space gap now
+(e.g. adding a `source` column to Gold `games`, or persisting the
+nba_stats-space id at ingestion time for balldontlie-sourced games) or
+deferring it until there's real conflict volume to actually join against.
+
+## 10. Other open questions
 
 - Exact wording for the homepage hero and Trust Center copy is left
   loose above (marked "to be refined") — worth a real pass during
   implementation rather than locking it in a spec no designer/copywriter
   has looked at.
-- `get_player_stats`' conflict lookup needs a concrete `(game_id, player)`
-  → relevant `source_conflicts` rows join; the exact query shape depends
-  on how `player_game_stats`' underlying `game_id` maps to
-  `source_conflicts.game_id`'s id space — this project has hit real
-  id-space mismatches between `nba_stats`-offset ids and Gold ids before
-  (see `board.py`'s `NBA_GAME_ID_OFFSET` handling) and the implementation
-  plan should verify this join concretely against real schema before
-  writing the query, not assume it lines up.
