@@ -10,6 +10,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
+import { COMMENTARY_COLOR } from "@/lib/commentary-tone";
 import { cn } from "@/lib/utils";
 import {
   Table,
@@ -339,6 +340,14 @@ export function BoxScoreTable({
                       {displayScore(row.home_score)}
                     </span>
                   </TeamLink>
+                  {row.data_confidence && (
+                    <span
+                      className={cn("text-xs", COMMENTARY_COLOR.conflict)}
+                      title={row.data_confidence.note}
+                    >
+                      ⚠
+                    </span>
+                  )}
                 </div>
               </TableCell>
             )}

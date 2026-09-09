@@ -57,6 +57,7 @@ from sqlalchemy.engine import Engine
 from api.core.db import get_engine
 from api.core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from api.core.security import require_api_key
+from api.routers.game_conflict import load_score_conflict
 
 router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(require_api_key)])
 
@@ -263,6 +264,10 @@ class PlayerStatsToolReader(Protocol):
         limit: int,
     ) -> list[dict]: ...
 
+    def find_score_conflict(
+        self, game_id: int, game_date: date_type, home_team: str, away_team: str
+    ) -> dict | None: ...
+
 
 class SQLAlchemyPlayerStatsToolReader:
     """Production `PlayerStatsToolReader`, backed by the dbt-owned Gold
@@ -319,6 +324,11 @@ class SQLAlchemyPlayerStatsToolReader:
         for row in rows:
             row["stat_id"] = str(row["stat_id"])
         return rows
+
+    def find_score_conflict(
+        self, game_id: int, game_date: date_type, home_team: str, away_team: str
+    ) -> dict | None:
+        return load_score_conflict(self._engine, game_id, game_date, home_team, away_team)
 
 
 def get_player_stats_tool_reader() -> PlayerStatsToolReader:
@@ -392,6 +402,11 @@ def get_player_stats(
     # JS-safe string stat_id, not just the production SQLAlchemy path.
     for row in rows:
         row["stat_id"] = str(row["stat_id"])
+        confidence = reader.find_score_conflict(
+            row["game_id"], row["game_date"], row["home_team"], row["away_team"]
+        )
+        if confidence is not None:
+            row["data_confidence"] = confidence
 
     return _ok({"player_name": resolved.name, "games": rows})
 
@@ -1278,6 +1293,10 @@ class GameResultToolReader(Protocol):
 
     def get_box_score(self, game_id: int) -> list[dict]: ...
 
+    def find_score_conflict(
+        self, game_id: int, game_date: date_type, home_team: str, away_team: str
+    ) -> dict | None: ...
+
 
 class SQLAlchemyGameResultToolReader:
     """Production `GameResultToolReader`, backed by the dbt-owned Gold
@@ -1314,6 +1333,11 @@ class SQLAlchemyGameResultToolReader:
         for row in rows:
             row["stat_id"] = str(row["stat_id"])
         return rows
+
+    def find_score_conflict(
+        self, game_id: int, game_date: date_type, home_team: str, away_team: str
+    ) -> dict | None:
+        return load_score_conflict(self._engine, game_id, game_date, home_team, away_team)
 
 
 def get_game_result_tool_reader() -> GameResultToolReader:
@@ -1367,6 +1391,12 @@ def get_game_result(
         return _no_match(
             f"No game found between {resolved_a.name} and {resolved_b.name} on {date}."
         )
+
+    confidence = reader.find_score_conflict(
+        row["game_id"], game_date, row["home_team"], row["away_team"]
+    )
+    if confidence is not None:
+        row["data_confidence"] = confidence
 
     box_score = reader.get_box_score(row["game_id"])
     for stat_row in box_score:

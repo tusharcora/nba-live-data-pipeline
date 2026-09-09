@@ -7,6 +7,7 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { isTrustCenterLive } from "@/lib/feature-flags";
 
 import {
   AgreementGaugeChart,
@@ -16,8 +17,10 @@ import {
   type PsiFieldSeries,
 } from "@/app/quality/quality-charts";
 import {
+  buildRecentCatches,
   EmptySectionState,
   formatValue,
+  RecentCatchesFeed,
   type QualityResponse,
 } from "@/app/quality/quality-shared";
 import { SortableConflictsTable, SortableSchemaChangesTable } from "@/app/quality/quality-tables";
@@ -151,20 +154,41 @@ export async function QualitySection() {
 
   return (
     <div className="flex flex-1 flex-col gap-8 font-sans">
-      <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
-        Data Quality
-      </h1>
+      {/* Gated by TRUST_CENTER_LIVE (web/lib/feature-flags.ts) -- same
+          caveat as web/app/page.tsx's hero: source_conflicts/
+          schema_change_log/quality_metrics are all still empty in
+          production. Defaults to the safe, forward-looking copy below. */}
+      <div className="flex flex-col gap-2">
+        <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
+          Trust Center
+        </h1>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          {isTrustCenterLive()
+            ? "Every score comes from two independent sources. When they don't match, you see it here — not a quietly-picked number."
+            : "Every score comes from two independent sources. Disagreement detection is built into the pipeline and shown below as it runs."}
+        </p>
+      </div>
 
       {!result.ok && (
         <Alert variant="destructive">
           <TriangleAlert aria-hidden="true" />
-          <AlertTitle>Quality data is unavailable</AlertTitle>
+          <AlertTitle>Trust Center data is unavailable</AlertTitle>
           <AlertDescription>{result.message}</AlertDescription>
         </Alert>
       )}
 
       {result.ok && (
         <>
+          <section className="flex flex-col gap-3">
+            <h3 className="text-lg font-medium text-foreground">Recent catches</h3>
+            <RecentCatchesFeed
+              catches={buildRecentCatches(
+                result.data.quality.schema_changes,
+                result.data.quality.conflicts.recent
+              )}
+            />
+          </section>
+
           <section className="flex flex-col gap-3">
             <h3 className="text-lg font-medium text-foreground">
               Quality metrics

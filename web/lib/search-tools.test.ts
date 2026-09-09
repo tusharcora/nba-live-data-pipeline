@@ -428,6 +428,48 @@ describe("callTool -- resultData", () => {
 
     expect(result.resultData).toBeNull();
   });
+
+  it("passes data_confidence through from a raw get_game_result response into resultData", async () => {
+    // deriveResultData's get_game_result case casts the raw `game` object
+    // straight through (`game as GameRow`) rather than an explicit
+    // field-by-field mapping, unlike get_team_games's teamGameViewToGameRow
+    // -- this pins that a future refactor toward explicit mapping can't
+    // silently drop data_confidence with zero test failures.
+    const dataConfidence = {
+      field: "home_score",
+      note: "nba_stats and balldontlie disagreed on home score during live play (nba_stats: 101, balldontlie: 103).",
+      primary_source: "nba_stats",
+      primary_value: "101",
+      secondary_source: "balldontlie",
+      secondary_value: "103",
+    };
+    fetchFromApiMock.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        game: {
+          game_id: 1,
+          game_date: "2024-01-03",
+          home_team: "Los Angeles Lakers",
+          away_team: "Boston Celtics",
+          data_confidence: dataConfidence,
+        },
+        box_score: [],
+      },
+      candidates: null,
+      message: null,
+    });
+
+    const result = await callTool("get_game_result", {
+      team_a: "Los Angeles Lakers",
+      team_b: "Boston Celtics",
+      date: "2024-01-03",
+    });
+
+    expect(result.resultData?.type).toBe("game_result");
+    if (result.resultData?.type === "game_result") {
+      expect(result.resultData.payload.game.data_confidence).toEqual(dataConfidence);
+    }
+  });
 });
 
 describe("callTool -- get_player_stat_aggregate", () => {
