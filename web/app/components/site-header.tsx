@@ -83,9 +83,9 @@ export function SiteHeader({ current }: { current?: PageHref }) {
             FOCUS_RING
           )}
         >
-          {/* Fixed brand wordmark -- always Bebas Neue regardless of the
-              user's font-choice setting, the same way a real product's
-              logotype doesn't follow a reader's font preference. */}
+          {/* Fixed brand wordmark -- always Bebas Neue, the same way a
+              real product's logotype doesn't follow the rest of the
+              page's type system. */}
           <h1 className="font-[family-name:var(--font-bebas-neue-raw)] text-2xl leading-none uppercase sm:text-3xl">
             <span className="text-white">Box</span>
             <span className="text-[#F5A623]">score.gg</span>
