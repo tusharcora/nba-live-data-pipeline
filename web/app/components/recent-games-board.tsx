@@ -345,7 +345,7 @@ export function RecentGamesBoard() {
               size="sm"
               variant="ghost"
               className={cn(
-                "w-full cursor-pointer border border-border bg-transparent hover:bg-muted/60",
+                "w-full cursor-pointer border border-border bg-transparent font-mono font-semibold tracking-[0.06em] uppercase hover:bg-muted/60",
                 FOCUS_RING
               )}
             >
