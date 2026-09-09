@@ -71,6 +71,33 @@ const ERROR_RESULT: ToolResultEnvelope = {
   message: null,
 };
 
+const OK_RESULT_WITH_CONFIDENCE: ToolResultEnvelope = {
+  status: "ok",
+  table: "games",
+  date_range: "2024-10-22 to 2024-10-22",
+  data: {
+    game: {
+      game_id: 1,
+      home_team: "Los Angeles Lakers",
+      away_team: "Boston Celtics",
+      home_score: 103,
+      away_score: 101,
+      data_confidence: {
+        field: "home_score",
+        note: "balldontlie and nba_stats disagree on home score; showing balldontlie's number.",
+        primary_source: "balldontlie",
+        primary_value: "103",
+        secondary_source: "nba_stats",
+        secondary_value: "101",
+      },
+    },
+    box_score: [],
+  },
+  resultData: null,
+  candidates: null,
+  message: null,
+};
+
 describe("runSearchLoop", () => {
   it("happy path: one tool call resolves, citation is populated", async () => {
     const llmClient = fakeLlmClient(
@@ -541,5 +568,28 @@ describe("runSearchLoop", () => {
     const result = await runSearchLoop({ question: "How many points did LeBron score?", llmClient, callTool });
 
     expect(result.resultData).toEqual(SAMPLE_RESULT_DATA);
+  });
+
+  it("threads a tool result's data_confidence through to the model's context", async () => {
+    const llmClient = fakeLlmClient(
+      toolCallResponse("get_game_result", { team_a: "Lakers", team_b: "Celtics", date: "2024-10-22" }),
+      finalResponse("Lakers beat Celtics 103-101 -- sources disagree on the home score."),
+    );
+    const callTool = vi.fn().mockResolvedValueOnce(OK_RESULT_WITH_CONFIDENCE);
+
+    await runSearchLoop({ question: "What was the score?", llmClient, callTool });
+
+    // runSearchLoop calls llmClient.send({systemPrompt, tools, history})
+    // once per iteration with the full accumulated history so far. The
+    // second call (index 1) is the one made after the first iteration's
+    // tool dispatch pushed a `{role: "tool_results", results}` entry onto
+    // history -- assert the raw data_confidence payload reached it, proving
+    // nothing upstream (search-tools.ts's envelope construction) silently
+    // drops the field before the model ever sees it.
+    const send = llmClient.send as ReturnType<typeof vi.fn>;
+    const secondCallArgs = send.mock.calls[1][0];
+    const serializedHistory = JSON.stringify(secondCallArgs.history);
+    expect(serializedHistory).toContain("data_confidence");
+    expect(serializedHistory).toContain("balldontlie and nba_stats disagree");
   });
 });
