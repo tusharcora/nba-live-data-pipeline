@@ -10,6 +10,7 @@ import {
   getStatusPresentation,
 } from "@/lib/board";
 import { displayScore, TEAM_NAME_TO_ABBREVIATION } from "@/lib/box-score";
+import { COMMENTARY_COLOR } from "@/lib/commentary-tone";
 import { cn } from "@/lib/utils";
 
 function abbr(teamName: string | null): string {
@@ -32,13 +33,6 @@ function formatExactPulledAt(iso: string | null): string {
     timeZone: "UTC",
   })} UTC`;
 }
-
-const COMMENTARY_COLOR: Record<string, string> = {
-  conflict: "text-pink-600 dark:text-pink-400",
-  stale: "text-amber-600 dark:text-amber-500",
-  run: "text-amber-600 dark:text-amber-500",
-  leader: "text-muted-foreground",
-};
 
 /**
  * The board's "Feed ticket" detail panel -- the currently-selected row's
