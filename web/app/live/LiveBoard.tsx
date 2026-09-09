@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LivePulse } from "@/app/components/live-pulse";
 import { isLiveStatus } from "@/lib/live-status";
 
 /**
@@ -154,11 +155,7 @@ function GameStatusBadge({ status }: { status?: string }) {
         variant="secondary"
         className="gap-1.5 border-transparent bg-primary text-primary-foreground"
       >
-        <span aria-hidden="true" className="relative flex size-1.5">
-          <span className="absolute inline-flex size-full rounded-full bg-primary-foreground/70 motion-safe:animate-ping" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
-        </span>
-        {presentation.label}
+        <LivePulse label={presentation.label} />
       </Badge>
     );
   }
@@ -407,7 +404,7 @@ export default function LiveBoard() {
                         </span>
                         <span
                           aria-label={`Away score ${displayValue(game.away_score, "unavailable")}`}
-                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                          className="font-[family-name:var(--font-orbitron-raw)] text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
                         >
                           {displayValue(game.away_score, "–")}
                         </span>
@@ -429,7 +426,7 @@ export default function LiveBoard() {
                         </span>
                         <span
                           aria-label={`Home score ${displayValue(game.home_score, "unavailable")}`}
-                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                          className="font-[family-name:var(--font-orbitron-raw)] text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
                         >
                           {displayValue(game.home_score, "–")}
                         </span>

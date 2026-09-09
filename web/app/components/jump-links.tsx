@@ -33,7 +33,7 @@ export function JumpLinks({ current }: { current?: PageHref }) {
           <span
             key={href}
             aria-current="page"
-            className="rounded-md border border-border bg-muted px-3 py-1.5 font-medium text-foreground"
+            className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 font-medium text-amber-500 shadow-[0_0_16px_rgba(245,166,35,0.25)]"
           >
             {label}
           </span>

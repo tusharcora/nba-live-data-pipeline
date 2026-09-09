@@ -12,9 +12,11 @@ import {
 
 /** React hook for the settings page's text-size control -- reactively
  * reflects changes made elsewhere (another tab, a future keyboard
- * shortcut), same as `useDensity()`. Split into its own "use client" file
- * for the same reason as `lib/use-density.ts` -- see `lib/density.ts`'s
- * header. */
+ * shortcut). Split into its own "use client" file because `useState` and
+ * `useEffect` are only available in client code, and `app/layout.tsx`
+ * (a Server Component) imports constants from `lib/text-size.ts` directly
+ * for the blocking init script — server code can't call hooks or render
+ * client components. */
 export function useTextSize(): [TextSize, (next: TextSize) => void] {
   const [size, setSizeState] = useState<TextSize>(() => getTextSize());
 

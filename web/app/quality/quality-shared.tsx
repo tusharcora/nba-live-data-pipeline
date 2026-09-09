@@ -54,13 +54,15 @@ export function formatValue(value: number | string): string {
 // variant with a distinct icon so the change type is never conveyed by
 // color alone. The badge's visible text is always the raw `change_type`
 // string from the API — this only decides the icon/variant around it.
+// "added" uses the `success` (green) variant -- a field appearing is
+// informational-positive, distinct from "removed" (destructive/red).
 export function schemaChangeBadgeVisual(changeType: string): {
-  variant: "secondary" | "destructive" | "outline";
+  variant: "success" | "destructive" | "outline";
   icon: ReactNode;
 } {
   switch (changeType) {
     case "added":
-      return { variant: "secondary", icon: <Plus /> };
+      return { variant: "success", icon: <Plus /> };
     case "removed":
       return { variant: "destructive", icon: <Minus /> };
     case "type_changed":

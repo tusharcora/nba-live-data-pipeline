@@ -1,13 +1,16 @@
 /**
- * Deliberately NOT marked "use client" -- see lib/density.ts's header for
- * why (app/layout.tsx, a Server Component, imports constants from this
- * file directly; the reactive hook lives in `lib/use-text-size.ts`
- * instead, since a file importing `useState`/`useEffect` can't be
- * imported into a Server Component's module graph at all).
+ * Deliberately NOT marked "use client" -- app/layout.tsx, a Server Component,
+ * imports its exported constants (`TEXT_SIZE_STORAGE_KEY`, `DEFAULT_TEXT_SIZE`)
+ * directly for the blocking init script. A "use client" file's exports resolve
+ * to opaque client-reference proxies when accessed from server code, making them
+ * unsuitable for embedding in scripts. The reactive hook that needs
+ * `useState`/`useEffect` lives in the separate `lib/use-text-size.ts` file
+ * instead, which server code never imports.
  *
- * App-wide text-size preference, mirroring `lib/density.ts`'s exact
- * shape (storage key, DOM-attribute application, change event, hook) --
- * see that file's header for the rationale behind each piece.
+ * App-wide text-size preference with storage key, DOM-attribute application,
+ * change event, and a corresponding React hook (in `lib/use-text-size.ts`) --
+ * this structure allows the setting to persist across sessions and notify
+ * listeners of changes made elsewhere.
  *
  * The active size is applied as a `data-text-size` attribute on `<html>`,
  * which `web/app/globals.css` reads to redefine Tailwind's own `--text-*`
