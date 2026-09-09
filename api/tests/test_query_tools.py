@@ -157,10 +157,14 @@ FAKE_PLAYER_STATS = [
 
 
 class FakePlayerStatsToolReader:
-    def __init__(self, player_rows=None, games_by_id=None):
+    def __init__(self, player_rows=None, games_by_id=None, conflicts_by_game_id=None):
         self.player_rows = FAKE_PLAYER_STATS if player_rows is None else player_rows
         self.games_by_id = GAMES_BY_ID if games_by_id is None else games_by_id
+        self.conflicts_by_game_id = conflicts_by_game_id or {}
         self.call_count = 0
+
+    def find_score_conflict(self, game_id, game_date, home_team, away_team):
+        return self.conflicts_by_game_id.get(game_id)
 
     def distinct_player_names(self):
         return sorted(
@@ -271,10 +275,14 @@ class FakeLeadersToolReader:
 
 
 class FakeGameResultToolReader:
-    def __init__(self, games=None, player_rows=None):
+    def __init__(self, games=None, player_rows=None, conflicts_by_game_id=None):
         self.games = FAKE_GAMES if games is None else games
         self.player_rows = FAKE_PLAYER_STATS if player_rows is None else player_rows
+        self.conflicts_by_game_id = conflicts_by_game_id or {}
         self.call_count = 0
+
+    def find_score_conflict(self, game_id, game_date, home_team, away_team):
+        return self.conflicts_by_game_id.get(game_id)
 
     def distinct_team_names(self):
         names = set()
@@ -486,6 +494,9 @@ def test_get_player_stats_stat_id_is_stringified_for_js_safety(client):
     class _RawIntStatIdReader:
         def distinct_player_names(self):
             return ["LeBron James"]
+
+        def find_score_conflict(self, game_id, game_date, home_team, away_team):
+            return None
 
         def get_player_stats(self, player_name, start_date, end_date, limit):
             return [
@@ -1944,6 +1955,9 @@ def test_get_game_result_stat_id_is_stringified_for_js_safety(client):
         def distinct_team_names(self):
             return ["Los Angeles Lakers", "Boston Celtics"]
 
+        def find_score_conflict(self, game_id, game_date, home_team, away_team):
+            return None
+
         def get_game_result(self, team_a, team_b, game_date):
             return {
                 "game_id": 1,
@@ -2010,3 +2024,83 @@ def test_get_game_result_requires_api_key(client):
     )
 
     assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# data_confidence (SPEC-bettor-trust-pivot Task 2): get_game_result and
+# get_player_stats attach a known score conflict from `game_conflict.py`'s
+# `load_score_conflict` as an optional `data_confidence` key.
+# --------------------------------------------------------------------------
+
+SAMPLE_CONFLICT = {
+    "field": "home_score",
+    "note": "balldontlie and nba_stats disagree on home score; showing balldontlie's number.",
+    "primary_source": "balldontlie",
+    "primary_value": "103",
+    "secondary_source": "nba_stats",
+    "secondary_value": "101",
+}
+
+
+def test_get_game_result_attaches_data_confidence_when_conflict_exists(client):
+    # FAKE_GAMES[0]: game_id=1, 2024-01-03, Los Angeles Lakers @ Boston
+    # Celtics (home_team="Los Angeles Lakers", away_team="Boston Celtics").
+    reader = FakeGameResultToolReader(conflicts_by_game_id={1: SAMPLE_CONFLICT})
+    app.dependency_overrides[get_game_result_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/game-result",
+        **_auth(
+            params={
+                "team_a": "Los Angeles Lakers",
+                "team_b": "Boston Celtics",
+                "date": "2024-01-03",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["data"]["game"]["data_confidence"] == SAMPLE_CONFLICT
+
+
+def test_get_game_result_omits_data_confidence_when_no_conflict(client):
+    reader = FakeGameResultToolReader()  # conflicts_by_game_id defaults to {}
+    app.dependency_overrides[get_game_result_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/game-result",
+        **_auth(
+            params={
+                "team_a": "Los Angeles Lakers",
+                "team_b": "Boston Celtics",
+                "date": "2024-01-03",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "data_confidence" not in body["data"]["game"]
+
+
+def test_get_player_stats_attaches_data_confidence_per_row(client):
+    # FAKE_PLAYER_STATS has LeBron James rows on both game_id=1 (stat_id=1)
+    # and game_id=2 (stat_id=3) -- a real two-game result set, so this
+    # test can assert the flag lands on exactly one of the two rows.
+    reader = FakePlayerStatsToolReader(conflicts_by_game_id={1: SAMPLE_CONFLICT})
+    app.dependency_overrides[get_player_stats_tool_reader] = lambda: reader
+
+    resp = client.get(
+        "/tools/player-stats", **_auth(params={"player_name": "LeBron James"})
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    games = body["data"]["games"]
+    assert len(games) == 2
+    game_1_row = next(g for g in games if g["game_id"] == 1)
+    game_2_row = next(g for g in games if g["game_id"] == 2)
+    assert game_1_row["data_confidence"] == SAMPLE_CONFLICT
+    assert "data_confidence" not in game_2_row
