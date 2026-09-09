@@ -316,7 +316,7 @@ export function SortableSchemaChangesTable({
   );
 }
 
-type ConflictColumn = "game_id" | "field" | "detected_at";
+type ConflictColumn = "game_id" | "field_name" | "detected_at";
 
 export function SortableConflictsTable({ conflicts }: { conflicts: Conflict[] }) {
   const [sort, setSort] = useState<SortState<ConflictColumn>>(null);
@@ -342,7 +342,7 @@ export function SortableConflictsTable({ conflicts }: { conflicts: Conflict[] })
       <TableHeader>
         <TableRow>
           <SortableHead label="Game" column="game_id" sort={sort} onSort={handleSort} />
-          <SortableHead label="Field" column="field" sort={sort} onSort={handleSort} />
+          <SortableHead label="Field" column="field_name" sort={sort} onSort={handleSort} />
           <SortableHead
             label="Detected at"
             column="detected_at"
@@ -359,7 +359,7 @@ export function SortableConflictsTable({ conflicts }: { conflicts: Conflict[] })
               {conflict.game_id ?? "–"}
             </TableCell>
             <TableCell className="font-mono text-foreground">
-              {conflict.field ?? "–"}
+              {conflict.field_name ?? "–"}
             </TableCell>
             <TableCell className="text-muted-foreground">
               {conflict.detected_at ?? "–"}

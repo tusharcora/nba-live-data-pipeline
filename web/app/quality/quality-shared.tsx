@@ -31,8 +31,14 @@ export type SchemaChange = {
 };
 
 export type Conflict = {
+  id?: number;
   game_id?: string;
-  field?: string;
+  field_name?: string;
+  primary_source?: string;
+  primary_value?: string | null;
+  secondary_source?: string;
+  secondary_value?: string | null;
+  resolution?: string;
   detected_at?: string;
   [key: string]: unknown;
 };
@@ -73,7 +79,7 @@ export function schemaChangeBadgeVisual(changeType: string): {
 // Conflict rows are a loosely-typed record (see `Conflict` above) — render
 // the well-known fields as their own columns and fold anything else into a
 // single JSON "details" column, rather than assuming a fixed shape.
-export const CONFLICT_KNOWN_KEYS = new Set(["game_id", "field", "detected_at"]);
+export const CONFLICT_KNOWN_KEYS = new Set(["game_id", "field_name", "detected_at"]);
 
 export function conflictDetails(conflict: Conflict): string | null {
   const rest = Object.fromEntries(
