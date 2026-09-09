@@ -146,99 +146,121 @@ export function RecentGamesBoard() {
       </h2>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_320px]">
-        {/* Board */}
-        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
-          {state.games.slice(0, 8).map((game) => {
-            const isSelected = game.game_id === selected.game_id;
-            // Winner glow (Direction G): the outer row span already
-            // colors the winning side's name+score amber via
-            // scoreColorClass -- these two booleans only add the extra
-            // LED-style glow on top of that existing amber, they don't
-            // duplicate its win/lose/tie logic (a tie or a missing score
-            // glows neither side, matching scoreColorClass's own
-            // "never guesses a winner from incomplete data" rule).
-            const awayIsWinner =
-              game.away_score !== null &&
-              game.home_score !== null &&
-              game.away_score > game.home_score;
-            const homeIsWinner =
-              game.away_score !== null &&
-              game.home_score !== null &&
-              game.home_score > game.away_score;
-            return (
-              <button
-                key={game.game_id}
-                type="button"
-                onClick={() => setSelectedId(game.game_id)}
-                aria-pressed={isSelected}
-                className={cn(
-                  "grid grid-cols-[64px_1fr] items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/60 sm:grid-cols-[88px_1fr_88px]",
-                  FOCUS_RING,
-                  isSelected && "border-l-2 border-l-amber-600 bg-muted/60 dark:border-l-amber-500"
-                )}
-              >
-                <span className="flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
-                  {formatGameDate(game.game_date)}
-                  {game.postseason ? (
-                    <span className="text-amber-600 dark:text-amber-500">PO</span>
-                  ) : null}
-                </span>
+        {/* Board -- a grid of individually-bordered "market cards"
+            (Direction G), replacing the earlier single shared-border
+            list of full-width rows. Clicking a card still only calls
+            setSelectedId -- the feed ticket's own markup and behavior
+            below are completely unchanged, only this grid's shape is
+            new. */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 font-mono text-xs tracking-widest text-muted-foreground uppercase">
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-amber-600 shadow-[0_0_6px_rgba(217,119,6,0.6)] dark:bg-amber-500"
+              />
+              Market board
+            </span>
+            <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+              Select a game →
+            </span>
+          </div>
 
-                {/* Matchup -- away team stacked directly above home team,
-                    each its own full-width row with the score pushed to
-                    the far right, matching the reference mockup's
-                    `.team-line` layout instead of one inline "A @ B" row. */}
-                <span className="flex flex-col gap-1.5">
-                  <span
-                    className={cn(
-                      "flex items-center gap-2",
-                      scoreColorClass(game.away_score, game.home_score)
-                    )}
-                  >
-                    <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
-                    <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
-                      {game.away_team}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {state.games.slice(0, 8).map((game) => {
+              const isSelected = game.game_id === selected.game_id;
+              // Winner glow (Direction G): scoreColorClass already colors
+              // the winning row's name+score amber -- these two booleans
+              // only add the extra LED-style glow on top of that existing
+              // amber, they don't duplicate its win/lose/tie logic (a tie
+              // or a missing score glows neither side, matching
+              // scoreColorClass's own "never guesses a winner from
+              // incomplete data" rule).
+              const awayIsWinner =
+                game.away_score !== null &&
+                game.home_score !== null &&
+                game.away_score > game.home_score;
+              const homeIsWinner =
+                game.away_score !== null &&
+                game.home_score !== null &&
+                game.home_score > game.away_score;
+              return (
+                <button
+                  key={game.game_id}
+                  type="button"
+                  onClick={() => setSelectedId(game.game_id)}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    "flex flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-amber-500/40",
+                    FOCUS_RING,
+                    isSelected &&
+                      "border-amber-600 shadow-[0_0_0_1px_rgba(217,119,6,0.5),0_0_18px_rgba(217,119,6,0.18)] dark:border-amber-500"
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+                    <span className="flex items-center gap-1.5 truncate font-mono text-[11px] text-muted-foreground uppercase">
+                      <span>
+                        {abbr(game.away_team)} @ {abbr(game.home_team)}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>{formatGameDate(game.game_date)}</span>
+                      {game.postseason ? (
+                        <span className="text-amber-600 dark:text-amber-500">PO</span>
+                      ) : null}
                     </span>
-                    <span
+                    <span className="shrink-0 rounded bg-amber-600/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-amber-600 uppercase dark:text-amber-500">
+                      {game.status}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <div
                       className={cn(
-                        "font-[family-name:var(--font-orbitron-raw)] text-xl leading-none font-bold tabular-nums",
-                        awayIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                        "flex items-center gap-2 px-3 py-2",
+                        scoreColorClass(game.away_score, game.home_score)
                       )}
                     >
-                      {displayScore(game.away_score)}
-                    </span>
-                  </span>
-                  <span
-                    className={cn(
-                      "flex items-center gap-2",
-                      scoreColorClass(game.home_score, game.away_score)
-                    )}
-                  >
-                    <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
-                    <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
-                      {game.home_team}
-                    </span>
-                    <span
+                      <TeamLogo src={teamLogoUrlFromName(game.away_team)} alt="" />
+                      <span className="flex-1 truncate text-sm font-medium">
+                        {game.away_team}
+                      </span>
+                      <span
+                        className={cn(
+                          "font-[family-name:var(--font-orbitron-raw)] text-2xl leading-none font-bold tabular-nums",
+                          awayIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                        )}
+                      >
+                        {displayScore(game.away_score)}
+                      </span>
+                    </div>
+                    <div
                       className={cn(
-                        "font-[family-name:var(--font-orbitron-raw)] text-xl leading-none font-bold tabular-nums",
-                        homeIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                        "flex items-center gap-2 border-t border-border px-3 py-2",
+                        scoreColorClass(game.home_score, game.away_score)
                       )}
                     >
-                      {displayScore(game.home_score)}
-                    </span>
-                  </span>
-                </span>
-
-                <span className="hidden shrink-0 justify-self-end text-xs text-muted-foreground sm:inline">
-                  View ticket
-                </span>
-              </button>
-            );
-          })}
+                      <TeamLogo src={teamLogoUrlFromName(game.home_team)} alt="" />
+                      <span className="flex-1 truncate text-sm font-medium">
+                        {game.home_team}
+                      </span>
+                      <span
+                        className={cn(
+                          "font-[family-name:var(--font-orbitron-raw)] text-2xl leading-none font-bold tabular-nums",
+                          homeIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                        )}
+                      >
+                        {displayScore(game.home_score)}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Feed ticket */}
-        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card lg:sticky lg:top-4">
           {/* Header is its own `relative` block so the notches below sit
               exactly on its bottom (dashed) border regardless of how tall
               the title/subtitle/badge make it, rather than an estimated
