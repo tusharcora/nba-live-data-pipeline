@@ -53,7 +53,7 @@ const bebasNeue = Bebas_Neue({
 const geist = Geist({
   variable: "--font-geist-raw",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
+  weight: ["300", "400", "500", "600", "700"],
 });
 
 // Fixed numeric face across the whole app -- scores, stats, timestamps,

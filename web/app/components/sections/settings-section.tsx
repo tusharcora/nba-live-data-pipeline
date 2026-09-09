@@ -30,13 +30,13 @@ function SegmentedControl<T extends string>({
   value,
   onChange,
 }: {
-  options: readonly { value: T; label: string; icon?: React.ComponentType<{ className?: string }> }[];
+  options: readonly { value: T; label: string }[];
   value: T;
   onChange: (value: T) => void;
 }) {
   return (
     <div role="radiogroup" className="flex flex-wrap gap-2">
-      {options.map(({ value: optionValue, label, icon: Icon }) => {
+      {options.map(({ value: optionValue, label }) => {
         const active = optionValue === value;
         return (
           <Button
@@ -49,7 +49,6 @@ function SegmentedControl<T extends string>({
             className="cursor-pointer"
             onClick={() => onChange(optionValue)}
           >
-            {Icon && <Icon className="size-3.5" />}
             {label}
           </Button>
         );

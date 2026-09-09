@@ -69,10 +69,11 @@
      --ring are the palette's load-bearing accent decisions:
      primary-foreground uses on-accent navy (#1a1006) rather than white
      (avoids under-contrasting against the amber primary); destructive is
-     Tailwind red-400 (#F87171), measured at 4.16:1 against --card --
-     clears the 3:1 UI-component/large-text bar but not 4.5:1 body-text,
-     so it must stay paired with an icon/label (colorblind-safe) and
-     avoided for small plain-text sentences. --success reuses --chart-1's
+     Tailwind red-400 (#F87171), measured at ~6.5:1 against --card --
+     clears both the 3:1 UI-component/large-text bar and the 4.5:1
+     body-text bar; still paired with an icon/label everywhere it's used
+     (colorblind-safe), per the unchanged PRD accessibility requirement.
+     --success reuses --chart-1's
      green (#22c55e): measured at ~7.9:1 against --card and ~8.7:1
      against --background, comfortably clearing the 4.5:1 body-text bar
      in both cases. */
