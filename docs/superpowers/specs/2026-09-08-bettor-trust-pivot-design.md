@@ -359,16 +359,46 @@ visibly fires is a much bigger problem** — it's the one thing meant to
 make a first-time user believe the pitch, and it would currently show
 nothing.
 
-**This needs a decision, not an assumption, before §4 is implemented:**
-does Phase A also need "get real dual-source live polling running
-consistently enough to produce real `source_conflicts`/`schema_change_log`
-rows" as an explicit prerequisite (a data-operations task, not a code
-task) — or does Phase A ship as designed and accept it will look inert
-until that data exists, same as this project has always handled data
-gaps? This also determines whether it's worth fixing the id-space gap now
-(e.g. adding a `source` column to Gold `games`, or persisting the
-nba_stats-space id at ingestion time for balldontlie-sourced games) or
-deferring it until there's real conflict volume to actually join against.
+**Decision (2026-09-08): get real data flowing is the priority** — Phase A
+is not considered done at "code complete against fakes," it's done once
+it's verified against real, live-produced conflict rows.
+
+**But this runs into a hard calendar constraint, not just an effort
+question**: Gold `games`' most recent row is dated **2026-06-13** (NBA
+Finals) and today is 2026-09-08 — the NBA is in its off-season.
+`live_game_flow` has nothing to poll (no scheduled/in-progress games from
+either source) until real games resume, which is preseason in roughly
+mid-October. This isn't fixable by working harder or sooner; the earliest
+possible real conflict data is calendar-gated to preseason start.
+
+**Revised sequencing given that constraint** — split into what's
+buildable now vs. what's gated on the season:
+
+1. **Now (no calendar dependency):** fix the id-space gap so a conflict
+   *can* be joined once one exists — either add a `source` column to Gold
+   `games` (`stg_games`/`stg_games_nba`/`games.sql` in `dbt/`) so
+   nba_stats-space vs. other-space rows are distinguishable, or persist
+   the original nba_stats id at ingestion time for any game later matched
+   into Gold from balldontlie. Concrete design choice for the
+   implementation plan, not decided here.
+2. **Now (no calendar dependency):** build §4 (`data_confidence` on the
+   two tools, threaded through search) and §6 (Trust Center + recent-
+   catches feed) exactly as spec'd, tested against fakes as usual. This
+   is real, correct work regardless of the calendar — it just can't be
+   *demonstrated* with real data yet.
+3. **Gated on the season (~mid-October 2026 earliest):** run
+   `live_game_flow` for real during actual preseason/regular-season game
+   windows, confirm real `source_conflicts`/`schema_change_log` rows
+   appear, and confirm — for real, not against a fake — that
+   `get_game_result`/`get_player_stats` actually surface a real conflict
+   through search and the Trust Center feed. **This step, not step 2, is
+   the actual completion gate for the trust pitch to be true** — don't
+   present this feature as "live" externally before it's cleared step 3.
+
+**How to apply if this spec is revisited before mid-October:** steps 1-2
+are a normal implementation-plan-sized unit of work and can proceed
+immediately. Step 3 cannot be pulled forward — track it as a dated
+follow-up, not a task to retry sooner.
 
 ## 10. Other open questions
 
