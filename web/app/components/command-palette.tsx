@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import {
   Activity,
   BarChart3,
-  Gauge,
   Newspaper,
   Radio,
   Search,
@@ -23,8 +22,6 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
-import { toggleDensity } from "@/lib/density";
-import { useDensity } from "@/lib/use-density";
 
 // Subset of `GameRow` from `app/explorer/page.tsx` — only the fields this
 // palette actually renders/searches on. Per the shared-data-contract
@@ -71,20 +68,20 @@ function formatGameDate(dateStr: string): string {
 
 /**
  * Global ⌘K / Ctrl+K command palette, mounted once in `app/layout.tsx` so
- * it's reachable from every page. Three sections:
+ * it's reachable from every page. Two sections:
  *
  * - Navigate: the app's pages.
- * - Actions: a density toggle, wired to Employee D2's
- *   ("keyboard-shortcuts-and-density") `toggleDensity()`/`useDensity()`
- *   from `@/lib/density` (this item started as a disabled stub before
- *   D2's PR merged into this branch — see git history). There's no theme
- *   toggle here -- this app has no light/dark mode, only the four
- *   `data-background` neutrals (Settings' own Background control).
  * - Games: fuzzy search over real games, fetched from the existing
  *   `/api/games` BFF route (the same route Explorer's data flows through).
  *   Selecting one navigates to `/explorer?game_id=<id>` — a bare
  *   navigation fallback, since no game-detail affordance to scroll-to/
  *   highlight exists yet on this branch.
+ *
+ * The density toggle this palette used to carry (an "Actions" section)
+ * was removed in the v2 UI rework -- density is now a single fixed
+ * value, not a runtime preference. There's no theme toggle here either --
+ * this app has one fixed dark theme, not a picker (see
+ * docs/superpowers/specs/2026-09-09-ui-rework-trading-terminal-design.md).
  *
  * Per the ui-ux-pro-max "Keyboard Navigation" guideline (Accessibility,
  * High severity — full keyboard operability with visible focus on every
@@ -95,7 +92,6 @@ function formatGameDate(dateStr: string): string {
  */
 export function CommandPalette() {
   const router = useRouter();
-  const [density] = useDensity();
   const [open, setOpen] = useState(false);
   const [gamesState, setGamesState] = useState<GamesFetchState>({
     status: "loading",
@@ -163,31 +159,6 @@ export function CommandPalette() {
               <span>{label}</span>
             </CommandItem>
           ))}
-        </CommandGroup>
-
-        <CommandSeparator />
-
-        <CommandGroup heading="Actions">
-          {/*
-            Wired to Employee D2's ("keyboard-shortcuts-and-density")
-            `toggleDensity()`/`useDensity()` from `@/lib/density`, merged
-            into this branch after this component was first built (see
-            git history — this item started as a disabled TODO stub before
-            D2's PR merged). `useDensity()` gives a reactive read so the
-            label reflects the live density even if it was changed
-            elsewhere (a keyboard shortcut, another palette invocation).
-          */}
-          <CommandItem
-            value="toggle density compact comfortable"
-            onSelect={() => runAndClose(() => toggleDensity())}
-          >
-            <Gauge aria-hidden="true" />
-            <span>
-              {density === "compact"
-                ? "Switch to comfortable density"
-                : "Switch to compact density"}
-            </span>
-          </CommandItem>
         </CommandGroup>
 
         <CommandSeparator />
