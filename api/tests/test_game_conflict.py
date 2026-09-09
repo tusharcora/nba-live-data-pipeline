@@ -60,7 +60,7 @@ def test_resolve_nba_stats_game_id_balldontlie_no_match_returns_none():
     assert resolve_nba_stats_game_id(gold_id, "Celtics", "Lakers", candidates) is None
 
 
-def test_resolve_nba_stats_game_id_balldontlie_ambiguous_returns_none():
+def test_resolve_nba_stats_game_id_balldontlie_shared_team_name_picks_first_match():
     gold_id = 987654
     # Two candidates on the same day sharing a team name -- can't safely pick one.
     candidates = [
