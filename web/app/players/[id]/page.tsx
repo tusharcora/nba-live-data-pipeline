@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, TriangleAlert, UserRound } from "lucide-react";
 
@@ -68,6 +68,7 @@ export default function PlayerPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const router = useRouter();
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [state, setState] = useState<FetchState>({ status: "loading" });
 
@@ -109,13 +110,24 @@ export default function PlayerPage({
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
-      <Link
-        href="/explorer"
-        className="-mx-2 -my-1 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      {/* Goes back to wherever the user actually came from via browser
+          history, rather than a hardcoded Explorer link -- falls back to
+          Explorer only when there's no history to go back to (e.g. this
+          page was opened directly). */}
+      <button
+        type="button"
+        onClick={() => {
+          if (window.history.length > 1) {
+            router.back();
+          } else {
+            router.push("/explorer");
+          }
+        }}
+        className="-mx-2 -my-1 inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <ArrowLeft aria-hidden="true" className="size-4" />
-        Back to Historical Explorer
-      </Link>
+        Back
+      </button>
 
       {state.status === "loading" && (
         <div role="status" aria-live="polite" className="flex flex-col gap-4">
