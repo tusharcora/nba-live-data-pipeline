@@ -1331,7 +1331,7 @@ For each, confirm:
 - Sharper corners than before (radius is visibly tighter, not the old rounder shadcn default).
 - `/settings` shows only "Accessibility" (text size) and "Your data" (favorite teams / saved searches reset, both still functional) — no font/background/density controls.
 - ⌘K/Ctrl+K command palette opens; "Actions" section is gone; Navigate and Games sections still work.
-- `/live`'s live-game cards (if any games are live at test time, otherwise confirm via `LiveBoardSkeleton`/`LiveBoardEmpty`) show the pulsing "LIVE" badge correctly.
+- `/live`'s live-game cards (if any games are live at test time, otherwise confirm via `LiveBoardSkeleton`/`LiveBoardEmpty`) show the pulsing "LIVE" badge correctly. Specifically confirm spacing/alignment is unchanged from before the Task 7 extraction — `LivePulse`'s own wrapping `<span>` adds one extra DOM node around the dot+label versus the pre-extraction inline markup (both use the same `inline-flex items-center gap-1.5` treatment, so this is expected to be visually inert, but verify rather than assume; task-7 review flagged this for confirmation here).
 - `/quality`'s per-metric grid and "Total conflicts" card render as `StatTile`s with the same values as before; a schema change of type `"added"` (if any exist in the data) shows the green `success` badge, `"removed"` shows red `destructive`.
 - No console errors.
 
