@@ -16,8 +16,10 @@ import {
   type PsiFieldSeries,
 } from "@/app/quality/quality-charts";
 import {
+  buildRecentCatches,
   EmptySectionState,
   formatValue,
+  RecentCatchesFeed,
   type QualityResponse,
 } from "@/app/quality/quality-shared";
 import { SortableConflictsTable, SortableSchemaChangesTable } from "@/app/quality/quality-tables";
@@ -152,8 +154,12 @@ export async function QualitySection() {
   return (
     <div className="flex flex-1 flex-col gap-8 font-sans">
       <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
-        Data Quality
+        Trust Center
       </h1>
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Every score comes from two independent sources. When they don&apos;t
+        match, you see it here — not a quietly-picked number.
+      </p>
 
       {!result.ok && (
         <Alert variant="destructive">
@@ -165,6 +171,16 @@ export async function QualitySection() {
 
       {result.ok && (
         <>
+          <section className="flex flex-col gap-3">
+            <h3 className="text-lg font-medium text-foreground">Recent catches</h3>
+            <RecentCatchesFeed
+              catches={buildRecentCatches(
+                result.data.quality.schema_changes,
+                result.data.quality.conflicts.recent
+              )}
+            />
+          </section>
+
           <section className="flex flex-col gap-3">
             <h3 className="text-lg font-medium text-foreground">
               Quality metrics
