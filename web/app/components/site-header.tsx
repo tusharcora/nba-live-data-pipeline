@@ -119,7 +119,9 @@ export function SiteHeader({ current }: { current?: PageHref }) {
           {tickerGames.map((game, i) => (
             <span key={`${game.game_id}-${i}`} className="inline-flex items-center gap-2">
               <span className="text-foreground">{tickerLabel(game)}</span>
-              <span className="text-amber-600 dark:text-amber-500">FINAL</span>
+              <span className="font-semibold text-amber-600 drop-shadow-[0_0_8px_rgba(245,166,35,0.5)] dark:text-amber-500">
+                FINAL
+              </span>
             </span>
           ))}
         </div>

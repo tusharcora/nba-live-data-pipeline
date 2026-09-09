@@ -150,6 +150,21 @@ export function RecentGamesBoard() {
         <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
           {state.games.slice(0, 8).map((game) => {
             const isSelected = game.game_id === selected.game_id;
+            // Winner glow (Direction G): the outer row span already
+            // colors the winning side's name+score amber via
+            // scoreColorClass -- these two booleans only add the extra
+            // LED-style glow on top of that existing amber, they don't
+            // duplicate its win/lose/tie logic (a tie or a missing score
+            // glows neither side, matching scoreColorClass's own
+            // "never guesses a winner from incomplete data" rule).
+            const awayIsWinner =
+              game.away_score !== null &&
+              game.home_score !== null &&
+              game.away_score > game.home_score;
+            const homeIsWinner =
+              game.away_score !== null &&
+              game.home_score !== null &&
+              game.home_score > game.away_score;
             return (
               <button
                 key={game.game_id}
@@ -184,7 +199,12 @@ export function RecentGamesBoard() {
                     <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
                       {game.away_team}
                     </span>
-                    <span className="font-mono text-xl leading-none font-bold tabular-nums">
+                    <span
+                      className={cn(
+                        "font-[family-name:var(--font-orbitron-raw)] text-xl leading-none font-bold tabular-nums",
+                        awayIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                      )}
+                    >
                       {displayScore(game.away_score)}
                     </span>
                   </span>
@@ -198,7 +218,12 @@ export function RecentGamesBoard() {
                     <span className="flex-1 truncate font-bebas-neue-raw text-sm font-medium">
                       {game.home_team}
                     </span>
-                    <span className="font-mono text-xl leading-none font-bold tabular-nums">
+                    <span
+                      className={cn(
+                        "font-[family-name:var(--font-orbitron-raw)] text-xl leading-none font-bold tabular-nums",
+                        homeIsWinner && "drop-shadow-[0_0_10px_rgba(245,166,35,0.45)]"
+                      )}
+                    >
                       {displayScore(game.home_score)}
                     </span>
                   </span>

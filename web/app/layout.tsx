@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Bebas_Neue, Geist, Geist_Mono } from "next/font/google";
+import { Bebas_Neue, Geist, Geist_Mono, Orbitron } from "next/font/google";
 import "./globals.css";
 
 import { DEFAULT_TEXT_SIZE, TEXT_SIZE_STORAGE_KEY } from "@/lib/text-size";
@@ -70,6 +70,20 @@ const geistMono = Geist_Mono({
   weight: ["400", "500", "600", "700"],
 });
 
+// Fixed display face for the market-card score numerals on the home
+// board and live board only (v2 UI rework, round 2 -- "Direction G":
+// Kalshi/Polymarket density crossed with a literal arena-scoreboard
+// numeral treatment). Deliberately not wired into --font-mono/
+// --font-geist-mono -- Geist Mono stays the app's general tabular-data
+// face (tables, timestamps, the ticker); Orbitron is applied directly
+// at each score call site via `font-[family-name:var(--font-orbitron-raw)]`,
+// the same fixed-face pattern already used for the Bebas Neue wordmark.
+const orbitron = Orbitron({
+  variable: "--font-orbitron-raw",
+  subsets: ["latin"],
+  weight: ["600", "700", "800"],
+});
+
 export const metadata: Metadata = {
   title: "Boxscore",
   description:
@@ -83,7 +97,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // "dark" is unconditional, not a default -- this app has a single
       // fixed dark theme and no light-mode opt-out (v2 UI rework; see the
       // design spec's PRD amendment).
-      className={`dark ${bebasNeue.variable} ${geist.variable} ${geistMono.variable} h-full antialiased`}
+      className={`dark ${bebasNeue.variable} ${geist.variable} ${geistMono.variable} ${orbitron.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">

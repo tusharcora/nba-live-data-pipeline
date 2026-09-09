@@ -404,7 +404,7 @@ export default function LiveBoard() {
                         </span>
                         <span
                           aria-label={`Away score ${displayValue(game.away_score, "unavailable")}`}
-                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                          className="font-[family-name:var(--font-orbitron-raw)] text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
                         >
                           {displayValue(game.away_score, "–")}
                         </span>
@@ -426,7 +426,7 @@ export default function LiveBoard() {
                         </span>
                         <span
                           aria-label={`Home score ${displayValue(game.home_score, "unavailable")}`}
-                          className="font-mono text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
+                          className="font-[family-name:var(--font-orbitron-raw)] text-3xl font-semibold tabular-nums text-foreground sm:text-4xl"
                         >
                           {displayValue(game.home_score, "–")}
                         </span>
