@@ -153,6 +153,12 @@ export async function QualitySection() {
 
   return (
     <div className="flex flex-1 flex-col gap-8 font-sans">
+      {/* NOT YET LIVE-VERIFIED (spec docs/superpowers/specs/2026-09-08-bettor-trust-pivot-design.md
+          §9, docs/PROGRESS.md "Bettor-trust pivot Phase A follow-up") --
+          same caveat as web/app/page.tsx's hero: source_conflicts/
+          schema_change_log/quality_metrics are all still empty in
+          production. Do NOT deploy or publicize this copy before the
+          October real-data verification pass. */}
       <div className="flex flex-col gap-2">
         <h1 className="font-heading text-2xl font-bold tracking-wide text-foreground uppercase">
           Trust Center

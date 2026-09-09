@@ -771,6 +771,18 @@ top of both employees' merged work, open awaiting human sign-off.
   a real network-confirmed run: see the Known Issues entry above for
   results. It remains deliberately not wired into `quality/`'s
   reconciliation or volumetric checks yet.
+- **Bettor-trust pivot Phase A (PR #75) ships correct, tested code with no
+  real data behind it yet — do not deploy/publicize before the October
+  verification pass.** The homepage hero and `/quality` "Trust Center" now
+  make a present-tense claim ("we tell you when the data disagrees") that
+  `source_conflicts`/`schema_change_log`/`quality_metrics`/`live_game_state`
+  cannot back up today — all four are empty in the real database (confirmed
+  2026-09-08; the NBA is in its off-season, most recent real game
+  2026-06-13). Merging this code is fine; a real visitor seeing an empty
+  proof feed under a trust pitch is not. See
+  `docs/superpowers/specs/2026-09-08-bettor-trust-pivot-design.md` §9 for
+  the full reasoning, and the "What's Next" entry below for the specific
+  checklist the follow-up verification pass must clear first.
 - **Two real bugs surfaced only by that live run, invisible to every
   offline verification method this project relies on** (`dbt parse
   --no-partial-parse`, `dbt compile --no-populate-cache`, `alembic upgrade
@@ -880,3 +892,29 @@ charts and sortable tables have real data to render against.
   left uncommitted, per the user's instruction) — but the user has since
   indicated a chatbot specifically is not the direction they want; treat
   that draft as historical context, not a live recommendation.
+
+### Bettor-trust pivot Phase A follow-up (PR #75)
+
+Code-complete, individually and whole-branch reviewed, all tests green —
+but real-data verification is calendar-gated to ~mid-October 2026 (NBA
+preseason; see `docs/superpowers/specs/2026-09-08-bettor-trust-pivot-design.md`
+§9). Before treating this feature as genuinely live (not just code-complete),
+the verification pass must explicitly confirm — each of these separately,
+not satisfied by a generic "did conflicts show up" check:
+
+- Real `source_conflicts`/`schema_change_log` rows actually get written
+  during a live game window (not just that the tables have *some* rows).
+- `get_game_result`/`get_player_stats`'s `data_confidence` field surfaces a
+  *real* conflict (not a test fixture) through NL search and the Trust
+  Center's recent-catches feed, end to end.
+- **The ET-midnight candidate-scoping edge case, named explicitly**:
+  `game_conflict.py::resolve_nba_stats_game_id` scopes `LiveGameState`
+  candidates by `pulled_at`, not `scheduled_start` — a back-to-back
+  same-team game spanning midnight ET could match the wrong `nba_stats`
+  `game_id` and attach one game's conflicts to a different game. Check
+  this specifically against a real back-to-back if the schedule offers
+  one during the verification window; don't assume it's fine just because
+  other conflict lookups worked.
+- Only after all three of the above hold: the homepage hero and Trust
+  Center copy are safe to deploy/publicize to real users. Until then, per
+  the Known Issues entry above, don't.
