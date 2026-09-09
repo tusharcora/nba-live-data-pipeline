@@ -214,11 +214,26 @@ the one route that terminates FastAPI's SSE stream and re-streams it via
   quality-monitoring product going silent when the pipeline breaks can't be
   invisible).
 - Live indicates itself — pulsing "LIVE" dot + last-updated timestamp.
-- Both themes, real contrast in each, not an inverted palette.
+- ~~Both themes, real contrast in each, not an inverted palette.~~
+  **Superseded — see UI-bar amendment below.**
 - Responsive down to mobile.
 - Accessible: keyboard-navigable, visible focus states, WCAG AA contrast on
   scorecard semantic colors, pair color with icon/label (colorblind-safe).
 - Fast to first paint: static shell renders immediately, data streams in.
+
+> **UI-bar amendment · v2 redesign.** "Both themes" above is superseded by
+> the v2 UI rework (a Greptile/Kalshi/Polymarket-inspired trading-terminal
+> aesthetic): one deliberate, fixed dark theme replaces the two-theme
+> requirement, and the runtime font/background/density picker is dropped
+> entirely in favor of one opinionated design. Reasoning: a single dark
+> theme executed to a high bar is a stronger portfolio signal than two
+> themes each built to a lower one, and a light theme was never
+> load-bearing for this project's actual differentiator (ingestion,
+> reconciliation, drift monitoring) — it was UI polish, not the thing an
+> interviewer stops to read. The WCAG AA contrast and colorblind-safe
+> color+icon/label pairing requirement above is unchanged and still
+> applies in full to every semantic color in the new palette, including
+> the new win/loss and pass/fail pairs it introduces.
 
 ## 12. Week-by-week plan (6 weeks)
 
@@ -256,8 +271,9 @@ the one route that terminates FastAPI's SSE stream and re-streams it via
 **Week 5 — UI furnishing & stretch model**
 - Full state design (loading/empty/error/stale), live-indicator treatment,
   accessibility pass, mobile responsiveness.
-- Historical Explorer page; both themes finished, not just
-  dark-mode-by-inversion.
+- Historical Explorer page; ~~both themes finished, not just
+  dark-mode-by-inversion~~ — superseded by the v2 UI-bar amendment (§11):
+  one deliberate dark theme instead.
 - Win-probability model + prediction-drift logging (stretch — first thing
   cut if the schedule slips).
 
