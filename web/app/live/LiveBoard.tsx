@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LivePulse } from "@/app/components/live-pulse";
 import { isLiveStatus } from "@/lib/live-status";
 
 /**
@@ -154,11 +155,7 @@ function GameStatusBadge({ status }: { status?: string }) {
         variant="secondary"
         className="gap-1.5 border-transparent bg-primary text-primary-foreground"
       >
-        <span aria-hidden="true" className="relative flex size-1.5">
-          <span className="absolute inline-flex size-full rounded-full bg-primary-foreground/70 motion-safe:animate-ping" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-primary-foreground" />
-        </span>
-        {presentation.label}
+        <LivePulse label={presentation.label} />
       </Badge>
     );
   }
