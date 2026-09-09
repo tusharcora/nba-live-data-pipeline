@@ -25,6 +25,7 @@ import {
   TEAM_NAME_TO_ABBREVIATION,
   type GameRow,
 } from "@/lib/box-score";
+import { COMMENTARY_COLOR } from "@/lib/commentary-tone";
 import type {
   LeadersResultData,
   PlayerStreakResultData,
@@ -57,7 +58,7 @@ function GameMatchupCard({ game }: { game: GameRow }) {
           {game.status.charAt(0).toUpperCase() + game.status.slice(1)}
         </Badge>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2 font-geist-mono text-sm">
           <TeamLink
             abbreviation={awayAbbreviation}
@@ -97,6 +98,9 @@ function GameMatchupCard({ game }: { game: GameRow }) {
             {displayScore(game.home_score)}
           </span>
         </div>
+        {game.data_confidence && (
+          <p className={cn("text-xs", COMMENTARY_COLOR.conflict)}>{game.data_confidence.note}</p>
+        )}
       </CardContent>
     </Card>
   );

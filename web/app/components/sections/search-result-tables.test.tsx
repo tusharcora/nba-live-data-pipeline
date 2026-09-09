@@ -182,6 +182,51 @@ describe("SearchResultDataView -- stat_aggregate", () => {
   });
 });
 
+describe("SearchResultDataView -- data-confidence badge", () => {
+  it("shows a data-confidence note in the matchup card when the game carries one", () => {
+    const gameWithConflict: GameRow = {
+      ...SAMPLE_GAME,
+      data_confidence: {
+        field: "home_score", note: "balldontlie and nba_stats disagree on home score; showing balldontlie's number.",
+        primary_source: "balldontlie", primary_value: "126", secondary_source: "nba_stats", secondary_value: "124",
+      },
+    };
+    const resultData: SearchResultData = {
+      type: "game_result",
+      payload: { game: gameWithConflict, boxScore: [] },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    expect(
+      screen.getByText(/balldontlie and nba_stats disagree on home score/i)
+    ).toBeInTheDocument();
+  });
+
+  it("does not show a data-confidence note when the game has none", () => {
+    const resultData: SearchResultData = {
+      type: "game_result",
+      payload: { game: SAMPLE_GAME, boxScore: [] },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    expect(screen.queryByText(/disagree/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a warning indicator in the Result cell when a stat row carries a data-confidence note", () => {
+    const statRowWithConflict: PlayerStatRow = {
+      ...SAMPLE_STAT_ROW,
+      data_confidence: {
+        field: "home_score", note: "balldontlie and nba_stats disagree on home score; showing balldontlie's number.",
+        primary_source: "balldontlie", primary_value: "126", secondary_source: "nba_stats", secondary_value: "124",
+      },
+    };
+    const resultData: SearchResultData = {
+      type: "player_stats",
+      payload: { playerName: "Luka Dončić", games: [statRowWithConflict] },
+    };
+    render(<SearchResultDataView resultData={resultData} />);
+    expect(screen.getByTitle(/balldontlie and nba_stats disagree on home score/i)).toBeInTheDocument();
+  });
+});
+
 describe("SearchResultDataView -- player_streak", () => {
   it("renders the streak length, an Active badge when isActive, and the streak's games", () => {
     const resultData: SearchResultData = {
