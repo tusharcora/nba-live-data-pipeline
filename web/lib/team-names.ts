@@ -15,6 +15,20 @@
  * over the real, still-growing nba_stats seasons. */
 export const NBA_GAME_ID_OFFSET = 100_000_000_000;
 
+/** Mirrors `api/src/api/routers/game_conflict.py`'s `DataConfidence.to_dict()`
+ * -- present only on a `GameRow`/`PlayerStatRow` returned by the NL search
+ * tool endpoints (`get_game_result`/`get_player_stats`) when a real,
+ * logged source disagreement exists for that game's score. Absent
+ * (never `null`) on every other row and on every other endpoint's rows. */
+export type DataConfidence = {
+  field: string;
+  note: string;
+  primary_source: string;
+  primary_value: string | null;
+  secondary_source: string;
+  secondary_value: string | null;
+};
+
 export type GameRow = {
   game_id: number;
   game_date: string;
@@ -26,6 +40,7 @@ export type GameRow = {
   home_score: number | null;
   away_score: number | null;
   source_pulled_at: string;
+  data_confidence?: DataConfidence;
 };
 
 export type PlayerStatRow = {
@@ -56,6 +71,7 @@ export type PlayerStatRow = {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
+  data_confidence?: DataConfidence;
 };
 
 /**
