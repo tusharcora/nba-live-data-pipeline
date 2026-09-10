@@ -105,6 +105,22 @@ models:
           Turnovers, sourced from `player_stats[].TO` -- note nba_api
           names this column "TO", not "TURNOVER" (different from
           balldontlie's "turnover").
+      - name: field_goals_made
+        description: >
+          Field goals made, sourced from `player_stats[].FGM` -- standard
+          BoxScoreTraditionalV2 column name, not independently confirmed
+          against a live `stats.nba.com` call (see model header decision
+          log (5)).
+      - name: field_goals_attempted
+        description: Field goals attempted, sourced from `player_stats[].FGA` -- see decision log (5).
+      - name: field_goal_pct
+        description: Field goal percentage (0-1), sourced from `player_stats[].FG_PCT` -- see decision log (5).
+      - name: three_pointers_made
+        description: 3-point field goals made, sourced from `player_stats[].FG3M` -- see decision log (5).
+      - name: three_pointers_attempted
+        description: 3-point field goals attempted, sourced from `player_stats[].FG3A` -- see decision log (5).
+      - name: three_point_pct
+        description: 3-point field goal percentage (0-1), sourced from `player_stats[].FG3_PCT` -- see decision log (5).
       - name: minutes_played
         description: >
           Minutes played, rounded to the nearest whole minute (same

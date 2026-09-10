@@ -22,6 +22,7 @@ import {
 import {
   displayScore,
   formatGameDate,
+  formatPct,
   parseMinutesPlayed,
   playerHeadshotUrl,
   scoreColorClass,
@@ -41,6 +42,7 @@ export {
   displayScore,
   formatAverage,
   formatGameDate,
+  formatPct,
   namesForAbbreviation,
   NBA_GAME_ID_OFFSET,
   parseMinutesPlayed,
@@ -92,6 +94,8 @@ export function TeamLink({
 type SortableColumn =
   | "player"
   | "points"
+  | "field_goal_pct"
+  | "three_point_pct"
   | "rebounds"
   | "assists"
   | "steals"
@@ -125,6 +129,10 @@ function sortValue(row: PlayerStatRow, column: SortableColumn): number | string 
     }
     case "points":
       return row.points as number | null;
+    case "field_goal_pct":
+      return row.field_goal_pct;
+    case "three_point_pct":
+      return row.three_point_pct;
     case "rebounds":
       return row.rebounds as number | null;
     case "assists":
@@ -226,6 +234,26 @@ export function BoxScoreTable({
           <SortableHeader
             label="Pts"
             column="points"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          {/* FG/3PT made-attempted shown as a plain "made/attempted"
+              fraction -- not individually sortable (there's no single
+              meaningful numeric order for a fraction); the % columns next
+              to them carry the sortable ranking instead. */}
+          <TableHead className="text-right">FG</TableHead>
+          <SortableHeader
+            label="FG%"
+            column="field_goal_pct"
+            activeColumn={sortColumn}
+            onSort={setSortColumn}
+            align="right"
+          />
+          <TableHead className="text-right">3PT</TableHead>
+          <SortableHeader
+            label="3P%"
+            column="three_point_pct"
             activeColumn={sortColumn}
             onSort={setSortColumn}
             align="right"
@@ -344,6 +372,18 @@ export function BoxScoreTable({
             )}
             <TableCell className="text-right font-mono tabular-nums">
               {row.points}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+              {row.field_goals_made}/{row.field_goals_attempted}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {formatPct(row.field_goal_pct)}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+              {row.three_pointers_made}/{row.three_pointers_attempted}
+            </TableCell>
+            <TableCell className="text-right font-mono tabular-nums">
+              {formatPct(row.three_point_pct)}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">
               {row.rebounds}

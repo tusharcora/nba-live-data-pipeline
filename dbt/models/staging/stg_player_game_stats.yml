@@ -76,6 +76,18 @@ models:
         description: Blocks, sourced from `data[].blk`.
       - name: turnovers
         description: Turnovers, sourced from `data[].turnover`.
+      - name: field_goals_made
+        description: Field goals made, sourced from `data[].fgm`.
+      - name: field_goals_attempted
+        description: Field goals attempted, sourced from `data[].fga`.
+      - name: field_goal_pct
+        description: Field goal percentage (0-1), sourced from `data[].fg_pct`.
+      - name: three_pointers_made
+        description: 3-point field goals made, sourced from `data[].fg3m`.
+      - name: three_pointers_attempted
+        description: 3-point field goals attempted, sourced from `data[].fg3a`.
+      - name: three_point_pct
+        description: 3-point field goal percentage (0-1), sourced from `data[].fg3_pct`.
       - name: minutes_played
         description: >
           Minutes played, rounded to the nearest whole minute, parsed from

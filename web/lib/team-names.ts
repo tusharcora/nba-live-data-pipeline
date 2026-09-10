@@ -46,6 +46,14 @@ export type PlayerStatRow = {
   steals: number;
   blocks: number;
   turnovers: number;
+  field_goals_made: number;
+  field_goals_attempted: number;
+  // Null when field_goals_attempted is 0 (no attempts to compute a
+  // percentage from) -- the source API's own value, passed through as-is.
+  field_goal_pct: number | null;
+  three_pointers_made: number;
+  three_pointers_attempted: number;
+  three_point_pct: number | null;
   minutes_played: string | null;
   // Joined in from the game this stat line belongs to (see
   // api/src/api/routers/player_stats.py) -- needed so a player-name search
@@ -272,4 +280,12 @@ export function average(values: (number | null)[]): number | null {
 
 export function formatAverage(value: number | null): string {
   return value === null ? "–" : value.toFixed(1);
+}
+
+/** `field_goal_pct`/`three_point_pct` come from the Gold mart as a 0-1
+ * fraction (the source API's own value, e.g. 0.389) -- rendered as a
+ * percentage (e.g. "38.9%"). Null (0 attempts, or a DNP row) renders as
+ * the same "–" placeholder every other stat column uses. */
+export function formatPct(value: number | null): string {
+  return value === null ? "–" : `${(value * 100).toFixed(1)}%`;
 }

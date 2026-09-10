@@ -31,6 +31,12 @@ select
     steals,
     blocks,
     turnovers,
+    field_goals_made,
+    field_goals_attempted,
+    field_goal_pct,
+    three_pointers_made,
+    three_pointers_attempted,
+    three_point_pct,
     minutes_played
 from {{ ref('stg_player_game_stats') }}
 
@@ -50,5 +56,11 @@ select
     steals,
     blocks,
     turnovers,
+    field_goals_made,
+    field_goals_attempted,
+    field_goal_pct,
+    three_pointers_made,
+    three_pointers_attempted,
+    three_point_pct,
     minutes_played
 from {{ ref('stg_player_game_stats_nba') }}

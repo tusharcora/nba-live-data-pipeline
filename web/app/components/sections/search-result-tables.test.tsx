@@ -22,7 +22,10 @@ const SAMPLE_GAME: GameRow = {
 
 const SAMPLE_STAT_ROW: PlayerStatRow = {
   stat_id: "1", game_id: 1, player_id: 1629029, player_first_name: "Luka", player_last_name: "Dončić",
-  team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4, minutes_played: "31",
+  team: "DAL", points: 41, rebounds: 6, assists: 5, steals: 1, blocks: 0, turnovers: 4,
+  field_goals_made: 14, field_goals_attempted: 24, field_goal_pct: 0.583,
+  three_pointers_made: 3, three_pointers_attempted: 7, three_point_pct: 0.429,
+  minutes_played: "31",
   game_date: "2024-01-03", home_team: "Dallas Mavericks", away_team: "Portland Trail Blazers",
   home_score: 126, away_score: 97,
 };
