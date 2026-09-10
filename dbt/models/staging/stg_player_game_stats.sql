@@ -23,6 +23,8 @@
 --     {
 --       "id": 890321, "min": "30", "pts": 28, "reb": 7, "ast": 9,
 --       "stl": 1, "blk": 0, "turnover": 3,
+--       "fgm": 7, "fga": 18, "fg_pct": 0.389,
+--       "fg3m": 3, "fg3a": 7, "fg3_pct": 0.429,
 --       "game": {"id": 15908, ...},
 --       "player": {"id": 237, "first_name": "Luka", "last_name": "Dončić"},
 --       "team": {"id": 7, "full_name": "Dallas Mavericks", ...}
@@ -33,7 +35,10 @@
 --
 -- All fields this model extracts (stat id/game.id/player.id/
 -- player.first_name/player.last_name/team.full_name/pts/reb/ast/stl/blk/
--- turnover) match the real shape as-is. The one real discrepancy found: the
+-- turnover/fgm/fga/fg_pct/fg3m/fg3a/fg3_pct) match the real shape as-is,
+-- per the same live-docs re-check (fgm/fga/fg_pct/fg3m/fg3a/fg3_pct
+-- confirmed against docs.balldontlie.io's own example response, e.g.
+-- "fgm": 7, "fga": 18, "fg_pct": 0.389). The one real discrepancy found: the
 -- header previously assumed "min" always comes back "MM:SS" (e.g.
 -- "34:12"). The live docs' own example response shows a plain
 -- minutes-only string with no colon/seconds ("min": "30") — see the
@@ -84,6 +89,12 @@ typed as (
         (stat_line ->> 'stl')::int as steals,
         (stat_line ->> 'blk')::int as blocks,
         (stat_line ->> 'turnover')::int as turnovers,
+        (stat_line ->> 'fgm')::int as field_goals_made,
+        (stat_line ->> 'fga')::int as field_goals_attempted,
+        (stat_line ->> 'fg_pct')::numeric as field_goal_pct,
+        (stat_line ->> 'fg3m')::int as three_pointers_made,
+        (stat_line ->> 'fg3a')::int as three_pointers_attempted,
+        (stat_line ->> 'fg3_pct')::numeric as three_point_pct,
         -- "min" comes back either as a plain minutes-only string (e.g.
         -- "30" — confirmed as the current real shape against
         -- docs.balldontlie.io and A1's test fixtures) or, per balldontlie's
@@ -147,6 +158,12 @@ select
     steals,
     blocks,
     turnovers,
+    field_goals_made,
+    field_goals_attempted,
+    field_goal_pct,
+    three_pointers_made,
+    three_pointers_attempted,
+    three_point_pct,
     minutes_played,
     pulled_at
 from deduped

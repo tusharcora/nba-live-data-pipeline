@@ -24,7 +24,9 @@
 --       "PLAYER_ID": 1629027, "PLAYER_NAME": "Gary Trent Jr.",
 --       "START_POSITION": "G", "COMMENT": "", "MIN": "34:12",
 --       "PTS": 20, "REB": 4, "AST": 3, "STL": 1, "BLK": 0, "TO": 2,
---       "PF": 2, "PLUS_MINUS": 5.0, ... (shooting splits, unused here),
+--       "PF": 2, "PLUS_MINUS": 5.0,
+--       "FGM": 7, "FGA": 18, "FG_PCT": 0.389,
+--       "FG3M": 3, "FG3A": 7, "FG3_PCT": 0.429, ... (FT splits, unused here),
 --       "player_key": "gary trent jr."
 --     }
 --   ]
@@ -118,6 +120,19 @@
 --    unchanged (bare-integer-string vs "MM:SS", null-safe otherwise),
 --    applied to `player_row ->> 'MIN'`. Documented here, not asserted as
 --    confirmed, for the same honesty reason.
+--
+-- 5) field_goals_made/field_goals_attempted/field_goal_pct/
+--    three_pointers_made/three_pointers_attempted/three_point_pct --
+--    nba_api's standard BoxScoreTraditionalV2 PlayerStats column names
+--    (FGM/FGA/FG_PCT/FG3M/FG3A/FG3_PCT), extracted directly. Unlike
+--    balldontlie's fgm/fga/fg3m/etc. (independently re-checked against
+--    live docs.balldontlie.io -- see stg_player_game_stats.sql's header),
+--    these nba_api column names are NOT confirmed against a live
+--    stats.nba.com call in this sandbox (same "no live call possible"
+--    limitation as decision log (4)'s MIN field) -- they're the
+--    well-documented standard column names for this endpoint, not a
+--    guess, but flagged here with the same honesty as (4) rather than
+--    asserted as confirmed.
 --
 -- team -- nba_api's PlayerStats rows carry `TEAM_CITY` and
 -- `TEAM_ABBREVIATION`, but no single full-team-name column the way
@@ -237,6 +252,12 @@ typed as (
         -- nba_api names the turnovers column "TO", not "TURNOVER" --
         -- different from balldontlie's "turnover".
         (player_row ->> 'TO')::int as turnovers,
+        (player_row ->> 'FGM')::int as field_goals_made,
+        (player_row ->> 'FGA')::int as field_goals_attempted,
+        (player_row ->> 'FG_PCT')::numeric as field_goal_pct,
+        (player_row ->> 'FG3M')::int as three_pointers_made,
+        (player_row ->> 'FG3A')::int as three_pointers_attempted,
+        (player_row ->> 'FG3_PCT')::numeric as three_point_pct,
         -- Dual-format defensive parser, reused unchanged from
         -- stg_player_game_stats.sql's "min" handling -- see header
         -- decision log (4). Guards against null/empty/anything else so
@@ -289,6 +310,12 @@ select
     steals,
     blocks,
     turnovers,
+    field_goals_made,
+    field_goals_attempted,
+    field_goal_pct,
+    three_pointers_made,
+    three_pointers_attempted,
+    three_point_pct,
     minutes_played,
     pulled_at
 from deduped

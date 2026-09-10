@@ -64,7 +64,30 @@ router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(requir
 # on the Gold `player_game_stats` table (dbt/models/marts/player_game_stats.sql).
 # An unsupported `stat` (e.g. "fouls", a column that doesn't exist) is a
 # caller error, not a data gap -- 400, not a tool-result envelope.
-ALLOWED_LEADER_STATS = {"points", "rebounds", "assists", "steals", "blocks", "turnovers"}
+#
+# Deliberately excludes field_goal_pct/three_point_pct: this set is shared
+# with get_leaders, which always ranks by func.sum(stat_col) over a date
+# range (see get_leaders below) -- summing per-game *percentages* produces a
+# statistically meaningless "leaderboard" (a small-sample 100% game would
+# dominate a season's worth of real volume), unlike the made/attempted
+# counts added here, where a summed total ("most 3-pointers made this
+# season") is a real, well-understood stat. get_player_stat_aggregate
+# (which could meaningfully avg/max/min a percentage for a single player)
+# shares this same allow-list rather than getting its own, so the
+# percentage columns stay out here too rather than being valid for one tool
+# and silently wrong for the other.
+ALLOWED_LEADER_STATS = {
+    "points",
+    "rebounds",
+    "assists",
+    "steals",
+    "blocks",
+    "turnovers",
+    "field_goals_made",
+    "field_goals_attempted",
+    "three_pointers_made",
+    "three_pointers_attempted",
+}
 
 DEFAULT_LEADERS_LIMIT = 10
 

@@ -68,6 +68,18 @@ models:
         description: Blocks.
       - name: turnovers
         description: Turnovers.
+      - name: field_goals_made
+        description: Field goals made.
+      - name: field_goals_attempted
+        description: Field goals attempted.
+      - name: field_goal_pct
+        description: Field goal percentage (0-1) — the source API's own computed value, not recomputed here from made/attempted.
+      - name: three_pointers_made
+        description: 3-point field goals made.
+      - name: three_pointers_attempted
+        description: 3-point field goals attempted.
+      - name: three_point_pct
+        description: 3-point field goal percentage (0-1) — the source API's own computed value, not recomputed here from made/attempted.
       - name: minutes_played
         description: >
           Minutes played, rounded to the nearest whole minute (e.g. 30 for

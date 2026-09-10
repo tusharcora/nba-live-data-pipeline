@@ -13,8 +13,10 @@ import {
   BoxScoreTable,
   formatAverage,
   formatGameDate,
+  formatPct,
   parseMinutesPlayed,
   playerHeadshotUrl,
+  sumRatio,
   TeamLogo,
   teamLogoUrlFromAbbreviation,
   type PlayerStatRow,
@@ -187,6 +189,17 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
     turnovers: average(rows.map((r) => r.turnovers)),
     minutes: average(rows.map((r) => parseMinutesPlayed(r.minutes_played))),
   };
+  // Career FG%/3P% is sum(made)/sum(attempted) across every game, not an
+  // average of each game's own percentage -- see `sumRatio`'s doc comment
+  // for why that distinction matters.
+  const careerFieldGoalPct = sumRatio(
+    rows.map((r) => r.field_goals_made),
+    rows.map((r) => r.field_goals_attempted)
+  );
+  const careerThreePointPct = sumRatio(
+    rows.map((r) => r.three_pointers_made),
+    rows.map((r) => r.three_pointers_attempted)
+  );
 
   return (
     <div className="flex flex-col gap-8">
@@ -215,22 +228,24 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
           <CardTitle>Career averages</CardTitle>
         </CardHeader>
         <CardContent>
-          <dl className="grid grid-cols-3 gap-4 sm:grid-cols-7">
+          <dl className="grid grid-cols-3 gap-4 sm:grid-cols-9">
             {(
               [
-                ["PPG", averages.points],
-                ["RPG", averages.rebounds],
-                ["APG", averages.assists],
-                ["SPG", averages.steals],
-                ["BPG", averages.blocks],
-                ["TOV", averages.turnovers],
-                ["MPG", averages.minutes],
+                ["PPG", formatAverage(averages.points)],
+                ["FG%", formatPct(careerFieldGoalPct)],
+                ["3P%", formatPct(careerThreePointPct)],
+                ["RPG", formatAverage(averages.rebounds)],
+                ["APG", formatAverage(averages.assists)],
+                ["SPG", formatAverage(averages.steals)],
+                ["BPG", formatAverage(averages.blocks)],
+                ["TOV", formatAverage(averages.turnovers)],
+                ["MPG", formatAverage(averages.minutes)],
               ] as const
-            ).map(([label, value]) => (
+            ).map(([label, formatted]) => (
               <div key={label} className="flex flex-col gap-1">
                 <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
                 <dd className="font-mono text-lg tabular-nums text-foreground">
-                  {formatAverage(value)}
+                  {formatted}
                 </dd>
               </div>
             ))}
