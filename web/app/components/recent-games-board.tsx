@@ -267,8 +267,11 @@ export function RecentGamesBoard() {
               fixed pixel offset from the card's own top edge. */}
           <div className="relative flex items-start justify-between gap-2 border-b border-dashed border-border px-4 py-3">
             <div>
-              <h3 className="font-mono text-base font-semibold tracking-wide text-foreground uppercase">
-                {abbr(selected.away_team)} · {abbr(selected.home_team)}
+              <h3 className="flex items-center gap-1.5 font-mono text-base font-semibold tracking-wide text-foreground uppercase">
+                <TeamLogo src={teamLogoUrlFromName(selected.away_team)} alt="" />
+                {abbr(selected.away_team)} ·
+                <TeamLogo src={teamLogoUrlFromName(selected.home_team)} alt="" />
+                {abbr(selected.home_team)}
               </h3>
               <p className="mt-0.5 font-mono text-xs text-muted-foreground uppercase">
                 Feed ticket · Game #{selected.game_id}
@@ -305,9 +308,11 @@ export function RecentGamesBoard() {
             </div>
             <div className="flex items-center justify-between gap-2">
               <dt className="tracking-wide text-muted-foreground uppercase">Score</dt>
-              <dd className="text-amber-600 dark:text-amber-500">
+              <dd className="flex items-center gap-1.5 text-amber-600 dark:text-amber-500">
+                <TeamLogo src={teamLogoUrlFromName(selected.away_team)} alt="" />
                 {abbr(selected.away_team)} {displayScore(selected.away_score)} —{" "}
                 {abbr(selected.home_team)} {displayScore(selected.home_score)}
+                <TeamLogo src={teamLogoUrlFromName(selected.home_team)} alt="" />
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
