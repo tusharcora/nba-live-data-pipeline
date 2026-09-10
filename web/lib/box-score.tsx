@@ -48,6 +48,7 @@ export {
   parseMinutesPlayed,
   playerHeadshotUrl,
   scoreColorClass,
+  sumRatio,
   TEAM_NAME_TO_ABBREVIATION,
   teamLogoUrlFromAbbreviation,
   teamLogoUrlFromName,

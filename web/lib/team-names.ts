@@ -282,6 +282,29 @@ export function formatAverage(value: number | null): string {
   return value === null ? "–" : value.toFixed(1);
 }
 
+/** Career shooting percentage across many games is sum(made)/sum(attempted)
+ * -- NOT an average of each game's own percentage, which would weight a
+ * single-attempt 100% game the same as a 20-attempt 40% game and skew the
+ * result. A row where either side is null (a DNP row -- see `average`'s
+ * same convention) is excluded from both sums, not counted as a 0-for-0.
+ * Returns null if the resulting attempted-sum is 0 (no real attempts to
+ * divide by). */
+export function sumRatio(
+  numerators: (number | null)[],
+  denominators: (number | null)[]
+): number | null {
+  let madeSum = 0;
+  let attemptedSum = 0;
+  for (let i = 0; i < numerators.length; i++) {
+    const made = numerators[i];
+    const attempted = denominators[i];
+    if (made === null || attempted === null) continue;
+    madeSum += made;
+    attemptedSum += attempted;
+  }
+  return attemptedSum === 0 ? null : madeSum / attemptedSum;
+}
+
 /** `field_goal_pct`/`three_point_pct` come from the Gold mart as a 0-1
  * fraction (the source API's own value, e.g. 0.389) -- rendered as a
  * percentage (e.g. "38.9%"). Null (0 attempts, or a DNP row) renders as
