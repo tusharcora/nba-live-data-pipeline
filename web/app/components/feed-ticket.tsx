@@ -1,15 +1,24 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { PlayerPopover } from "@/components/player-popover";
 import {
   type BoardGameRow,
   formatFreshness,
   formatScheduledStart,
   getStatusPresentation,
 } from "@/lib/board";
-import { displayScore, TEAM_NAME_TO_ABBREVIATION } from "@/lib/box-score";
+import {
+  displayScore,
+  playerHeadshotUrl,
+  TEAM_NAME_TO_ABBREVIATION,
+  type PlayerStatRow,
+} from "@/lib/box-score";
 import { cn } from "@/lib/utils";
 
 function abbr(teamName: string | null): string {
@@ -40,6 +49,174 @@ const COMMENTARY_COLOR: Record<string, string> = {
   leader: "text-muted-foreground",
 };
 
+// Session-scoped, not per-component: true the first time *any* ticket's
+// leaders query on this page has returned real rows. `player_game_stats`
+// is empty in production pending the historical backfill -- a "final"
+// game's leaders query coming back empty is the expected, known state
+// until then. But once this flag is true (backfill has clearly run, since
+// some other game on this page had rows), a *different* "final" game still
+// coming back empty is no longer that same expected case -- it's either a
+// genuine per-game gap or a query problem, worth a console note so it
+// doesn't silently look identical to the pre-backfill state once backfill
+// has actually landed. Not surfaced in the UI -- both cases render the
+// same "no leaders" placeholder to the viewer.
+let sawAnyPlayerStatsThisSession = false;
+
+type LeadersState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "empty" }
+  | { status: "loaded"; leaders: { label: string; row: PlayerStatRow }[] };
+
+function topBy(rows: PlayerStatRow[], stat: "points" | "rebounds" | "assists"): PlayerStatRow | null {
+  let best: PlayerStatRow | null = null;
+  for (const row of rows) {
+    // `points`/`rebounds`/`assists` are typed `number` but a DNP/inactive
+    // row's real API response sends `null` (see box-score.tsx's identical
+    // note) -- treat as possibly null despite the type.
+    const value = row[stat] as number | null;
+    if (value === null) continue;
+    const bestValue = best ? (best[stat] as number | null) : null;
+    if (best === null || bestValue === null || value > bestValue) best = row;
+  }
+  return best;
+}
+
+/** Each team's top scorer/rebounder/assist leader for the selected game --
+ * up to 3 mini chips (a player leading two categories only appears once,
+ * under their highest-value category). Only queried when `goldGameId` is
+ * resolved (a live/scheduled game has none yet -- `gold_game_id` is only
+ * set once a game is reconciled into the Gold layer -- so there's no valid
+ * query to make at all, a different situation from a "final" game's query
+ * coming back genuinely empty). */
+function Leaders({ goldGameId, status }: { goldGameId: number | null; status: BoardGameRow["status"] }) {
+  const [state, setState] = useState<LeadersState>({ status: "idle" });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (goldGameId === null) {
+      Promise.resolve().then(() => {
+        if (!cancelled) setState({ status: "idle" });
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    Promise.resolve().then(() => {
+      if (!cancelled) setState({ status: "loading" });
+    });
+
+    fetch(`/api/player-stats?game_id=${goldGameId}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("unreachable");
+        return res.json();
+      })
+      .then((data: { data: PlayerStatRow[]; count: number } | null) => {
+        if (cancelled) return;
+        const rows = data?.data ?? [];
+        if (rows.length > 0) {
+          sawAnyPlayerStatsThisSession = true;
+        } else if (status === "final" && sawAnyPlayerStatsThisSession) {
+          console.warn(
+            `[FeedTicket] leaders query for gold_game_id=${goldGameId} (final) returned no rows, ` +
+              "but other games this session did -- possible per-game data gap, not the expected " +
+              "pre-backfill empty state."
+          );
+        }
+
+        const seen = new Set<number>();
+        const leaders: { label: string; row: PlayerStatRow }[] = [];
+        for (const [label, stat] of [
+          ["Pts", "points"],
+          ["Reb", "rebounds"],
+          ["Ast", "assists"],
+        ] as const) {
+          const row = topBy(rows, stat);
+          if (row && !seen.has(row.player_id)) {
+            seen.add(row.player_id);
+            leaders.push({ label: `${label} · ${row[stat]}`, row });
+          }
+        }
+        setState(leaders.length > 0 ? { status: "loaded", leaders } : { status: "empty" });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "empty" });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goldGameId, status]);
+
+  if (state.status === "idle" || state.status === "loading" || state.status === "empty") {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2 border-t border-dashed border-border px-4 py-3">
+      <span className="font-mono text-xs tracking-wide text-muted-foreground uppercase">
+        Leaders
+      </span>
+      <div className="flex items-center gap-3">
+        {state.leaders.map(({ label, row }) => (
+          <PlayerPopover
+            key={`${row.player_id}-${label}`}
+            playerId={row.player_id}
+            className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted"
+          >
+            <Image
+              src={playerHeadshotUrl(row.player_id)}
+              alt=""
+              width={22}
+              height={22}
+              unoptimized
+              className="size-[22px] shrink-0 rounded-full bg-muted object-cover"
+            />
+            <span className="font-mono text-xs text-foreground">{label}</span>
+          </PlayerPopover>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Collapsed-by-default history of every commentary line observed this
+ * session for the selected game (not just the latest, which the "Commentary"
+ * row above already shows for a live game) -- last 8 lines, newest first,
+ * behind a "Recent updates" toggle so the ticket stays a quick glance by
+ * default. */
+function RecentUpdates({ log }: { log: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (log.length === 0) return null;
+
+  return (
+    <div className="border-t border-dashed border-border px-4 py-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 font-mono text-xs tracking-wide text-muted-foreground uppercase"
+      >
+        <span>Recent updates ({log.length})</span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
+        />
+      </button>
+      {expanded && (
+        <ul className="mt-2 flex flex-col gap-1.5 font-mono text-xs text-muted-foreground">
+          {log
+            .slice(-8)
+            .reverse()
+            .map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /**
  * The board's "Feed ticket" detail panel -- the currently-selected row's
  * quick-glance detail, restoring the pre-redesign board's sidebar
@@ -51,7 +228,7 @@ const COMMENTARY_COLOR: Record<string, string> = {
  * log view -- so this panel stays a quick glance and that page stays
  * the deep dive.
  */
-export function FeedTicket({ game }: { game: BoardGameRow }) {
+export function FeedTicket({ game, log = [] }: { game: BoardGameRow; log?: string[] }) {
   const presentation = getStatusPresentation(game.status);
 
   return (
@@ -144,6 +321,9 @@ export function FeedTicket({ game }: { game: BoardGameRow }) {
           <dd className="text-foreground">{formatFreshness(game.source_pulled_at)}</dd>
         </div>
       </dl>
+
+      <Leaders goldGameId={game.gold_game_id} status={game.status} />
+      <RecentUpdates log={log} />
 
       <div className="relative flex items-center border-t border-dashed border-border px-4 py-5">
         <Button

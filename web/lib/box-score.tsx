@@ -11,6 +11,7 @@ import { useMemo, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { PlayerPopover } from "@/components/player-popover";
 import {
   Table,
   TableBody,
@@ -191,9 +192,30 @@ function SortableHeader({
   );
 }
 
+/** Headshot + name, shared between the plain `Link` and `PlayerPopover`
+ * trigger variants of a box-score row's player cell. */
+function PlayerRowContent({ row }: { row: PlayerStatRow }) {
+  return (
+    <>
+      <Image
+        src={playerHeadshotUrl(row.player_id)}
+        alt=""
+        width={28}
+        height={28}
+        unoptimized
+        className="size-7 shrink-0 rounded-full object-cover bg-muted"
+      />
+      <span>
+        {row.player_first_name} {row.player_last_name}
+      </span>
+    </>
+  );
+}
+
 export function BoxScoreTable({
   rows,
   showGameContext = false,
+  enablePlayerPopover = false,
 }: {
   rows: PlayerStatRow[];
   // The per-game box score card (Explorer) already shows its own
@@ -201,6 +223,11 @@ export function BoxScoreTable({
   // be redundant -- only views spanning many different games (a
   // player-name search, or a player's full game log) need this.
   showGameContext?: boolean;
+  // Opt-in, not default-on: `/games/[id]`'s box-score table intentionally
+  // keeps today's plain player links unchanged (see the 2026-09-06 board/
+  // commentator spec's "no changes to /games/[id]" non-goal) -- only
+  // `/players/[id]`'s "Last 10 games" table passes this.
+  enablePlayerPopover?: boolean;
 }) {
   const [sortColumn, setSortColumn] = useState<SortableColumn>(
     showGameContext ? "date" : "points"
@@ -278,22 +305,21 @@ export function BoxScoreTable({
         {sortedRows.map((row) => (
           <TableRow key={row.stat_id}>
             <TableCell className="font-medium text-foreground">
-              <Link
-                href={`/players/${row.player_id}`}
-                className="-mx-1 -my-0.5 flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-muted"
-              >
-                <Image
-                  src={playerHeadshotUrl(row.player_id)}
-                  alt=""
-                  width={28}
-                  height={28}
-                  unoptimized
-                  className="size-7 shrink-0 rounded-full object-cover bg-muted"
-                />
-                <span>
-                  {row.player_first_name} {row.player_last_name}
-                </span>
-              </Link>
+              {enablePlayerPopover ? (
+                <PlayerPopover
+                  playerId={row.player_id}
+                  className="-mx-1 -my-0.5 flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted"
+                >
+                  <PlayerRowContent row={row} />
+                </PlayerPopover>
+              ) : (
+                <Link
+                  href={`/players/${row.player_id}`}
+                  className="-mx-1 -my-0.5 flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-muted"
+                >
+                  <PlayerRowContent row={row} />
+                </Link>
+              )}
             </TableCell>
             <TableCell className="text-muted-foreground">
               <TeamLink

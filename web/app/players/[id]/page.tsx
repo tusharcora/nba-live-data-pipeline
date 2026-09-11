@@ -9,16 +9,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  average,
   BoxScoreTable,
   formatAverage,
   formatGameDate,
-  parseMinutesPlayed,
   playerHeadshotUrl,
   TeamLogo,
   teamLogoUrlFromAbbreviation,
   type PlayerStatRow,
 } from "@/lib/box-score";
+import { computeSeasonAverages } from "@/lib/player-stats";
 
 type ApiList<T> = { data: T[]; count: number };
 
@@ -165,16 +164,7 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
   const latest = sortedByDateDesc[0];
   const last10 = sortedByDateDesc.slice(0, 10);
   const teamTenure = computeTeamTenure(rows);
-
-  const averages = {
-    points: average(rows.map((r) => r.points)),
-    rebounds: average(rows.map((r) => r.rebounds)),
-    assists: average(rows.map((r) => r.assists)),
-    steals: average(rows.map((r) => r.steals)),
-    blocks: average(rows.map((r) => r.blocks)),
-    turnovers: average(rows.map((r) => r.turnovers)),
-    minutes: average(rows.map((r) => parseMinutesPlayed(r.minutes_played))),
-  };
+  const averages = computeSeasonAverages(rows);
 
   return (
     <div className="flex flex-col gap-8">
@@ -260,7 +250,7 @@ function PlayerDetail({ playerId, rows }: { playerId: string; rows: PlayerStatRo
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-medium text-foreground">Last 10 games</h2>
-        <BoxScoreTable rows={last10} showGameContext />
+        <BoxScoreTable rows={last10} showGameContext enablePlayerPopover />
       </div>
     </div>
   );
