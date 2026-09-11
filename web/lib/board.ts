@@ -63,6 +63,21 @@ export function formatFreshness(iso: string | null): string {
   return `${Math.floor(months / 12)}y ago`;
 }
 
+/** Appends a new commentary tick to a per-game log, deduped only against
+ * the immediately-previous entry (repeated identical ticks from polling
+ * don't pile up, but a real repeated message later in the session -- e.g.
+ * the same run called out twice, non-consecutively -- is kept). Shared by
+ * `GameFeed.tsx` (single-game view) and the board (multi-game view) so
+ * both accumulate history the same way. */
+export function appendCommentaryTick(
+  prevLog: string[],
+  commentary: BoardCommentary | null
+): string[] {
+  if (!commentary) return prevLog;
+  if (prevLog[prevLog.length - 1] === commentary.text) return prevLog;
+  return [...prevLog, commentary.text];
+}
+
 /** "2026-09-07T00:30:00+00:00" -> "7:30 PM ET" -- rendered client-side in
  * the viewer's own locale time formatting, but explicitly labeled ET (the
  * league's own scheduling zone) rather than silently converting to the
