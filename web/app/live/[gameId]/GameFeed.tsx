@@ -1,27 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { TriangleAlert } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type BoardGameRow, formatScheduledStart, getStatusPresentation } from "@/lib/board";
+import { formatScheduledStart, getStatusPresentation } from "@/lib/board";
 import { displayScore, TEAM_NAME_TO_ABBREVIATION } from "@/lib/box-score";
+import { useGameCommentaryLog } from "@/lib/use-game-commentary-log";
 
 function abbr(teamName: string | null): string {
   if (!teamName) return "—";
   return TEAM_NAME_TO_ABBREVIATION[teamName] ?? teamName;
 }
-
-type ApiList<T> = { data: T[]; count: number };
-
-type FetchState =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "not_found" }
-  | { status: "loaded"; game: BoardGameRow };
 
 const FETCH_ERROR = "Couldn't reach the games service.";
 
@@ -29,71 +21,19 @@ const FETCH_ERROR = "Couldn't reach the games service.";
  * Per-game live view -- the destination every board row's "View Feed"
  * button links to. Live ticker + an in-session commentary log for a live
  * game, a tip-off countdown for a scheduled one, and a link to the
- * existing box-score page for a finished one. The commentary log is
- * deliberately ephemeral (component state only, lost on reload) -- no
- * persisted history table, matching this feature's spec's non-goals.
+ * existing box-score page for a finished one. Fetch + SSE + log
+ * accumulation live in `useGameCommentaryLog` (shared with the homepage
+ * board's feed ticket) -- the log is deliberately ephemeral (component
+ * state only, lost on reload), matching this feature's spec's non-goals.
  */
 export function GameFeed({ gameId }: { gameId: string }) {
-  const [state, setState] = useState<FetchState>({ status: "loading" });
-  const [log, setLog] = useState<string[]>([]);
+  const { game, log, status } = useGameCommentaryLog(gameId);
 
-  useEffect(() => {
-    let cancelled = false;
-    const numericId = Number(gameId);
-
-    fetch("/api/board")
-      .then((res) => {
-        // See recent-games-board.tsx's identical check: the BFF route
-        // always returns valid JSON, even on a backend failure
-        // (`{status: "unreachable"}` with a 502) -- without checking
-        // `res.ok`, that gets parsed same as a real response and this
-        // game is treated as simply not found, or the page is stuck on
-        // the loading skeleton forever with no distinct error shown.
-        if (!res.ok) throw new Error("unreachable");
-        return res.json();
-      })
-      .then((data: ApiList<BoardGameRow> | null) => {
-        if (cancelled) return;
-        const found = data?.data.find((g) => g.game_id === numericId) ?? null;
-        if (found === null) {
-          setState({ status: "not_found" });
-          return;
-        }
-        setState({ status: "loaded", game: found });
-        if (found.commentary) setLog([found.commentary.text]);
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: "error" });
-      });
-
-    const source = new EventSource("/api/board/stream");
-    source.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data) as ApiList<BoardGameRow>;
-        const updated = parsed.data.find((g) => g.game_id === numericId);
-        if (!updated) return;
-        setState({ status: "loaded", game: updated });
-        setLog((prev) => {
-          if (!updated.commentary) return prev;
-          if (prev[prev.length - 1] === updated.commentary.text) return prev;
-          return [...prev, updated.commentary.text];
-        });
-      } catch {
-        // Malformed tick -- keep last good state.
-      }
-    };
-
-    return () => {
-      cancelled = true;
-      source.close();
-    };
-  }, [gameId]);
-
-  if (state.status === "loading") {
+  if (status === "loading") {
     return <Skeleton className="h-64 w-full" />;
   }
 
-  if (state.status === "error") {
+  if (status === "error") {
     return (
       <Alert variant="destructive">
         <TriangleAlert aria-hidden="true" />
@@ -103,11 +43,10 @@ export function GameFeed({ gameId }: { gameId: string }) {
     );
   }
 
-  if (state.status === "not_found") {
+  if (status === "not_found" || game === null) {
     return <p className="text-sm text-muted-foreground">No game found for this id.</p>;
   }
 
-  const game = state.game;
   const presentation = getStatusPresentation(game.status);
 
   return (
