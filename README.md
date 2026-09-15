@@ -8,6 +8,8 @@ every disagreement between them is logged, not silently resolved.
 
 Hosted at: https://nba-live-data-pipeline.vercel.app/
 
+<img width="3600" height="2010" alt="image" src="https://github.com/user-attachments/assets/ecc2a3f5-e3d2-4c76-8e5f-a2b23cb86854" />
+
 Full design doc: [`docs/prd.md`](docs/prd.md) (source: [PRD artifact](https://claude.ai/code/artifact/1f4076ad-1c3c-403a-b3a5-d987db3f10d0)). Build history and current status: [`docs/PROGRESS.md`](docs/PROGRESS.md). Real-load-test results: [`docs/performance-loadtest.md`](docs/performance-loadtest.md). Security review: [`docs/security-audit.md`](docs/security-audit.md). Resume bullets: [`docs/resume-bullets.md`](docs/resume-bullets.md).
 
 **Status: all 6 weeks of the PRD's plan (§12) are complete** — foundations,
